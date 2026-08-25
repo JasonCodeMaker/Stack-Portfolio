@@ -1,5 +1,5 @@
 import type { AddonContext } from "@wealthfolio/addon-sdk";
-import { parseManualCsv, validateSnapshot } from "@/domain/etf";
+import { parseCsvRows, validateSnapshot } from "@/domain/etf";
 import type { EtfAsset, EtfHoldingsSnapshot, UnderlyingHolding } from "@/types/domain";
 
 export interface EtfHoldingsProvider {
@@ -12,6 +12,16 @@ function normalizeProviderWeight(value: unknown): number | null {
   const numeric = typeof value === "number" ? value : Number(String(value ?? "").replace(/%$/, ""));
   if (!Number.isFinite(numeric) || numeric < 0) return null;
   return numeric > 1 ? numeric / 100 : numeric;
+}
+
+function mapUnderlyingType(value: unknown): UnderlyingHolding["underlyingType"] {
+  const type = String(value ?? "").toLowerCase();
+  if (type.includes("etf") || type.includes("fund")) return "etf";
+  if (type.includes("bond") || type.includes("fixed") || type.includes("income")) return "fixed-income";
+  if (type.includes("derivative") || type.includes("option") || type.includes("future")) return "derivative";
+  if (type.includes("cash") || type.includes("currency")) return "cash";
+  if (type.includes("equity") || type.includes("equities") || type.includes("stock")) return "stock";
+  return "other";
 }
 
 function buildSnapshot(etf: EtfAsset, provider: string, holdings: UnderlyingHolding[], asOfDate?: string): EtfHoldingsSnapshot {
@@ -69,7 +79,7 @@ export class AlphaVantageProvider implements EtfHoldingsProvider {
         country: String(row.country ?? "").trim() || undefined,
         sector: String(row.sector ?? "").trim() || undefined,
         assetClass: String(row.asset_type ?? row.assetClass ?? "").trim() || undefined,
-        underlyingType: String(row.asset_type ?? "").toLowerCase().includes("etf") ? "etf" : "stock",
+        underlyingType: mapUnderlyingType(row.asset_type ?? row.assetClass),
       });
     }
     return buildSnapshot(etf, this.id, holdings, body.last_updated);
@@ -84,23 +94,49 @@ class PublicCsvIssuerProvider implements EtfHoldingsProvider {
   ) {}
 
   public async canHandle(etf: EtfAsset): Promise<boolean> {
-    return Boolean(etf.providerSymbol?.startsWith(`${this.id}:`));
+    if (!etf.providerSymbol) return false;
+    return this.id === "ishares" ? /^\d+$/.test(etf.providerSymbol) : /^[A-Za-z0-9]+$/.test(etf.providerSymbol);
   }
 
   public async fetchHoldings(etf: EtfAsset): Promise<EtfHoldingsSnapshot> {
-    const providerSymbol = etf.providerSymbol?.slice(this.id.length + 1);
+    const providerSymbol = etf.providerSymbol;
     if (!providerSymbol) throw new Error(`${this.id} public identifier is missing`);
-    const url = `${this.hostPrefix}${encodeURIComponent(providerSymbol)}`;
+    const url = this.id === "ishares"
+      ? `${this.hostPrefix}${encodeURIComponent(providerSymbol)}/latest-holdings.csv`
+      : `${this.hostPrefix}${encodeURIComponent(providerSymbol.toUpperCase())}_Portfolio_Holdings.csv`;
     const csv = await fetchText(this.ctx, url);
-    const preview = parseManualCsv(csv, {
-      etfKey: etf.etfKey,
-      provider: this.id,
-      asOfDate: new Date().toISOString().slice(0, 10),
-      fetchedAt: new Date().toISOString(),
-    });
-    if (!preview.validation.accepted || !preview.validation.snapshot) throw new Error(preview.validation.message);
-    return preview.validation.snapshot;
+    return parseIssuerCsv(csv, etf, this.id);
   }
+}
+
+function parseIssuerCsv(csv: string, etf: EtfAsset, provider: "ishares" | "betashares"): EtfHoldingsSnapshot {
+  const allRows = parseCsvRows(csv);
+  const headerIndex = allRows.findIndex((row) => row.some((value) => value.toLowerCase().replace(/\s+/g, "") === "weight(%)"));
+  if (headerIndex < 0) throw new Error(`${provider} holdings CSV schema changed: Weight (%) column not found`);
+  const header = allRows[headerIndex].map((value) => value.toLowerCase().replace(/[\s%()/#]+/g, ""));
+  const indexOf = (name: string) => header.indexOf(name);
+  const rows: UnderlyingHolding[] = [];
+  for (const values of allRows.slice(headerIndex + 1)) {
+    const get = (name: string) => {
+      const index = indexOf(name);
+      return index >= 0 ? values[index]?.trim() ?? "" : "";
+    };
+    const symbol = get("ticker") || undefined;
+    const name = get("name") || symbol || "";
+    const weight = normalizeProviderWeight(get("weight"));
+    if (!name || weight === null) continue;
+    rows.push({
+      symbol,
+      name,
+      weight,
+      country: get("location") || get("country") || undefined,
+      currency: get("currency") || undefined,
+      sector: get("sector") || undefined,
+      assetClass: get("assetclass") || undefined,
+      underlyingType: mapUnderlyingType(get("assetclass")),
+    });
+  }
+  return buildSnapshot(etf, provider, rows);
 }
 
 export function createProviders(
@@ -108,8 +144,8 @@ export function createProviders(
   secrets: { alphaVantageApiKey?: string | null },
 ): EtfHoldingsProvider[] {
   return [
-    new PublicCsvIssuerProvider("ishares", ctx, "https://www.ishares.com/us/products/") ,
-    new PublicCsvIssuerProvider("betashares", ctx, "https://www.betashares.com.au/fund/"),
+    new PublicCsvIssuerProvider("ishares", ctx, "https://www.ishares.com/us/products/"),
+    new PublicCsvIssuerProvider("betashares", ctx, "https://www.betashares.com.au/files/csv/"),
     new AlphaVantageProvider(ctx, secrets.alphaVantageApiKey),
   ];
 }
@@ -118,6 +154,7 @@ export interface ResolverOptions {
   mode: "auto" | "pinned";
   pinnedProvider?: string;
   cached?: EtfHoldingsSnapshot | null;
+  force?: boolean;
 }
 
 export interface ResolverResult {
@@ -131,7 +168,8 @@ export async function resolveEtfHoldings(
   providers: EtfHoldingsProvider[],
   options: ResolverOptions,
 ): Promise<ResolverResult> {
-  if (options.cached && options.mode === "auto") {
+  const cacheMatchesPinnedProvider = options.mode === "auto" || options.cached?.provider === options.pinnedProvider;
+  if (options.cached && cacheMatchesPinnedProvider && !options.force) {
     const fetchedAt = Date.parse(options.cached.fetchedAt);
     if (Number.isFinite(fetchedAt) && Date.now() - fetchedAt <= 24 * 60 * 60 * 1000) {
       return { snapshot: options.cached, provider: options.cached.provider };
@@ -149,7 +187,11 @@ export async function resolveEtfHoldings(
       lastError = error instanceof Error ? error.message : "Provider failed";
     }
   }
-  return { snapshot: options.cached ?? null, provider: options.cached?.provider ?? null, failureReason: lastError };
+  return {
+    snapshot: cacheMatchesPinnedProvider ? options.cached ?? null : null,
+    provider: cacheMatchesPinnedProvider ? options.cached?.provider ?? null : null,
+    failureReason: lastError,
+  };
 }
 
 export async function mapWithConcurrency<T, R>(

@@ -23,7 +23,7 @@ export function XRayPage({ exposure, hasHoldings, onGoToSettings }: { exposure: 
 function XRayRow({ row, selected, onSelect }: { row: ExposureRow; selected: boolean; onSelect: () => void }): JSX.Element {
   const sourceTone = row.sources.some((source) => source.kind === "opaque" || source.kind === "residual") ? "warning" : "good";
   return <tr className={selected ? "row-selected" : ""}>
-    <td><strong className="ticker-cell">{row.key.startsWith("opaque-") || row.key.startsWith("residual-") ? "—" : row.label.slice(0, 10).toUpperCase()}</strong></td>
+    <td><strong className="ticker-cell">{row.ticker ?? "—"}</strong></td>
     <td><span className="name-cell">{row.label}</span></td>
     <td className="numeric">{row.directAud ? formatAud(row.directAud) : "—"}</td>
     <td className="numeric">{row.viaEtfsAud ? formatAud(row.viaEtfsAud) : "—"}</td>

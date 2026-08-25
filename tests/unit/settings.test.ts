@@ -15,6 +15,7 @@ const settings: AddonSettings = {
   liveFxPolling: true,
   providerModes: {},
   pinnedProviders: {},
+  providerIdentities: {},
   typeOverrides: {},
   aliases: {},
 };

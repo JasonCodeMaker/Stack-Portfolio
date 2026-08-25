@@ -224,6 +224,15 @@
 .provider-row strong, .override-row strong { font-size: 12px; }
 .provider-row span, .override-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 10px; }
 .provider-row select, .override-row select { color: #c2d0e4; background: var(--surface-3); border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px; font-size: 11px; }
+.provider-identity { width: 82px; min-width: 0; color: #c2d0e4; background: #0c1421; border: 1px solid var(--line-strong); border-radius: 6px; padding: 6px; font-size: 10px; }
+.alias-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin-top: 17px; }
+.alias-form input { min-width: 0; color: var(--ink); background: #0c1421; border: 1px solid var(--line-strong); border-radius: 7px; padding: 8px 9px; outline: 0; font-size: 11px; }
+.alias-form .button { grid-column: 1 / -1; justify-self: end; }
+.alias-list { display: grid; gap: 6px; margin-top: 12px; }
+.alias-row { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font-size: 10px; }
+.alias-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alias-row strong { color: var(--ink); white-space: nowrap; }
+.alias-row button { margin-left: auto; border: 0; background: transparent; color: var(--red); font-size: 10px; }
 .settings-footer { color: var(--faint); display: flex; gap: 8px; align-items: center; font-size: 11px; }
 
 .empty-state, .loading-state, .error-state { min-height: 380px; display: grid; place-items: center; align-content: center; text-align: center; border: 1px dashed var(--line-strong); border-radius: 13px; padding: 30px; }

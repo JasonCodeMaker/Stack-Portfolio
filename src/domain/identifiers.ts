@@ -30,6 +30,7 @@ export function canonicalEtfKey(input: IdentityInput & { instrumentKey?: string 
   if (symbol && input.currency) {
     return `provider:${normalizeIdentityPart(input.currency)}:${symbol}`;
   }
+  if (symbol) return `provider:unknown:${symbol}`;
   return null;
 }
 
@@ -47,12 +48,21 @@ export function canonicalIdentity(input: IdentityInput): IdentityResult {
     return { key: `ticker:${symbol}:${country}:${currency}`, confidence: "medium" };
   }
 
-  const name = normalizeIdentityPart(input.name);
-  if (name) return { key: `name:${name}`, confidence: "low" };
+  if (normalizeIdentityPart(input.name)) return { key: null, confidence: "low" };
   return { key: null, confidence: "unmapped" };
 }
 
-export function applyAlias(identityKey: string | null, aliases: Record<string, string>): string | null {
+export interface AliasScope {
+  provider: string;
+  etfKey: string;
+}
+
+export function scopedAliasKey(scope: AliasScope, identityKey: string): string {
+  return `scope:${normalizeIdentityPart(scope.provider)}:${normalizeIdentityPart(scope.etfKey)}:${identityKey}`;
+}
+
+export function applyAlias(identityKey: string | null, aliases: Record<string, string>, scope?: AliasScope): string | null {
   if (!identityKey) return null;
+  if (scope) return aliases[scopedAliasKey(scope, identityKey)] ?? aliases[identityKey] ?? identityKey;
   return aliases[identityKey] ?? identityKey;
 }

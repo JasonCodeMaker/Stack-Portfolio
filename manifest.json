@@ -71,13 +71,8 @@
     },
     {
       "category": "events",
-      "functions": ["portfolio.onUpdateComplete", "market.onSyncComplete"],
+      "functions": ["onUpdateComplete", "onSyncComplete"],
       "purpose": "Invalidate addon-derived data when Wealthfolio data changes."
-    },
-    {
-      "category": "navigation",
-      "functions": ["navigate"],
-      "purpose": "Open Wealthfolio's native Performance page."
     }
   ],
   "hostDependencies": {

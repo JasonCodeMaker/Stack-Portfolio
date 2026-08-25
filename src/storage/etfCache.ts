@@ -15,6 +15,12 @@ interface CacheIndexEntry {
 
 type CacheIndex = Record<string, CacheIndexEntry>;
 
+interface ReadEntryResult {
+  snapshot: EtfHoldingsSnapshot | null;
+  invalid: boolean;
+  failureReason?: string;
+}
+
 function safeKey(value: string): string {
   return [...value].map((character) => /[A-Za-z0-9]/.test(character) ? character : `_x${character.codePointAt(0)?.toString(16)}_`).join("");
 }
@@ -47,8 +53,8 @@ export class EtfCache {
     const index = await readIndex(this.ctx);
     const records: EtfCacheRecord[] = [];
     for (const entry of Object.values(index)) {
-      const snapshot = await this.readEntry(entry);
-      if (snapshot) records.push({ etfKey: entry.etfKey, version: entry.version, snapshot, updatedAt: entry.updatedAt });
+      const result = await this.readEntry(entry);
+      records.push({ etfKey: entry.etfKey, version: entry.version, snapshot: result.snapshot, invalid: result.invalid, failureReason: result.failureReason, updatedAt: entry.updatedAt });
     }
     return records;
   }
@@ -57,23 +63,26 @@ export class EtfCache {
     const index = await readIndex(this.ctx);
     const entry = index[etfKey];
     if (!entry) return null;
-    const snapshot = await this.readEntry(entry);
-    return snapshot ? { etfKey, version: entry.version, snapshot, updatedAt: entry.updatedAt } : null;
+    const result = await this.readEntry(entry);
+    return { etfKey, version: entry.version, snapshot: result.snapshot, invalid: result.invalid, failureReason: result.failureReason, updatedAt: entry.updatedAt };
   }
 
-  private async readEntry(entry: CacheIndexEntry): Promise<EtfHoldingsSnapshot | null> {
+  private async readEntry(entry: CacheIndexEntry): Promise<ReadEntryResult> {
     const prefix = `etf.snapshot.v1.${safeKey(entry.etfKey)}.${entry.version}`;
     const chunks: string[] = [];
     for (let index = 0; index < entry.chunkCount; index += 1) {
       const value = await this.ctx.api.storage.get(`${prefix}.${index}`);
-      if (value === null) return null;
+      if (value === null) return { snapshot: null, invalid: true, failureReason: "Cached snapshot chunk is missing" };
       chunks.push(value);
     }
     try {
       const snapshot = JSON.parse(chunks.join("")) as EtfHoldingsSnapshot;
-      return validateSnapshot(snapshot).snapshot ?? null;
+      const validation = validateSnapshot(snapshot);
+      return validation.accepted && validation.snapshot
+        ? { snapshot: validation.snapshot, invalid: false, failureReason: snapshot.failureReason }
+        : { snapshot: null, invalid: true, failureReason: validation.message };
     } catch {
-      return null;
+      return { snapshot: null, invalid: true, failureReason: "Cached snapshot could not be parsed" };
     }
   }
 

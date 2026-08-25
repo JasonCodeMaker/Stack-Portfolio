@@ -159,9 +159,10 @@ export interface SnapshotValidation {
 export interface EtfCacheRecord {
   etfKey: string;
   version: number;
-  snapshot: EtfHoldingsSnapshot;
+  snapshot: EtfHoldingsSnapshot | null;
   updatedAt: string;
   failureReason?: string;
+  invalid?: boolean;
 }
 
 export interface EtfDataRow {
@@ -217,6 +218,7 @@ export type ExposureSource = DirectSource | EtfSource | ResidualSource;
 
 export interface ExposureRow {
   key: string;
+  ticker?: string;
   label: string;
   type: AssetType;
   directAud: number;
@@ -247,6 +249,7 @@ export interface AddonSettings {
   liveFxPolling: boolean;
   providerModes: Record<string, "auto" | "pinned">;
   pinnedProviders: Record<string, string>;
+  providerIdentities: Record<string, string>;
   typeOverrides: Record<string, AssetType>;
   aliases: Record<string, string>;
 }

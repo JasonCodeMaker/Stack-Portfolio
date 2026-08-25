@@ -5,6 +5,15 @@ import type { FxQuote } from "@/types/domain";
 export const FX_STORAGE_KEY = "fx.quote.usd-aud";
 export const TWELVE_DATA_SECRET = "twelvedata.apiKey";
 
+async function safeGetSecret(ctx: AddonContext, key: string): Promise<string | null> {
+  try {
+    return await ctx.api.secrets.get(key);
+  } catch (error) {
+    ctx.api.logger.warn(`Secret access unavailable for ${key}: ${error instanceof Error ? error.message : "permission denied"}`);
+    return null;
+  }
+}
+
 function validRate(rate: unknown): rate is number {
   return typeof rate === "number" && Number.isFinite(rate) && rate > 0;
 }
@@ -65,7 +74,7 @@ export class FxService {
     const isFreshEnough = cached && Date.now() - Date.parse(cached.fetchedAt) < FX_CACHE_TTL_MS;
     if (isFreshEnough && !options.force) return cached;
 
-    const apiKey = await this.ctx.api.secrets.get(TWELVE_DATA_SECRET);
+    const apiKey = await safeGetSecret(this.ctx, TWELVE_DATA_SECRET);
     if (apiKey) {
       try {
         const live = await fetchTwelveData(this.ctx, apiKey);

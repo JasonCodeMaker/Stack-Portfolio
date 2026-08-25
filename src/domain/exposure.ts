@@ -55,6 +55,7 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
     amountAud: number;
     direct?: boolean;
     source: ExposureSource;
+    ticker?: string;
     sector?: string;
     country?: string;
     status?: string;
@@ -65,6 +66,7 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
       else existing.viaEtfsAud += args.amountAud;
       existing.totalAud += args.amountAud;
       existing.sources.push(args.source);
+      existing.ticker = existing.ticker ?? args.ticker;
       existing.sector = mergeMetadata(existing.sector, args.sector);
       existing.country = mergeMetadata(existing.country, args.country);
       existing.status = mergeMetadata(existing.status, args.status);
@@ -72,6 +74,7 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
     }
     rows.set(args.key, {
       key: args.key,
+      ticker: args.ticker,
       label: args.label,
       type: args.type,
       directAud: args.direct ? args.amountAud : 0,
@@ -102,15 +105,13 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
       amountAud,
       reason,
     };
-    addRow({ key, label, type: "etf", amountAud, source, status: reason });
+    addRow({ key, ticker: holding.ticker, label, type: "etf", amountAud, source, status: reason });
   }
 
   function findNestedKey(symbol: string | undefined, mic: string | undefined, currency: string | undefined): string | null {
     const candidate = canonicalEtfKey({ symbol, mic, currency });
     if (candidate && snapshotByKey.has(candidate)) return candidate;
-    const normalizedSymbol = symbol?.trim().toUpperCase();
-    if (!normalizedSymbol) return null;
-    return [...snapshotByKey.keys()].find((key) => key.toUpperCase().endsWith(`:${normalizedSymbol}`)) ?? null;
+    return null;
   }
 
   function expandEtf(
@@ -146,8 +147,19 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
         continue;
       }
 
-      const identity = applyAlias(canonicalIdentity(constituent).key, aliases)
-        ?? `unclassified:${constituent.name.trim().toUpperCase()}`;
+      if (constituent.underlyingType === "etf") {
+        addOpaque(
+          holding,
+          amountAud,
+          `opaque-etf:${etfKey}:${constituent.symbol ?? constituent.name}`,
+          `${constituent.symbol ?? constituent.name} · Opaque ETF`,
+          "Missing nested ETF snapshot",
+        );
+        continue;
+      }
+
+      const identity = applyAlias(canonicalIdentity(constituent).key, aliases, { provider: snapshot.provider, etfKey })
+        ?? `unmapped:${etfKey}:${constituent.symbol ?? constituent.name}:${path.length}`;
       const type = displayType(constituent.underlyingType ?? "other");
       const source: EtfSource = {
         kind: "etf",
@@ -161,6 +173,7 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
       };
       addRow({
         key: identity,
+        ticker: constituent.symbol,
         label: constituent.name,
         type,
         amountAud,
@@ -212,6 +225,7 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
     };
     addRow({
       key,
+      ticker: holding.ticker,
       label: holding.name,
       type: holding.type,
       amountAud: holding.audValue,
@@ -250,6 +264,7 @@ export function topRows(rows: ExposureRow[], limit = 10): ExposureRow[] {
   const other = rows.slice(limit).reduce((sum, row) => sum + row.totalAud, 0);
   return [...top, {
     key: "other",
+    ticker: "—",
     label: "Other",
     type: "other",
     directAud: rows.slice(limit).reduce((sum, row) => sum + row.directAud, 0),

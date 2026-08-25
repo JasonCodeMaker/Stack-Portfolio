@@ -19,6 +19,9 @@ export function SettingsPage({
   onSetTypeOverride,
   onSetProviderMode,
   onSetPinnedProvider,
+  onSetProviderIdentity,
+  onSetAliasMapping,
+  onRemoveAliasMapping,
 }: {
   activeAccounts: PortfolioAccount[];
   selectedAccounts: PortfolioAccount[];
@@ -34,12 +37,21 @@ export function SettingsPage({
   onSetTypeOverride: (key: string, type: AssetType) => Promise<void>;
   onSetProviderMode: (key: string, mode: "auto" | "pinned") => Promise<void>;
   onSetPinnedProvider: (key: string, provider: string) => Promise<void>;
+  onSetProviderIdentity: (key: string, identity: string) => Promise<void>;
+  onSetAliasMapping: (provider: string, etfKey: string, originalKey: string, targetKey: string) => Promise<void>;
+  onRemoveAliasMapping: (aliasKey: string) => Promise<void>;
 }): JSX.Element {
   const [selectedIds, setSelectedIds] = useState(selectedAccounts.map((account) => account.id));
   const [twelveDataKey, setTwelveDataKey] = useState("");
   const [alphaVantageKey, setAlphaVantageKey] = useState("");
+  const [providerIdentityDrafts, setProviderIdentityDrafts] = useState<Record<string, string>>(settings.providerIdentities);
+  const [aliasProvider, setAliasProvider] = useState("");
+  const [aliasEtfKey, setAliasEtfKey] = useState("");
+  const [aliasOriginal, setAliasOriginal] = useState("");
+  const [aliasTarget, setAliasTarget] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   useEffect(() => setSelectedIds(selectedAccounts.map((account) => account.id)), [selectedAccounts]);
+  useEffect(() => setProviderIdentityDrafts(settings.providerIdentities), [settings.providerIdentities]);
 
   const saveAccounts = async () => {
     await onSaveAccountSelection(selectedIds);
@@ -55,6 +67,13 @@ export function SettingsPage({
     await onDeleteSecret(key);
     setMessage(`${label} key removed.`);
   };
+  const saveAlias = async () => {
+    if (!aliasProvider.trim() || !aliasEtfKey.trim() || !aliasOriginal.trim() || !aliasTarget.trim()) return;
+    await onSetAliasMapping(aliasProvider, aliasEtfKey, aliasOriginal, aliasTarget);
+    setMessage("Scoped alias saved. It applies only to this provider, ETF, and original identifier.");
+    setAliasOriginal("");
+    setAliasTarget("");
+  };
 
   const overrideRows = holdings.filter((holding) => holding.status === "unknown-instrument" || holding.type === "unknown");
   return <div className="page-stack">
@@ -63,8 +82,9 @@ export function SettingsPage({
       <section className="panel settings-card"><div className="settings-heading"><div className="settings-icon">◎</div><div><h2>Included accounts</h2><p>New active accounts are included once. Explicit deselections remain deselected.</p></div></div><div className="account-select-list">{activeAccounts.length === 0 ? <p className="muted">No active Wealthfolio accounts found.</p> : activeAccounts.map((account) => <label className="account-select" key={account.id}><input type="checkbox" checked={selectedIds.includes(account.id)} onChange={(event) => setSelectedIds((current) => event.target.checked ? [...current, account.id] : current.filter((id) => id !== account.id))} /><span className="account-avatar">{account.name.slice(0, 1).toUpperCase()}</span><span><strong>{account.name}</strong><em>{account.currency} · {account.isActive ? "Active" : "Inactive"}</em></span><span className="checkmark">✓</span></label>)}</div><div className="form-actions"><Button onClick={() => void saveAccounts()} variant="primary">Save account selection</Button></div></section>
       <section className="panel settings-card"><div className="settings-heading"><div className="settings-icon">↗</div><div><h2>Live USD / AUD</h2><p>Refresh while Portfolio X-Ray is visible. The quote is shared through addon storage for five-minute reuse.</p></div></div><Toggle checked={settings.liveFxPolling} onChange={(enabled) => void onSetLiveFxPolling(enabled)} label="Enable visible-page polling" /><div className="privacy-note"><span className="pulse-dot" /><div><strong>Provider-safe request</strong><p>External requests include only USD/AUD and provider authentication — never account, quantity, value, cost basis, or transaction data.</p></div></div></section>
       <section className="panel settings-card"><div className="settings-heading"><div className="settings-icon">⌘</div><div><h2>Provider keys</h2><p>Optional keys are stored through <code>ctx.api.secrets</code>. Missing keys never block cached or Manual CSV data.</p></div></div><SecretField label="Twelve Data" hasKey={hasTwelveDataKey} value={twelveDataKey} onChange={setTwelveDataKey} onSave={() => void saveSecret("twelvedata.apiKey", twelveDataKey, "Twelve Data")} onRemove={() => void removeSecret("twelvedata.apiKey", "Twelve Data")} /><SecretField label="Alpha Vantage" hasKey={hasAlphaVantageKey} value={alphaVantageKey} onChange={setAlphaVantageKey} onSave={() => void saveSecret("alphaVantage.apiKey", alphaVantageKey, "Alpha Vantage")} onRemove={() => void removeSecret("alphaVantage.apiKey", "Alpha Vantage")} /></section>
-      <section className="panel settings-card"><div className="settings-heading"><div className="settings-icon">◫</div><div><h2>ETF provider modes</h2><p>Auto follows cache → issuer → Alpha Vantage → Manual. Pinned mode never silently changes source.</p></div></div>{etfData.length === 0 ? <p className="muted">ETF provider controls appear when ETFs are held.</p> : <div className="provider-list">{etfData.map((row) => <div className="provider-row" key={row.asset.etfKey}><div><strong>{row.asset.symbol}</strong><span>{row.snapshot?.provider ?? "No snapshot"}</span></div><select value={settings.providerModes[row.asset.etfKey] ?? "auto"} onChange={(event) => void onSetProviderMode(row.asset.etfKey, event.target.value as "auto" | "pinned")}><option value="auto">Auto</option><option value="pinned">Pinned</option></select>{(settings.providerModes[row.asset.etfKey] ?? "auto") === "pinned" && <select value={settings.pinnedProviders[row.asset.etfKey] ?? "alpha-vantage"} onChange={(event) => void onSetPinnedProvider(row.asset.etfKey, event.target.value)}><option value="ishares">iShares</option><option value="betashares">Betashares</option><option value="alpha-vantage">Alpha Vantage</option></select>}<StatusBadge value={row.status} tone={row.status === "Fresh" ? "good" : "warning"} /></div>)}</div>}</section>
+      <section className="panel settings-card"><div className="settings-heading"><div className="settings-icon">◫</div><div><h2>ETF provider modes</h2><p>Auto follows cache → issuer → Alpha Vantage → Manual. Pinned mode never silently changes source.</p></div></div>{etfData.length === 0 ? <p className="muted">ETF provider controls appear when ETFs are held.</p> : <div className="provider-list">{etfData.map((row) => <div className="provider-row" key={row.asset.etfKey}><div><strong>{row.asset.symbol}</strong><span>{row.snapshot?.provider ?? "No snapshot"}</span></div><input className="provider-identity" value={providerIdentityDrafts[row.asset.etfKey] ?? ""} onChange={(event) => setProviderIdentityDrafts((current) => ({ ...current, [row.asset.etfKey]: event.target.value }))} onBlur={(event) => void onSetProviderIdentity(row.asset.etfKey, event.target.value)} placeholder="Issuer ID" title="iShares product ID or Betashares ticker" /><select value={settings.providerModes[row.asset.etfKey] ?? "auto"} onChange={(event) => void onSetProviderMode(row.asset.etfKey, event.target.value as "auto" | "pinned")}><option value="auto">Auto</option><option value="pinned">Pinned</option></select>{(settings.providerModes[row.asset.etfKey] ?? "auto") === "pinned" && <select value={settings.pinnedProviders[row.asset.etfKey] ?? "alpha-vantage"} onChange={(event) => void onSetPinnedProvider(row.asset.etfKey, event.target.value)}><option value="ishares">iShares</option><option value="betashares">Betashares</option><option value="alpha-vantage">Alpha Vantage</option></select>}<StatusBadge value={row.status} tone={row.status === "Fresh" ? "good" : "warning"} /></div>)}</div>}</section>
       <section className="panel settings-card"><div className="settings-heading"><div className="settings-icon">⌁</div><div><h2>Type overrides</h2><p>Use a local override when an instrument profile is unresolved. Overrides affect only X-Ray classification.</p></div></div>{overrideRows.length === 0 ? <p className="muted">All current instrument types are resolved.</p> : <div className="override-list">{overrideRows.map((holding) => <div className="override-row" key={holding.id}><div><strong>{holding.ticker}</strong><span>{holding.name} · {holding.identityKey ?? holding.id}</span></div><select value={settings.typeOverrides[holding.profileId ?? holding.identityKey ?? holding.id] ?? holding.type} onChange={(event) => void onSetTypeOverride(holding.profileId ?? holding.identityKey ?? holding.id, event.target.value as AssetType)}>{typeOptions.map((type) => <option value={type} key={type}>{type}</option>)}</select></div>)}</div>}</section>
+      <section className="panel settings-card"><div className="settings-heading"><div className="settings-icon">↔</div><div><h2>Scoped identity aliases</h2><p>Map a provider's original identifier to a canonical key without affecting unrelated ETFs or providers.</p></div></div><div className="alias-form"><input value={aliasProvider} onChange={(event) => setAliasProvider(event.target.value)} placeholder="Provider, e.g. manual" /><input value={aliasEtfKey} onChange={(event) => setAliasEtfKey(event.target.value)} placeholder="ETF key, e.g. XNAS:IVV" /><input value={aliasOriginal} onChange={(event) => setAliasOriginal(event.target.value)} placeholder="Original identity key" /><input value={aliasTarget} onChange={(event) => setAliasTarget(event.target.value)} placeholder="Target canonical key" /><Button onClick={() => void saveAlias()} variant="secondary">Save alias</Button></div>{Object.entries(settings.aliases).length === 0 ? <p className="muted">No aliases configured.</p> : <div className="alias-list">{Object.entries(settings.aliases).map(([key, target]) => <div className="alias-row" key={key}><span>{key}</span><strong>→ {target}</strong><button type="button" onClick={() => void onRemoveAliasMapping(key)}>Remove</button></div>)}</div>}</section>
     </div>
     {message && <div className="inline-message">{message}</div>}
     <div className="settings-footer"><StatusBadge value="Local-first" tone="good" /><span>Settings, aliases, Manual datasets, and valid ETF caches are persisted through Wealthfolio addon storage. Secrets never enter JSON, localStorage, or source code.</span></div>

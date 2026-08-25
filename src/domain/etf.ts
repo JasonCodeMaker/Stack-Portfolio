@@ -12,7 +12,7 @@ import type {
 const REQUIRED_WEIGHT = 0.96;
 const MAX_WEIGHT = 1.005;
 
-function parseCsvRows(csv: string): string[][] {
+export function parseCsvRows(csv: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = "";

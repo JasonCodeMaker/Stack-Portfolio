@@ -11,6 +11,7 @@ export const DEFAULT_ADDON_SETTINGS: AddonSettings = {
   liveFxPolling: true,
   providerModes: {},
   pinnedProviders: {},
+  providerIdentities: {},
   typeOverrides: {},
   aliases: {},
 };
@@ -36,6 +37,7 @@ function sanitizeSettings(value: unknown): AddonSettings {
     liveFxPolling: candidate.liveFxPolling !== false,
     providerModes,
     pinnedProviders: typeof candidate.pinnedProviders === "object" && candidate.pinnedProviders ? candidate.pinnedProviders as Record<string, string> : {},
+    providerIdentities: typeof candidate.providerIdentities === "object" && candidate.providerIdentities ? candidate.providerIdentities as Record<string, string> : {},
     typeOverrides,
     aliases: typeof candidate.aliases === "object" && candidate.aliases ? candidate.aliases as Record<string, string> : {},
   };

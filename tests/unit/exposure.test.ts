@@ -67,5 +67,11 @@ describe("exposure engine", () => {
     const cycleModel = buildExposureModel({ holdings: [etf("cycle", "CYCLEA", "XNAS:CYCLEA", 1000)], snapshots: new Map([["XNAS:CYCLEA", cycleA], ["XNAS:CYCLEB", cycleB]]), totalAud: 1000 });
     expect(cycleModel.rows.some((row) => row.status === "Cycle detected")).toBe(true);
     expect(cycleModel.valueConservationDelta).toBeCloseTo(0);
+
+    const missingNested = snapshot("XNAS:MISSINGROOT", [{ symbol: "MISSING", name: "Missing nested ETF", mic: "XNAS", currency: "USD", weight: 1, underlyingType: "etf" }]);
+    const missingModel = buildExposureModel({ holdings: [etf("missing", "ROOT", "XNAS:MISSINGROOT", 1000)], snapshots: new Map([["XNAS:MISSINGROOT", missingNested]]), totalAud: 1000 });
+    expect(missingModel.rows.some((row) => row.status === "Missing nested ETF snapshot")).toBe(true);
+    expect(missingModel.coverage).toBe(0);
+    expect(missingModel.valueConservationDelta).toBeCloseTo(0);
   });
 });
