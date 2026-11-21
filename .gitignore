@@ -5,3 +5,11 @@ coverage/
 *.local
 *.tsbuildinfo
 .tsbuild/
+release/desktop/
+.codex-spreadsheet-analysis/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.db
+*.db-*
+*.wfbackup

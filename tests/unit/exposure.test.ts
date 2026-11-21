@@ -41,10 +41,39 @@ describe("exposure engine", () => {
       ]),
       totalAud: 5500,
     });
-    const nvda = model.rows.find((row) => row.key === "mic:XNAS:NVDA");
+    const nvda = model.rows.find((row) => row.key === "listing:US:NVDA");
     expect(nvda?.totalAud).toBeCloseTo(1500 + 240 + 84);
     expect(model.valueConservationDelta).toBeCloseTo(0);
     expect(model.coverage).toBeCloseTo((1500 + 240 + 84) / 5500);
+  });
+
+  it("merges a US stock reported by exchange in one fund and by ticker and currency in another", () => {
+    const model = buildExposureModel({
+      holdings: [direct("aapl-direct", "AAPL", 100), etf("ivv", "IVV", "XNAS:IVV", 1000), etf("spmo", "SPMO", "ARCX:SPMO", 1000)],
+      snapshots: new Map([
+        ["XNAS:IVV", snapshot("XNAS:IVV", [{ symbol: "AAPL", name: "APPLE", mic: "XNAS", country: "United States", currency: "USD", weight: 0.07, underlyingType: "stock" }])],
+        ["ARCX:SPMO", snapshot("ARCX:SPMO", [{ symbol: "AAPL", name: "Apple Inc", currency: "USD", weight: 0.05, underlyingType: "stock" }])],
+      ]),
+      totalAud: 2100,
+    });
+    const apple = model.rows.filter((row) => row.ticker === "AAPL");
+    expect(apple).toHaveLength(1);
+    expect(apple[0].directAud).toBeCloseTo(100);
+    expect(apple[0].viaEtfsAud).toBeCloseTo(70 + 50);
+  });
+
+  it("keeps an ASX ticker apart from a US ticker with the same symbol", () => {
+    const model = buildExposureModel({
+      holdings: [etf("mix", "MIX", "XASX:MIX", 1000)],
+      snapshots: new Map([
+        ["XASX:MIX", snapshot("XASX:MIX", [
+          { symbol: "CBA", name: "Commonwealth Bank", mic: "XASX", currency: "AUD", weight: 0.5, underlyingType: "stock" },
+          { symbol: "CBA", name: "US namesake", currency: "USD", weight: 0.5, underlyingType: "stock" },
+        ])],
+      ]),
+      totalAud: 1000,
+    });
+    expect(model.rows.filter((row) => row.ticker === "CBA")).toHaveLength(2);
   });
 
   it("keeps unsupported ETF value opaque and lowers coverage", () => {
@@ -53,6 +82,66 @@ describe("exposure engine", () => {
     expect(model.rows[0].totalAud).toBe(1000);
     expect(model.coverage).toBe(0);
     expect(model.valueConservationDelta).toBe(0);
+  });
+
+  it("merges direct holdings and keeps only each ETF's top ten constituents", () => {
+    const ivv = snapshot("XNAS:IVV", Array.from({ length: 12 }, (_, index) => ({
+      symbol: index === 0 ? "ORCL" : `STOCK${index + 1}`,
+      name: index === 0 ? "Oracle" : `Stock ${index + 1}`,
+      mic: "XNAS",
+      weight: index < 8 ? 0.1 : 0.05,
+      underlyingType: "stock" as const,
+    })));
+    const model = buildExposureModel({
+      holdings: [direct("orcl-direct", "ORCL", 500), etf("ivv", "IVV", "XNAS:IVV", 1000)],
+      snapshots: new Map([["XNAS:IVV", ivv]]),
+      totalAud: 1500,
+      maxConstituentsPerEtf: 10,
+    });
+    expect(model.rows.find((row) => row.ticker === "ORCL")?.totalAud).toBeCloseTo(600);
+    expect(model.rows.find((row) => row.label === "IVV · Others")?.totalAud).toBeCloseTo(100);
+    expect(model.rows.some((row) => row.ticker === "STOCK11")).toBe(false);
+    expect(model.rows.some((row) => row.ticker === "STOCK12")).toBe(false);
+    expect(model.rows.filter((row) => row.viaEtfsAud > 0)).toHaveLength(11);
+    expect(model.valueConservationDelta).toBeCloseTo(0);
+  });
+
+  it("combines share classes into one company before selecting the top ten", () => {
+    const ivv = snapshot("XNAS:IVV", [
+      { symbol: "GOOGL", name: "ALPHABET CLASS A", mic: "XNAS", weight: 0.06, underlyingType: "stock" },
+      { symbol: "GOOG", name: "ALPHABET CLASS C", mic: "XNAS", weight: 0.05, underlyingType: "stock" },
+      ...Array.from({ length: 9 }, (_, index) => ({ symbol: `S${index + 1}`, name: `Stock ${index + 1}`, mic: "XNAS", weight: 0.09, underlyingType: "stock" as const })),
+      { symbol: "S10", name: "Stock 10", mic: "XNAS", weight: 0.08, underlyingType: "stock" },
+    ]);
+    const model = buildExposureModel({
+      holdings: [direct("googl-direct", "GOOGL", 50), etf("ivv", "IVV", "XNAS:IVV", 1000)],
+      snapshots: new Map([["XNAS:IVV", ivv]]),
+      totalAud: 1050,
+      maxConstituentsPerEtf: 10,
+    });
+    const alphabet = model.rows.find((row) => row.label === "Alphabet");
+    expect(alphabet?.directAud).toBeCloseTo(50);
+    expect(alphabet?.viaEtfsAud).toBeCloseTo(110);
+    expect(model.rows.some((row) => row.ticker === "GOOG")).toBe(false);
+    expect(model.rows.some((row) => row.ticker === "GOOGL")).toBe(false);
+    expect(model.rows.find((row) => row.label === "IVV · Others")?.viaEtfsAud).toBeCloseTo(80);
+    expect(model.valueConservationDelta).toBeCloseTo(0);
+  });
+
+  it("discovers previously unknown share-class groups from constituent names", () => {
+    const fund = snapshot("XNAS:FUND", [
+      { symbol: "ACMEA", name: "ACME CLASS A", mic: "XNAS", weight: 0.6, underlyingType: "stock" },
+      { symbol: "ACMEC", name: "ACME CLASS C", mic: "XNAS", weight: 0.4, underlyingType: "stock" },
+    ]);
+    const model = buildExposureModel({
+      holdings: [direct("acme-direct", "ACMEA", 50), etf("fund", "FUND", "XNAS:FUND", 1000)],
+      snapshots: new Map([["XNAS:FUND", fund]]),
+      totalAud: 1050,
+    });
+    const acme = model.rows.find((row) => row.label === "Acme");
+    expect(acme?.directAud).toBeCloseTo(50);
+    expect(acme?.viaEtfsAud).toBeCloseTo(1000);
+    expect(model.rows.filter((row) => row.key.startsWith("company:"))).toHaveLength(1);
   });
 
   it("multiplies nested ETF weights and turns cycles into opaque exposure", () => {

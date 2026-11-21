@@ -1,0 +1,741 @@
+import { randomUUID } from "node:crypto";
+import Decimal from "decimal.js";
+import { parseCsvRows } from "../src/domain/etf";
+import { runSync, importedKeysStorageKey, resetImportedKeysForMappings } from "../broker-sync/src/syncEngine";
+import { parseIbkrFlexReport, fetchIbkrFlexReport } from "../broker-sync/src/ibkrFlex";
+import {
+  fetchWebullReport,
+  checkWebullToken,
+  createWebullToken,
+  listWebullAccounts,
+} from "../broker-sync/src/webullOpenApi";
+import {
+  ALLOCATION,
+  BROKER,
+  account,
+  currency,
+  day,
+  dayOf,
+  json,
+  money,
+  preference,
+  putPref,
+  resolveAsset,
+  saveEvent,
+  savePrice,
+  transaction,
+} from "./ledger.js";
+import { loadBook, positions, accountSnapshot, storageContext } from "./flows.js";
+import { EtfCache } from "../src/storage/etfCache";
+import { loadAddonSettings } from "../src/storage/settings";
+import { createProviders, resolveEtfHoldings } from "../src/services/etf/providers";
+
+const D = (x) => new Decimal(x ?? 0);
+const networkHosts = new Set([
+  "api.webull.com.au",
+  "ndcdyn.interactivebrokers.com",
+  "gdcdyn.interactivebrokers.com",
+  "api.twelvedata.com",
+  "www.alphavantage.co",
+  "www.ishares.com",
+  "dng-api.invesco.com",
+  "www.betashares.com.au",
+]);
+export const network = {
+  async request(request) {
+    const url = new URL(request.url);
+    if (
+      url.protocol !== "https:" ||
+      !networkHosts.has(url.hostname) ||
+      url.username ||
+      url.password ||
+      url.port
+    )
+      throw Error("数据源地址不受支持。");
+    const res = await fetch(url, {
+      method: request.method || "GET",
+      headers: request.headers,
+      body: request.body ?? undefined,
+      redirect: "error",
+      signal: AbortSignal.timeout(30000),
+    });
+    const chunks = [];
+    let n = 0;
+    for await (const c of res.body || []) {
+      n += c.length;
+      if (n > 32 * 1024 * 1024) throw Error("数据源响应过大。");
+      chunks.push(c);
+    }
+    return {
+      status: res.status,
+      body: Buffer.concat(chunks).toString("utf8"),
+      headers: Object.fromEntries(res.headers),
+    };
+  },
+};
+const cleanHeader = (s) =>
+  String(s)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+function exportedDate(raw) {
+  const s = String(raw).trim(),
+    iso = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (iso) return day([iso[1], iso[2].padStart(2, "0"), iso[3].padStart(2, "0")].join("-"));
+  const au = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (au) return day([au[3], au[2].padStart(2, "0"), au[1].padStart(2, "0")].join("-"));
+  throw Error("成交日期须为 YYYY-MM-DD 或 DD/MM/YYYY。");
+}
+function cellNumber(value) {
+  return money(
+    String(value)
+      .replace(/(?:US|AU)?\$|,/gi, "")
+      .trim(),
+    true,
+  );
+}
+export function parseWebullCsv(text) {
+  const rows = parseCsvRows(text.replace(/^\uFEFF/, "")),
+    header = rows.shift()?.map(cleanHeader) || [];
+  const activities = [],
+    unknown = [],
+    dates = [];
+  function column(...names) {
+    return (
+      names
+        .map(cleanHeader)
+        .map((n) => header.indexOf(n))
+        .find((i) => i >= 0) ?? -1
+    );
+  }
+  const cols = {
+    id: column("Trade ID", "Execution ID", "Order ID", "Order No", "Order Number"),
+    symbol: column("Symbol", "Ticker", "Stock Code"),
+    side: column("Side", "Action", "Direction"),
+    qty: column("Filled Quantity", "Filled Qty", "Filled", "Executed Quantity", "Quantity"),
+    price: column(
+      "Average Price",
+      "Avg Price",
+      "Avg Filled Price",
+      "Filled Price",
+      "Execution Price",
+      "Price",
+    ),
+    date: column("Filled Time", "Filled Date", "Trade Date", "Execution Time", "Executed Time", "Date"),
+    ccy: column("Currency", "Currency Code"),
+    market: column("Exchange", "Market"),
+    fee: column("Commission", "Total Fees", "Fees"),
+    name: column("Name", "Security Name"),
+    status: column("Status", "Order Status"),
+  };
+  if ([cols.symbol, cols.side, cols.qty, cols.price, cols.date].some((i) => i < 0))
+    throw Error("CSV 缺少证券、买卖方向、成交数量、成交价或成交日期列。");
+  rows.forEach((row, i) => {
+    const value = (k) => (row[cols[k]] || "").trim();
+    if (!row.some(Boolean)) return;
+    try {
+      const date = exportedDate(value("date"));
+      dates.push(date);
+      if (
+        value("status") &&
+        !/^(filled|fully filled|executed|completed|已成交|全部成交)$/i.test(value("status"))
+      )
+        throw Error("订单未完全成交");
+      const side = value("side").toUpperCase(),
+        symbol = value("symbol").toUpperCase(),
+        market = value("market").toUpperCase();
+      const ccy =
+        value("ccy") ||
+        (/ASX|AUSTRALIA|^AU$/.test(market) ? "AUD" : /NYSE|NASDAQ|^US$/.test(market) ? "USD" : "");
+      if (!value("id")) throw Error("缺少可核对的券商记录编号");
+      const type = /^(B|BUY|买入)$/.test(side) ? "BUY" : /^(S|SELL|卖出)$/.test(side) ? "SELL" : null;
+      if (!type || !symbol) throw Error("无法识别证券或买卖方向");
+      const qty = cellNumber(value("qty")),
+        price = cellNumber(value("price"));
+      if (D(qty).lte(0) || D(price).lte(0)) throw Error("成交数量和价格必须大于零");
+      activities.push({
+        broker: "webull",
+        brokerRecordId: value("id"),
+        activityType: type,
+        symbol,
+        symbolName: value("name") || symbol,
+        date,
+        currency: currency(ccy),
+        quantity: Number(qty),
+        unitPrice: Number(price),
+        fee: value("fee") ? Number(cellNumber(value("fee"))) : 0,
+        exchangeMic:
+          { NASDAQ: "XNAS", NYSE: "XNYS", ASX: "XASX", AU: "XASX" }[market] ||
+          (/^X[A-Z]{3}$/.test(market) ? market : undefined),
+      });
+    } catch (e) {
+      unknown.push({ line: i + 2, symbol: value("symbol"), reason: e.message });
+    }
+  });
+  return {
+    activities,
+    unknown,
+    lastDate: dates.sort().at(-1),
+    audit: { warnings: ["成交文件须与同日现金余额及资金流水一并核对。"] },
+  };
+}
+export function detailedIbkr(text) {
+  return withIbkrStatement(parseIbkrFlexReport(text));
+}
+function withIbkrStatement(report) {
+  const audit = report.audit,
+    date = audit.period?.to;
+  return {
+    ...report,
+    unknown: [],
+    statement: date
+      ? {
+          date,
+          cash: audit.endingCashByCurrency,
+          positions: audit.statementPositions,
+          nav: audit.reportedNavBase,
+          base: audit.baseCurrency,
+        }
+      : null,
+  };
+}
+export function validActivity(row) {
+  const errors = {};
+  try {
+    day(row.date);
+    currency(row.currency);
+    if (
+      ["BUY", "SELL"].includes(row.activityType) &&
+      (!row.symbol || D(row.quantity).lte(0) || D(row.unitPrice).lte(0))
+    )
+      throw Error("请核对证券、数量和成交价。");
+    if (!["BUY", "SELL"].includes(row.activityType) && row.amount == null && !row.quantity)
+      throw Error("券商记录缺少金额或转入转出的证券数量。");
+    for (const k of ["quantity", "unitPrice", "fee", "tax", "amount"])
+      if (row[k] != null) money(row[k], true);
+  } catch (e) {
+    errors.validation = [e.message];
+  }
+  return { ...row, isValid: !Object.keys(errors).length, errors };
+}
+function nativeEvent(db, v, id) {
+  const assetId = resolveAsset(db, v.asset, v.currency);
+  const n = (k) => (v[k] == null ? null : money(v[k]));
+  return {
+    id,
+    accountId: v.accountId,
+    assetId,
+    assetSymbol: v.asset?.symbol || "",
+    activityType: v.activityType,
+    subtype: v.subtype ?? null,
+    date: v.activityDate,
+    quantity: n("quantity"),
+    unitPrice: n("unitPrice"),
+    amount: n("amount"),
+    fee: n("fee"),
+    tax: n("tax"),
+    fxRate: n("fxRate"),
+    currency: v.currency,
+    comment: v.comment || "",
+    sourceSystem: v.sourceSystem,
+    sourceRecordId: v.sourceRecordId,
+    group: v.sourceGroupId,
+    metadata: v.metadata || {},
+    status: "POSTED",
+  };
+}
+export function syncHost(db) {
+  const key = importedKeysStorageKey();
+  return {
+    checkImport: async (rows) => rows.map(validActivity),
+    getActivities: async (id) =>
+      db
+        .prepare("SELECT data FROM sp_events WHERE account=?")
+        .all(id)
+        .map((r) => json(r.data, {})),
+    loadImportedKeys: async () => new Set(json(preference(db, BROKER, key), [])),
+    saveImportedKeys: async (keys) => putPref(db, BROKER, key, JSON.stringify([...keys].sort())),
+    updatePortfolio: async () => {},
+    saveActivities: async (creates, updates = []) => {
+      const created = [],
+        updated = [],
+        createdMappings = [];
+      for (const v of creates) {
+        const id = randomUUID(),
+          e = nativeEvent(db, v, id);
+        saveEvent(db, e);
+        created.push(e);
+        createdMappings.push({ tempId: v.id, activityId: id });
+        tradePrice(db, e);
+      }
+      for (const v of updates) {
+        const e = nativeEvent(db, v, v.id);
+        saveEvent(db, e);
+        updated.push(e);
+        tradePrice(db, e);
+      }
+      return { created, updated, createdMappings, deleted: [], errors: [] };
+    },
+  };
+}
+function tradePrice(db, e) {
+  if (e.assetId && ["BUY", "SELL"].includes(e.activityType) && D(e.unitPrice).gt(0))
+    savePrice(db, e.assetId, dayOf(e.date), e.unitPrice, "成交价", 1);
+}
+export function amendEvent(db, args) {
+  const row = db.prepare("SELECT data FROM sp_events WHERE id=? AND account=?").get(args.id, args.account);
+  if (!row) throw Error("找不到要更正的流水。");
+  const before = json(row.data, {}),
+    reason = String(args.reason || "").trim();
+  if (!reason) throw Error("请输入原始凭证或更正依据。");
+  if (args.prior !== row.data) throw Error("流水已经变更，请重新加载并核对。");
+  if (
+    ![
+      "BUY",
+      "SELL",
+      "DEPOSIT",
+      "WITHDRAWAL",
+      "DIVIDEND",
+      "INTEREST",
+      "FEE",
+      "TAX",
+      "TRANSFER_IN",
+      "TRANSFER_OUT",
+    ].includes(before.activityType)
+  )
+    throw Error("此类历史流水须先核对其专属业务规则。");
+  const after = {
+    ...before,
+    date: day(args.date) === dayOf(before.date) ? before.date : day(args.date),
+    comment: String(args.note || ""),
+    isUserModified: true,
+    needsReview: false,
+  };
+  if (["BUY", "SELL"].includes(before.activityType)) {
+    after.quantity = money(args.quantity, true);
+    after.unitPrice = money(args.price, true);
+    after.fee = money(args.fee || 0, true);
+    if (D(after.quantity).lte(0) || D(after.unitPrice).lte(0)) throw Error("数量和价格必须大于零。");
+  } else if (before.assetId && D(before.quantity).gt(0)) after.quantity = money(args.quantity, true);
+  else {
+    after.amount = money(args.amount, true);
+    if (D(after.amount).lte(0)) throw Error("金额必须大于零。");
+  }
+  return transaction(db, () => {
+    saveEvent(db, after);
+    db.prepare("INSERT INTO sp_corrections VALUES(?,?,?,?,?,?)").run(
+      randomUUID(),
+      after.id,
+      new Date().toISOString(),
+      reason,
+      row.data,
+      JSON.stringify(after),
+    );
+    if (before.assetId && ["BUY", "SELL"].includes(before.activityType)) {
+      const oldDay = dayOf(before.date);
+      db.prepare("DELETE FROM sp_prices WHERE asset=? AND day=? AND source='成交价'").run(
+        before.assetId,
+        oldDay,
+      );
+      for (const v of db
+        .prepare("SELECT data FROM sp_events WHERE day=? ORDER BY json_extract(data,'$.date'),id")
+        .all(oldDay)) {
+        const e = json(v.data, {});
+        if (e.assetId === before.assetId) tradePrice(db, e);
+      }
+    }
+    tradePrice(db, after);
+    db.prepare("INSERT OR REPLACE INTO sp_checks VALUES(?,?,?)").run(
+      after.accountId,
+      [dayOf(after.date), dayOf(before.date)].sort()[0],
+      "流水已更正，请重新核对受影响的结单",
+    );
+    return after.id;
+  });
+}
+function splitConflicts(db, acc, report) {
+  const exists = new Map();
+  for (const { data } of db.prepare("SELECT data FROM sp_events WHERE account=?").all(acc)) {
+    const e = json(data, {});
+    if (e.sourceRecordId) exists.set(String(e.sourceSystem).toLowerCase() + ":" + e.sourceRecordId, e);
+  }
+  const active = [],
+    problems = [...(report.unknown || [])],
+    counts = new Map();
+  for (const r of report.activities) {
+    const id = r.broker + ":" + r.brokerRecordId;
+    counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  const opening = preference(db, "opening-date", acc);
+  for (const r of report.activities) {
+    const id = r.broker + ":" + r.brokerRecordId,
+      prior = exists.get(id);
+    if (!r.brokerRecordId || /^fallback-[a-f0-9]+(?:$|:)/i.test(r.brokerRecordId)) {
+      problems.push({ reason: "缺少可靠的券商记录编号，请核对原始凭证", symbol: r.symbol });
+      continue;
+    }
+    if (opening && dayOf(r.date) <= opening) {
+      problems.push({ reason: "记录落在已确认的期初余额之内", symbol: r.symbol });
+      continue;
+    }
+    if (counts.get(id) > 1) {
+      problems.push({ reason: "文件中券商编号重复，请核对", symbol: r.symbol });
+      continue;
+    }
+    const changed =
+      prior &&
+      !r.importRevision &&
+      !prior.isUserModified &&
+      (prior.activityType !== r.activityType ||
+        prior.currency !== r.currency ||
+        ["quantity", "unitPrice", "amount", "fee", "tax"].some((k) => !D(prior[k]).eq(D(r[k]))));
+    if (changed) {
+      problems.push({ reason: "相同券商编号对应的内容已变化，保留原流水", symbol: r.symbol });
+      continue;
+    }
+    active.push(r);
+  }
+  return { active, problems };
+}
+export async function batch(db, accountId, broker, report, source, commit = false) {
+  account(db, accountId);
+  const { active, problems } = splitConflicts(db, accountId, report);
+  const ownTransaction = commit === true;
+  if (ownTransaction) db.exec("BEGIN IMMEDIATE");
+  try {
+    const result = await runSync(
+      { fetch: async () => active },
+      syncHost(db),
+      { ibkr: "", webull: "", [broker]: accountId },
+      !commit,
+    );
+    const summary = {
+      source,
+      broker,
+      account: accountId,
+      imported: result.imported,
+      updated: result.updated,
+      added: result.valid,
+      duplicate: result.alreadyImported + result.duplicates,
+      unknown: problems,
+      invalid: result.invalid,
+      audit: report.audit || {},
+      statement: report.statement,
+      rows: result.checked.map((r) => ({
+        date: r.date,
+        symbol: r.symbol || r.activityType,
+        type: r.activityType,
+        quantity: r.quantity,
+        amount: r.amount,
+        currency: r.currency,
+        status: r.isValid ? (r.duplicateOfId ? "已存在／待核对更正" : "新增") : "待核对",
+        reason: Object.values(r.errors || {})
+          .flat()
+          .join(" "),
+      })),
+    };
+    if (commit) {
+      if (report.statement) {
+        const st = report.statement;
+        for (const r of st.positions || []) {
+          const id = resolveAsset(db, { symbol: r.symbol, exchangeMic: r.mic }, r.currency, false);
+          if (id && Number(r.price) > 0) savePrice(db, id, st.date, r.price, "IBKR 结单报价", 30);
+          if (st.base === "AUD" && r.currency !== "AUD" && Number(r.fxToBase) > 0)
+            savePrice(db, "FX:" + currency(r.currency) + "/AUD", st.date, r.fxToBase, "IBKR 结单汇率", 30);
+        }
+      }
+      if (result.imported || result.updated || problems.length || result.invalid) {
+        db.prepare("INSERT INTO sp_batches VALUES(?,?,?,?,?)").run(
+          randomUUID(),
+          accountId,
+          new Date().toISOString(),
+          source,
+          JSON.stringify(summary),
+        );
+        const latest = [
+          ...report.activities.map((a) => dayOf(a.date)),
+          report.lastDate,
+          report.statement?.date,
+        ]
+          .filter(Boolean)
+          .sort()
+          .at(-1);
+        const noStartingBalance = !db
+          .prepare("SELECT 1 FROM sp_anchors WHERE account=? LIMIT 1")
+          .get(accountId);
+        if (
+          latest &&
+          (problems.length ||
+            result.invalid ||
+            noStartingBalance ||
+            (broker === "webull" && (source.toLowerCase().includes("csv") || report.audit?.warnings?.length)))
+        ) {
+          db.prepare("INSERT OR REPLACE INTO sp_checks VALUES(?,?,?)").run(
+            accountId,
+            latest,
+            problems.length || result.invalid
+              ? "导入含待核对记录，请核对同日结单及资金流水"
+              : "成交已导入，现金余额与期间资金流水待结单核对",
+          );
+        }
+      }
+      if (ownTransaction) db.exec("COMMIT");
+    }
+    return summary;
+  } catch (e) {
+    if (ownTransaction) db.exec("ROLLBACK");
+    throw e;
+  }
+}
+export async function combinedBatch(db, parts, commit = false) {
+  if (commit) db.exec("BEGIN IMMEDIATE");
+  try {
+    const reports = [];
+    for (const p of parts)
+      reports.push(await batch(db, p.account, p.broker, p.report, p.source, commit ? "nested" : false));
+    const sum = (k) => reports.reduce((n, r) => n + r[k], 0);
+    const summary = {
+      source: "IBKR + Webull AU",
+      broker: "both",
+      reports,
+      imported: sum("imported"),
+      updated: sum("updated"),
+      added: sum("added"),
+      duplicate: sum("duplicate"),
+      invalid: sum("invalid"),
+      unknown: reports.flatMap((r) => r.unknown),
+      rows: reports.flatMap((r) =>
+        r.rows.map((v) => ({ ...v, symbol: r.broker.toUpperCase() + " · " + v.symbol })),
+      ),
+      audit: { warnings: reports.flatMap((r) => r.audit?.warnings || []) },
+    };
+    if (commit) db.exec("COMMIT");
+    return summary;
+  } catch (e) {
+    if (commit) db.exec("ROLLBACK");
+    throw e;
+  }
+}
+export function addManual(db, args) {
+  const a = account(db, args.account),
+    date = day(args.date),
+    type = String(args.type),
+    ccy = currency(args.currency);
+  const supported = [
+    "DEPOSIT",
+    "WITHDRAWAL",
+    "BUY",
+    "SELL",
+    "DIVIDEND",
+    "INTEREST",
+    "FEE",
+    "TAX",
+    "TRANSFER_IN",
+    "TRANSFER_OUT",
+  ];
+  const opening = preference(db, "opening-date", a.id);
+  if (opening && date <= opening) throw Error("这笔流水落在已确认的期初余额之内。");
+  if (!supported.includes(type)) throw Error("不支持的流水类型。");
+  const sourceId = String(args.reference || "").trim();
+  if (!sourceId) throw Error("请输入可追溯的结单编号或凭证编号。");
+  const id = "manual:" + a.id + ":" + sourceId;
+  if (db.prepare("SELECT 1 FROM sp_events WHERE id=?").get(id)) throw Error("这份凭证已经入账。");
+  return transaction(db, () => {
+    const e = {
+      id,
+      accountId: a.id,
+      date,
+      activityType: type,
+      currency: ccy,
+      sourceSystem: "MANUAL",
+      sourceRecordId: sourceId,
+      isUserModified: true,
+      comment: String(args.note || ""),
+      status: "POSTED",
+    };
+    if (type === "BUY" || type === "SELL") {
+      if (!String(args.symbol || "").trim()) throw Error("请输入证券代码。");
+      e.assetSymbol = String(args.symbol).trim().toUpperCase();
+      e.assetId = resolveAsset(
+        db,
+        {
+          symbol: e.assetSymbol,
+          exchangeMic: args.mic,
+          name: args.name,
+          instrumentType: args.kind || "EQUITY",
+        },
+        ccy,
+      );
+      e.quantity = money(args.quantity, true);
+      e.unitPrice = money(args.price, true);
+      e.fee = money(args.fee || 0, true);
+      if (D(e.quantity).lte(0) || D(e.unitPrice).lte(0)) throw Error("数量和成交价必须大于零。");
+    } else {
+      e.amount = money(args.amount, true);
+      if (D(e.amount).lte(0)) throw Error("金额必须大于零。");
+    }
+    if (type.startsWith("TRANSFER_")) e.group = String(args.group || "").trim() || null;
+    saveEvent(db, e);
+    tradePrice(db, e);
+    db.prepare(
+      "INSERT OR REPLACE INTO sp_checks(account,day,reason) SELECT account,day,'结单期间新增了流水，请重新核对' FROM sp_statements WHERE account=? AND day>=?",
+    ).run(a.id, date);
+    return id;
+  });
+}
+export function compareStatement(db, args, commit = false) {
+  const book = loadBook(db),
+    a = account(db, args.account),
+    date = day(args.date),
+    input = args.cash || {},
+    cashEntries = Object.entries(input);
+  if (!cashEntries.length) throw Error("请填写结单上的分币种现金余额。");
+  const pos = positions(book, a, date),
+    result = [];
+  for (const c of new Set([...pos.cash.keys(), ...Object.keys(input)])) {
+    const expected = input[c] == null ? null : D(money(input[c])),
+      actual = pos.cash.get(c) || D(0);
+    result.push({
+      label: c + " 现金",
+      expected: expected?.toFixed() ?? null,
+      actual: actual.toFixed(),
+      delta: expected == null ? null : actual.minus(expected).toFixed(),
+    });
+  }
+  if (args.positions != null) {
+    const map = new Map();
+    const actual = new Map();
+    const held = [...pos.holdings]
+      .filter(([, qty]) => !qty.isZero())
+      .map(([id, qty]) => ({ id, qty, asset: book.assets.get(id) }));
+    const labels = new Map();
+    for (const { id, qty, asset } of held) {
+      actual.set(id, qty);
+      labels.set(id, (asset?.symbol || id) + (asset?.mic ? " · " + asset.mic : ""));
+    }
+    for (const v of args.positions) {
+      const sym = String(v.symbol).toUpperCase();
+      const matches = held.filter(
+        ({ asset }) =>
+          asset?.symbol.toUpperCase() === sym &&
+          (!v.currency || asset.currency === v.currency) &&
+          (!v.mic || asset.mic === v.mic),
+      );
+      if (matches.length > 1) {
+        pos.warnings.push(sym + " 对应多个上市证券，请在数量后填写币种与交易所。");
+        continue;
+      }
+      const key = matches[0]?.id || [sym, v.currency, v.mic].filter(Boolean).join(":");
+      if (!labels.has(key)) labels.set(key, sym);
+      map.set(key, (map.get(key) || D(0)).plus(money(v.quantity)));
+    }
+    for (const s of new Set([...map.keys(), ...actual.keys()])) {
+      const observed = actual.get(s) || D(0),
+        expected = map.get(s) || D(0);
+      result.push({
+        label: labels.get(s) + " 数量",
+        expected: expected.toFixed(),
+        actual: observed.toFixed(),
+        delta: observed.minus(expected).toFixed(),
+      });
+    }
+  }
+  if (args.nav != null && (args.base == null || args.base === "AUD")) {
+    const view = accountSnapshot(book, a, date),
+      expected = D(money(args.nav)),
+      quoted = view.rows.every(
+        (r) =>
+          r.audValue != null &&
+          (r.type === "cash" || r.priceUpdatedAt === date) &&
+          (r.localCurrency === "AUD" || r.fxDate === date),
+      );
+    const actual = quoted ? view.rows.reduce((n, r) => n.plus(r.audValue), D(0)) : null;
+    result.push({
+      label: "总资产 AUD",
+      expected: expected.toFixed(),
+      actual: actual?.toFixed() ?? null,
+      delta: actual ? actual.minus(expected).toFixed() : null,
+    });
+    if (!quoted) pos.warnings.push("请补齐与结单同日的报价及澳元汇率，再比较总资产。");
+  }
+  const ok =
+    !pos.warnings.length &&
+    result.every(
+      (r) =>
+        r.delta !== null &&
+        D(r.delta)
+          .abs()
+          .lte(r.label.endsWith("数量") ? "0.00000001" : "0.005"),
+    );
+  if (commit) {
+    if (!ok || !args.flowsReviewed) throw Error("请先核齐差异，并确认期间资金流水齐全。");
+    transaction(db, () => {
+      db.prepare("INSERT INTO sp_statements VALUES(?,?,?,?,?)").run(
+        randomUUID(),
+        a.id,
+        date,
+        String(args.source || "月结单"),
+        JSON.stringify({ result, flowsReviewed: true }),
+      );
+      db.prepare("DELETE FROM sp_checks WHERE account=? AND day<=?").run(a.id, date);
+    });
+  }
+  return { ok, rows: result, warnings: pos.warnings };
+}
+export async function brokerReport(db, broker, secrets) {
+  if (broker === "ibkr") {
+    const queryId = preference(db, BROKER, "ibkr.flex-query-id"),
+      token = await secrets.get("ibkr.flex-token");
+    if (!queryId || !token) throw Error("请先保存 IBKR Query ID 和 Flex Token。");
+    return withIbkrStatement(await fetchIbkrFlexReport(network, { queryId, token }));
+  }
+  const { appKey, appSecret, accessToken, accountId } = await webullCredentials(db, secrets);
+  if (!appKey || !appSecret || !accessToken || !accountId) throw Error("请先连接并选择 Webull AU 券商账户。");
+  return fetchWebullReport(network, { appKey, appSecret, accessToken, accountId });
+}
+async function webullCredentials(db, secrets) {
+  return {
+    appKey: preference(db, BROKER, "webull.app-key"),
+    appSecret: await secrets.get("webull.app-secret"),
+    accessToken: await secrets.get("webull.access-token"),
+    accountId: preference(db, BROKER, "webull.api-account-id"),
+  };
+}
+export async function connectWebull(db, secrets) {
+  const creds = await webullCredentials(db, secrets);
+  if (!creds.appKey || !creds.appSecret) throw Error("请先保存 Webull App Key 与 App Secret。");
+  let token = creds.accessToken
+    ? await checkWebullToken(network, creds, creds.accessToken)
+    : await createWebullToken(network, creds);
+  if (["INVALID", "EXPIRED"].includes(token.status)) token = await createWebullToken(network, creds);
+  const saved = token.token || creds.accessToken;
+  if (!saved) throw Error("Webull 未返回授权令牌。");
+  await secrets.set("webull.access-token", saved);
+  if (token.status !== "NORMAL") return { status: token.status || "待确认", accounts: [] };
+  return { status: "已连接", accounts: await listWebullAccounts(network, { ...creds, accessToken: saved }) };
+}
+export function resetSync(db, broker, id) {
+  return resetImportedKeysForMappings(syncHost(db), { ibkr: "", webull: "", [broker]: id });
+}
+export async function refreshFund(db, asset, secrets) {
+  const ctx = storageContext(db, ALLOCATION);
+  ctx.api.network = network;
+  const settings = await loadAddonSettings(ctx),
+    cache = new EtfCache(ctx),
+    current = await cache.get(asset.etfKey);
+  if (current?.snapshot?.sourceMode === "manual")
+    throw Error("此基金使用手工成分。切换数据源前请先导出并停用当前成分表。");
+  const providers = createProviders(ctx, { alphaVantageApiKey: await secrets.get("alphaVantage.apiKey") });
+  const result = await resolveEtfHoldings(
+    { ...asset, providerSymbol: settings.providerIdentities[asset.etfKey] },
+    providers,
+    {
+      mode: settings.providerModes[asset.etfKey] || "auto",
+      pinnedProvider: settings.pinnedProviders[asset.etfKey],
+      cached: current?.snapshot,
+      force: true,
+    },
+  );
+  if (!result.snapshot || result.failureReason) throw Error(result.failureReason || "数据源未返回有效成分。");
+  return cache.save(result.snapshot, { expectedVersion: current?.version });
+}

@@ -1,9 +1,9 @@
 {
   "id": "portfolio-xray",
-  "name": "Portfolio X-Ray",
-  "version": "0.1.0",
-  "description": "See the companies and asset classes your portfolio is economically exposed to.",
-  "author": "Portfolio X-Ray",
+  "name": "Allocation",
+  "version": "0.3.11",
+  "description": "Monitor allocation, look-through exposure, and rebalancing in Wealthfolio.",
+  "author": "Allocation",
   "license": "MIT",
   "main": "dist/addon.js",
   "sdkVersion": "3.7.0",
@@ -14,6 +14,7 @@
       "api.twelvedata.com",
       "www.alphavantage.co",
       "www.ishares.com",
+      "dng-api.invesco.com",
       "www.betashares.com.au"
     ]
   },
@@ -26,8 +27,8 @@
         {
           "id": "portfolio-xray",
           "route": "portfolio-xray",
-          "label": "Portfolio X-Ray",
-          "icon": "scan-search",
+          "label": "Allocation",
+          "icon": "chart-bar",
           "order": 95
         }
       ]

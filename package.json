@@ -1,11 +1,12 @@
 {
   "name": "portfolio-xray",
   "private": true,
-  "version": "0.1.0",
-  "description": "Wealthfolio Portfolio X-Ray addon",
+  "version": "0.3.11",
+  "description": "Wealthfolio Allocation addon",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prototype": "vite --config src/pages/allocation-prototype/harness/vite.config.ts",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",

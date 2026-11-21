@@ -1,4 +1,5 @@
-import { applyAlias, canonicalEtfKey, canonicalIdentity } from "@/domain/identifiers";
+import { applyAlias, canonicalCompanyIdentity, canonicalEtfKey, canonicalIdentity, normalizeIdentityPart, preferUsListingKey, usListingKey } from "@/domain/identifiers";
+import type { CompanyIdentity } from "@/domain/identifiers";
 import type {
   AssetType,
   EtfHoldingsSnapshot,
@@ -17,6 +18,7 @@ interface ExposureInput {
   snapshots: Map<string, EtfHoldingsSnapshot>;
   totalAud: number | null;
   aliases?: Record<string, string>;
+  maxConstituentsPerEtf?: number;
 }
 
 interface ExpansionResult {
@@ -39,11 +41,89 @@ function displayType(type: UnderlyingType): AssetType {
 }
 
 type UnderlyingType = NonNullable<EtfHoldingsSnapshot["holdings"][number]["underlyingType"]>;
+type UnderlyingHolding = EtfHoldingsSnapshot["holdings"][number];
+type CompanyConstituent = UnderlyingHolding & { company?: CompanyIdentity };
+
+function shareClassIssuerName(name: string): string | null {
+  const match = /^(.*?)\s+CLASS\s+[A-Z0-9]+$/i.exec(name.trim());
+  return match?.[1]?.trim() || null;
+}
+
+function displayCompanyName(value: string): string {
+  return value.toLowerCase().replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function discoverShareClassCompanies(snapshots: Map<string, EtfHoldingsSnapshot>): Map<string, CompanyIdentity> {
+  const discovered = new Map<string, CompanyIdentity>();
+  for (const snapshot of snapshots.values()) {
+    const groups = new Map<string, UnderlyingHolding[]>();
+    for (const holding of snapshot.holdings) {
+      if (holding.underlyingType !== "stock") continue;
+      const issuerName = shareClassIssuerName(holding.name);
+      if (!issuerName) continue;
+      const key = normalizeIdentityPart(issuerName);
+      const group = groups.get(key) ?? [];
+      group.push(holding);
+      groups.set(key, group);
+    }
+    for (const [issuerKey, shareClasses] of groups) {
+      const symbols = [...new Set(shareClasses.map((holding) => holding.symbol?.trim()).filter((symbol): symbol is string => Boolean(symbol)))];
+      if (symbols.length < 2) continue;
+      const explicit = symbols.map((symbol) => canonicalCompanyIdentity({ symbol })).find((company) => company !== null);
+      const company: CompanyIdentity = explicit ?? {
+        key: `company:${issuerKey}`,
+        label: displayCompanyName(shareClassIssuerName(shareClasses[0].name) ?? issuerKey),
+        ticker: symbols.join(" / "),
+      };
+      for (const symbol of symbols) discovered.set(normalizeIdentityPart(symbol), company);
+    }
+  }
+  return discovered;
+}
+
+function resolveCompany(symbol: string | undefined, discovered: Map<string, CompanyIdentity>): CompanyIdentity | null {
+  return canonicalCompanyIdentity({ symbol }) ?? discovered.get(normalizeIdentityPart(symbol)) ?? null;
+}
+
+function consolidateShareClasses(
+  holdings: UnderlyingHolding[],
+  discovered: Map<string, CompanyIdentity>,
+): CompanyConstituent[] {
+  const result: CompanyConstituent[] = [];
+  const companies = new Map<string, CompanyConstituent>();
+  for (const holding of holdings) {
+    const company = holding.underlyingType === "stock" ? resolveCompany(holding.symbol, discovered) : null;
+    if (!company) {
+      result.push(holding);
+      continue;
+    }
+    const existing = companies.get(company.key);
+    if (existing) {
+      existing.weight += holding.weight;
+      existing.sector = mergeMetadata(existing.sector, holding.sector);
+      existing.country = mergeMetadata(existing.country, holding.country);
+      continue;
+    }
+    const consolidated: CompanyConstituent = {
+      ...holding,
+      symbol: company.ticker,
+      name: company.label,
+      company,
+    };
+    companies.set(company.key, consolidated);
+    result.push(consolidated);
+  }
+  return result;
+}
 
 export function buildExposureModel(input: ExposureInput): ExposureModel {
   const rows = new Map<string, ExposureRow>();
   const snapshotByKey = input.snapshots;
+  const discoveredCompanies = discoverShareClassCompanies(snapshotByKey);
   const aliases = input.aliases ?? {};
+  const maxConstituentsPerEtf = input.maxConstituentsPerEtf && input.maxConstituentsPerEtf > 0
+    ? Math.floor(input.maxConstituentsPerEtf)
+    : null;
   const supportedValueAud = input.holdings.reduce((sum, holding) => sum + (holding.audValue ?? 0), 0);
   let coveredValueAud = 0;
   let eligibleValueAud = 0;
@@ -120,6 +200,7 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
     etfValueAud: number,
     path: string[],
     depth: number,
+    fundLabel: string,
   ): ExpansionResult {
     const snapshot = snapshotByKey.get(etfKey);
     if (!snapshot) {
@@ -128,7 +209,35 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
     }
 
     let covered = 0;
-    for (const constituent of snapshot.holdings) {
+    const consolidatedHoldings = consolidateShareClasses(snapshot.holdings, discoveredCompanies);
+    const ranked = maxConstituentsPerEtf
+      ? [...consolidatedHoldings].sort((a, b) => b.weight - a.weight)
+      : consolidatedHoldings;
+    const visibleConstituents = maxConstituentsPerEtf ? ranked.slice(0, maxConstituentsPerEtf) : ranked;
+    const hiddenConstituents = maxConstituentsPerEtf ? ranked.slice(maxConstituentsPerEtf) : [];
+    const hiddenAmountAud = hiddenConstituents.reduce((sum, constituent) => sum + etfValueAud * constituent.weight, 0);
+    if (hiddenAmountAud > 0) {
+      const source: EtfSource = {
+        kind: "etf",
+        holdingId: holding.id,
+        accountId: holding.accountId,
+        accountName: holding.accountName,
+        etfKey,
+        etfSymbol: holding.ticker,
+        amountAud: hiddenAmountAud,
+        path: [...path, "Others"],
+      };
+      addRow({
+        key: `others-etf:${etfKey}`,
+        ticker: "Others",
+        label: `${fundLabel} · Others`,
+        type: "other",
+        amountAud: hiddenAmountAud,
+        source,
+      });
+      covered += hiddenAmountAud;
+    }
+    for (const constituent of visibleConstituents) {
       const amountAud = etfValueAud * constituent.weight;
       if (amountAud === 0) continue;
       const nestedKey = constituent.underlyingType === "etf"
@@ -143,7 +252,7 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
           addOpaque(holding, amountAud, `opaque-etf:${nestedKey}`, `${constituent.symbol ?? constituent.name} · Opaque ETF`, "Maximum recursion depth reached");
           continue;
         }
-        covered += expandEtf(holding, nestedKey, amountAud, [...path, nestedKey], depth + 1).coveredValueAud;
+        covered += expandEtf(holding, nestedKey, amountAud, [...path, nestedKey], depth + 1, constituent.symbol ?? constituent.name).coveredValueAud;
         continue;
       }
 
@@ -158,7 +267,12 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
         continue;
       }
 
-      const identity = applyAlias(canonicalIdentity(constituent).key, aliases, { provider: snapshot.provider, etfKey })
+      const canonicalKey = canonicalIdentity(constituent).key;
+      const aliasedKey = applyAlias(canonicalKey, aliases, { provider: snapshot.provider, etfKey });
+      const identity = constituent.company?.key
+        ?? (aliasedKey && aliasedKey !== canonicalKey ? preferUsListingKey(aliasedKey) : null)
+        ?? (constituent.underlyingType === "stock" ? usListingKey(constituent) : null)
+        ?? canonicalKey
         ?? `unmapped:${etfKey}:${constituent.symbol ?? constituent.name}:${path.length}`;
       const type = displayType(constituent.underlyingType ?? "other");
       const source: EtfSource = {
@@ -173,8 +287,8 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
       };
       addRow({
         key: identity,
-        ticker: constituent.symbol,
-        label: constituent.name,
+        ticker: constituent.company?.ticker ?? constituent.symbol,
+        label: constituent.company?.label ?? constituent.name,
         type,
         amountAud,
         source,
@@ -211,11 +325,15 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
         );
         continue;
       }
-      coveredValueAud += expandEtf(holding, holding.etfKey, holding.audValue, [holding.etfKey], 0).coveredValueAud;
+      coveredValueAud += expandEtf(holding, holding.etfKey, holding.audValue, [holding.etfKey], 0, holding.ticker).coveredValueAud;
       continue;
     }
 
-    const key = holding.identityKey ?? `unclassified:${holding.id}`;
+    const company = holding.type === "stock" ? resolveCompany(holding.ticker, discoveredCompanies) : null;
+    const listingKey = holding.type === "stock"
+      ? usListingKey({ symbol: holding.ticker, mic: holding.mic, currency: holding.localCurrency, country: holding.country })
+      : null;
+    const key = company?.key ?? listingKey ?? (holding.identityKey && preferUsListingKey(holding.identityKey)) ?? `unclassified:${holding.id}`;
     const source: ExposureSource = {
       kind: "direct",
       holdingId: holding.id,
@@ -225,13 +343,15 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
     };
     addRow({
       key,
-      ticker: holding.ticker,
-      label: holding.name,
+      ticker: company?.ticker ?? holding.ticker,
+      label: company?.label ?? holding.name,
       type: holding.type,
       amountAud: holding.audValue,
       direct: true,
       source,
       status: holding.status === "valued" ? undefined : holding.status,
+      sector: holding.sector,
+      country: holding.country,
     });
     if (holding.type !== "cash") {
       eligibleValueAud += holding.audValue;

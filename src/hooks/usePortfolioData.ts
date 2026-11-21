@@ -5,6 +5,7 @@ import { getSnapshotStatus } from "@/domain/etf";
 import { scopedAliasKey } from "@/domain/identifiers";
 import { normalizeHolding, buildPortfolioModel } from "@/domain/portfolio";
 import { EtfCache } from "@/storage/etfCache";
+import { loadRebalanceSettings, saveRebalanceSettings } from "@/storage/rebalance";
 import {
   loadAddonSettings,
   reconcileAccountSelection,
@@ -26,6 +27,7 @@ import type {
   AssetType,
   EtfAsset,
   EtfCacheRecord,
+  RebalanceSettings,
 } from "@/types/domain";
 
 interface RuntimeState {
@@ -46,6 +48,7 @@ interface RuntimeState {
   hasAlphaVantageKey: boolean;
   lastLoadedAt: string | null;
   automaticFailures: Record<string, string>;
+  rebalanceSettings: RebalanceSettings;
 }
 
 const emptySettings: AddonSettings = {
@@ -95,6 +98,7 @@ function initialState(): RuntimeState {
     hasAlphaVantageKey: false,
     lastLoadedAt: null,
     automaticFailures: {},
+    rebalanceSettings: { schemaVersion: 1, tolerance: 0.05, targets: {} },
   };
 }
 
@@ -123,7 +127,8 @@ async function refreshAutomaticSnapshots(
     const record = recordsByKey.get(asset.etfKey);
     const mode = settings.providerModes[asset.etfKey] ?? "auto";
     const pinned = settings.pinnedProviders[asset.etfKey];
-    return !record?.snapshot || !isFreshSnapshot(record.snapshot) || (mode === "pinned" && record.snapshot.provider !== pinned);
+    const needsIdentityUpgrade = record?.snapshot?.sourceMode === "automatic" && record.snapshot.schemaVersion < 2;
+    return !record?.snapshot || !isFreshSnapshot(record.snapshot) || needsIdentityUpgrade || (mode === "pinned" && record.snapshot.provider !== pinned);
   });
   const outcomes = await mapWithConcurrency(candidates, 2, async (asset) => {
     const current = recordsByKey.get(asset.etfKey);
@@ -132,6 +137,7 @@ async function refreshAutomaticSnapshots(
         mode: settings.providerModes[asset.etfKey] ?? "auto",
         pinnedProvider: settings.pinnedProviders[asset.etfKey],
         cached: current?.snapshot,
+        force: current?.snapshot?.sourceMode === "automatic" && current.snapshot.schemaVersion < 2,
       });
       return { asset, current, result };
     } catch (error) {
@@ -174,6 +180,7 @@ export function usePortfolioData(ctx: AddonContext): RuntimeState & {
   setProviderIdentity: (key: string, identity: string) => Promise<void>;
   setAliasMapping: (provider: string, etfKey: string, originalKey: string, targetKey: string) => Promise<void>;
   removeAliasMapping: (aliasKey: string) => Promise<void>;
+  saveRebalance: (settings: RebalanceSettings) => Promise<void>;
 } {
   const [state, setState] = useState<RuntimeState>(initialState);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -182,9 +189,10 @@ export function usePortfolioData(ctx: AddonContext): RuntimeState & {
   const refresh = useCallback(async (options: { forceFx?: boolean } = {}) => {
     setState((current) => ({ ...current, loading: true, error: null }));
     try {
-      const [activeAccounts, loadedSettings, baseCurrency, hasTwelveDataKey, hasAlphaVantageKey] = await Promise.all([
+      const [activeAccounts, loadedSettings, rebalanceSettings, baseCurrency, hasTwelveDataKey, hasAlphaVantageKey] = await Promise.all([
         getActiveAccounts(ctx),
         loadAddonSettings(ctx),
+        loadRebalanceSettings(ctx),
         loadPortfolioBaseCurrency(ctx),
         hasSecret(ctx, TWELVE_DATA_SECRET),
         hasSecret(ctx, "alphaVantage.apiKey"),
@@ -248,6 +256,7 @@ export function usePortfolioData(ctx: AddonContext): RuntimeState & {
           hasAlphaVantageKey,
           lastLoadedAt: new Date().toISOString(),
           automaticFailures: automatic.failures,
+          rebalanceSettings,
         });
       }
     } catch (error) {
@@ -397,6 +406,11 @@ export function usePortfolioData(ctx: AddonContext): RuntimeState & {
     setRefreshToken((value) => value + 1);
   }, [ctx, state.settings]);
 
+  const saveRebalance = useCallback(async (settings: RebalanceSettings) => {
+    await saveRebalanceSettings(ctx, settings);
+    setState((current) => ({ ...current, rebalanceSettings: settings }));
+  }, [ctx]);
+
   return useMemo(() => ({
     ...state,
     refresh,
@@ -413,6 +427,7 @@ export function usePortfolioData(ctx: AddonContext): RuntimeState & {
     setProviderIdentity,
     setAliasMapping,
     removeAliasMapping,
+    saveRebalance,
   }), [
     state,
     refresh,
@@ -429,5 +444,6 @@ export function usePortfolioData(ctx: AddonContext): RuntimeState & {
     setProviderIdentity,
     setAliasMapping,
     removeAliasMapping,
+    saveRebalance,
   ]);
 }

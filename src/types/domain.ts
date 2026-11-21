@@ -34,6 +34,7 @@ export interface AssetProfile {
   instrumentType?: string;
   currency?: string;
   kind?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface NormalizedHolding {
@@ -50,7 +51,10 @@ export interface NormalizedHolding {
   priceUpdatedAt: string | null;
   identityKey: string | null;
   etfKey: string | null;
+  mic?: string;
   profileId: string | null;
+  sector?: string;
+  country?: string;
   status: HoldingStatus;
   issue?: string;
   sourceHoldingId: string;
@@ -252,4 +256,28 @@ export interface AddonSettings {
   providerIdentities: Record<string, string>;
   typeOverrides: Record<string, AssetType>;
   aliases: Record<string, string>;
+}
+
+export interface RebalanceSettings {
+  schemaVersion: 1;
+  tolerance: number;
+  targets: Record<string, number>;
+}
+
+export type RebalanceStatus = "overweight" | "underweight" | "on-target" | "unconfigured";
+
+export interface RebalanceRow extends AllocationRow {
+  targetWeight: number | null;
+  drift: number | null;
+  adjustmentAud: number | null;
+  status: RebalanceStatus;
+}
+
+export interface RebalanceModel {
+  rows: RebalanceRow[];
+  configured: boolean;
+  targetTotal: number;
+  tolerance: number;
+  needsRebalance: boolean;
+  largestDrift: number | null;
 }

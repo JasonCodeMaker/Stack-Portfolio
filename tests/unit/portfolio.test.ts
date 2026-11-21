@@ -31,10 +31,37 @@ describe("holding normalization", () => {
     expect(result.identityKey).toBe("mic:XNAS:NVDA");
   });
 
+  it("falls back to Wealthfolio base-currency value when live FX is unavailable", () => {
+    const result = normalizeHolding(holding(), account, profile, null);
+    expect(result.audValue).toBe(1500);
+    expect(result.status).toBe("valued");
+  });
+
   it("classifies cash from Wealthfolio holdingType", () => {
     const result = normalizeHolding(holding({ holdingType: "cash", localCurrency: "AUD", marketValue: { local: 500, base: 500 } }), account, null, fx);
     expect(result.type).toBe("cash");
     expect(result.identityKey).toBe("cash:AUD");
+  });
+
+  it("recognizes an ETF from provider metadata or its explicit fund name", () => {
+    const metadataProfile = { ...profile, name: "iShares Core S&P 500", metadata: { quoteType: "ETF" } };
+    expect(normalizeHolding(holding(), account, metadataProfile, fx).type).toBe("etf");
+    expect(normalizeHolding(holding(), account, { ...profile, name: "iShares Core S&P 500 ETF" }, fx).type).toBe("etf");
+  });
+
+  it("reads and normalizes direct-stock sector and country metadata", () => {
+    const metadataProfile: AssetProfile = {
+      ...profile,
+      metadata: {
+        profile: {
+          sectors: '[{"name":"Technology","weight":1}]',
+          countries: '[{"name":"United States","weight":1}]',
+        },
+      },
+    };
+    const result = normalizeHolding(holding(), account, metadataProfile, fx);
+    expect(result.sector).toBe("Information Technology");
+    expect(result.country).toBe("United States");
   });
 
   it("blocks negative positions and does not calculate percentages", () => {

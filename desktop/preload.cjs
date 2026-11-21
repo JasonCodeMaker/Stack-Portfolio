@@ -1,0 +1,43 @@
+const { contextBridge, ipcRenderer } = require("electron");
+const actions = [
+  "home",
+  "openDemo",
+  "openReal",
+  "newBook",
+  "migrationPreview",
+  "migrationCommit",
+  "dashboard",
+  "account",
+  "history",
+  "manual",
+  "preview",
+  "commit",
+  "compare",
+  "confirmStatement",
+  "opening",
+  "savePrice",
+  "targets",
+  "allocationSettings",
+  "fundCsv",
+  "fundSave",
+  "fundDisable",
+  "fundExport",
+  "fundRefresh",
+  "connections",
+  "saveConnection",
+  "connectWebull",
+  "resetSync",
+  "refreshMarket",
+  "autoRefresh",
+  "backup",
+  "restore",
+];
+contextBridge.exposeInMainWorld(
+  "portfolio",
+  Object.fromEntries(
+    [...actions, "amend", "corrections"].map((name) => [
+      name,
+      (args = {}) => ipcRenderer.invoke("portfolio:" + name, args),
+    ]),
+  ),
+);

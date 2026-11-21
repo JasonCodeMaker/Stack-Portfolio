@@ -16,6 +16,47 @@ function asFiniteNumber(value: number | null | undefined): number | null {
   return value !== null && value !== undefined && Number.isFinite(value) ? value : null;
 }
 
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function weightedMetadataLabel(value: unknown): string | undefined {
+  const parsed = parseJsonValue(value);
+  if (typeof parsed === "string") return parsed.trim() || undefined;
+  if (!Array.isArray(parsed)) return undefined;
+  const candidates = parsed
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({ name: typeof item.name === "string" ? item.name.trim() : "", weight: Number(item.weight ?? 0) }))
+    .filter((item) => item.name)
+    .sort((a, b) => b.weight - a.weight);
+  return candidates[0]?.name;
+}
+
+function profileMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
+  const parsed = parseJsonValue(metadata?.profile);
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : metadata ?? {};
+}
+
+function normalizeSectorName(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const aliases: Record<string, string> = {
+    technology: "Information Technology",
+    "financial services": "Financials",
+    "communication services": "Communication",
+    healthcare: "Health Care",
+    "consumer cyclical": "Consumer Discretionary",
+    "consumer defensive": "Consumer Staples",
+    "basic materials": "Materials",
+    realestate: "Real Estate",
+  };
+  return aliases[value.trim().toLowerCase()] ?? value.trim();
+}
+
 function classifyAsset(
   holding: Holding,
   profile: AssetProfile | null,
@@ -25,7 +66,13 @@ function classifyAsset(
   if (holding.holdingType === "cash") return "cash";
 
   const instrumentType = profile?.instrumentType?.toUpperCase() ?? "";
-  if (instrumentType.includes("ETF") || instrumentType.includes("MUTUAL")) return "etf";
+  const metadataType = ["quoteType", "instrumentType", "assetType", "type"]
+    .map((key) => profile?.metadata?.[key])
+    .filter((value): value is string => typeof value === "string")
+    .join(" ")
+    .toUpperCase();
+  const profileName = profile?.name?.toUpperCase() ?? "";
+  if (instrumentType.includes("ETF") || instrumentType.includes("MUTUAL") || metadataType.includes("ETF") || metadataType.includes("FUND") || /\bETF\b|EXCHANGE[- ]TRADED FUND/.test(profileName)) return "etf";
   if (instrumentType.includes("BOND") || instrumentType.includes("FIXED")) return "fixed-income";
   if (instrumentType.includes("OPTION") || instrumentType.includes("DERIVATIVE")) return "derivative";
   if (instrumentType.includes("EQUITY") || instrumentType.includes("STOCK")) return "stock";
@@ -44,9 +91,11 @@ export function normalizeHolding(
 ): NormalizedHolding {
   const localCurrency = normalizeCurrency(holding.localCurrency);
   const nativeValue = asFiniteNumber(holding.marketValue?.local);
+  const hostBaseValue = asFiniteNumber(holding.marketValue?.base);
   const quantity = holding.quantity;
   const type = classifyAsset(holding, profile, typeOverride);
   const conversion = convertToAud(nativeValue, localCurrency, fxQuote);
+  const audValue = conversion.audValue ?? hostBaseValue;
   const ticker = profile?.symbol || holding.instrument?.symbol || (type === "cash" ? localCurrency : "Unmapped");
   const name = profile?.name || holding.instrument?.name || (type === "cash" ? `${localCurrency} cash` : "Unmapped instrument");
   const identity = type === "cash"
@@ -66,16 +115,19 @@ export function normalizeHolding(
         currency: localCurrency,
       })
     : null;
+  const metadata = profileMetadata(profile?.metadata);
+  const sector = normalizeSectorName(weightedMetadataLabel(metadata.sectors ?? metadata.sector));
+  const country = weightedMetadataLabel(metadata.countries ?? metadata.country);
 
   let status: NormalizedHolding["status"] = "valued";
   let issue: string | undefined;
   if (quantity < 0 || (type === "cash" && nativeValue !== null && nativeValue < 0)) {
     status = "unsupported-position";
     issue = "Negative quantity or cash is not supported in v1";
-  } else if (nativeValue === null) {
+  } else if (audValue === null && nativeValue === null) {
     status = "unvalued";
     issue = "Wealthfolio did not provide a usable market value";
-  } else if (!conversion.supported) {
+  } else if (audValue === null && !conversion.supported) {
     status = conversion.reason?.startsWith("Unsupported currency") ? "unsupported-currency" : "unvalued";
     issue = conversion.reason;
   } else if (type === "unknown") {
@@ -93,11 +145,14 @@ export function normalizeHolding(
     quantity,
     localCurrency,
     nativeValue,
-    audValue: conversion.audValue,
+    audValue,
     priceUpdatedAt: holding.asOfDate || null,
     identityKey: identity.key,
     etfKey,
+    mic: profile?.mic || undefined,
     profileId: holding.instrument?.id ?? null,
+    sector,
+    country,
     status,
     issue,
     sourceHoldingId: holding.id,
@@ -231,5 +286,6 @@ export function normalizeAssetProfile(asset: Asset | null | undefined, instrumen
     instrumentType: asset.instrumentType || undefined,
     currency: asset.quoteCcy,
     kind: asset.kind,
+    metadata: asset.metadata,
   };
 }
