@@ -128,7 +128,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         .map(([k, n]) => k + " " + n)
         .join("\n"),
     );
-    setPos((v.positions || []).map((p) => p.symbol + " " + p.quantity).join("\n"));
+    setPos((v.positions || []).map((p) => [p.symbol, p.quantity, p.currency, p.mic].filter(v => v != null && v !== "").join(" ")).join("\n"));
     setNav(v.base === "AUD" && v.nav != null ? String(v.nav) : "");
     setCompare(null);
     setFlow(false);
@@ -297,6 +297,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     <span>
                       <b>{p.duplicate}</b>重复 / 已存在
                     </span>
+                    {p.repaired > 0 && <span><b>{p.repaired}</b>{preview ? "待冲销重复流水" : "已冲销重复流水"}</span>}
                     <span>
                       <b>{p.invalid + p.unknown.length}</b>待核对
                     </span>
@@ -372,7 +373,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                       <td>{new Date(b.created).toLocaleString("zh-CN")}</td>
                       <td>{b.data.imported}</td>
                       <td>{b.data.duplicate}</td>
-                      <td>{b.data.updated}</td>
+                      <td>{(b.data.updated || 0) + (b.data.repaired || 0)}</td>
                     </tr>
                   ))}
               </Table>
@@ -448,6 +449,11 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                 比较结单
               </button>
               <button onClick={() => openManual(false)}>补录一笔流水</button>
+              {!demo && nav.trim() && (
+                <button onClick={() => run(() => api.recordAccountValue({ ...compareArgs(), positions: parsePositions(pos) }), "已保存同日券商估值")}>
+                  核对现金及持仓，采用券商净值
+                </button>
+              )}
             </div>
             {compare && (
               <>
@@ -530,7 +536,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               {ledger.map((v) => (
                 <tr key={v.id}>
                   <td>{String(v.date).slice(0, 10)}</td>
-                  <td>{types[v.activityType] || v.activityType}</td>
+                  <td>{types[v.activityType] || v.activityType}{v.metadata?.supersededBy && <small>已冲销重复流水</small>}</td>
                   <td>{v.assetSymbol || "—"}</td>
                   <td>{num(v.quantity ?? v.amount)}</td>
                   <td>{v.currency}</td>

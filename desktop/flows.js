@@ -1,5 +1,5 @@
 import Decimal from "decimal.js";
-import { ALLOCATION, day, dayOf, json, preference } from "./ledger.js";
+import { ALLOCATION, day, dayOf, hasTable, json, preference } from "./ledger.js";
 import { normalizeHolding, buildPortfolioModel } from "../src/domain/portfolio";
 import { buildExposureModel } from "../src/domain/exposure";
 import { EtfCache } from "../src/storage/etfCache";
@@ -43,6 +43,13 @@ export function loadBook(db) {
     }));
   const prices = db.prepare("SELECT * FROM sp_prices ORDER BY asset,day,priority,source").all();
   const anchors = db.prepare("SELECT * FROM sp_anchors ORDER BY account,day").all();
+  if (preference(db, "app", "migration")) includeMigratedFxFees(anchors, events);
+  const brokerValues = hasTable(db, "sp_broker_values")
+    ? db
+        .prepare("SELECT * FROM sp_broker_values ORDER BY account,day")
+        .all()
+        .map((r) => ({ ...json(r.data, {}), day: r.day, account: r.account, source: r.source }))
+    : [];
   const archived = db.prepare("SELECT * FROM sp_archive ORDER BY account,day").all();
   const accounts = db
     .prepare("SELECT * FROM sp_accounts ORDER BY rowid")
@@ -57,7 +64,11 @@ export function loadBook(db) {
   const dates = [
     ...new Set([...events.map((r) => r.day), ...anchors.map((r) => r.day), ...archived.map((r) => r.day)]),
   ].sort();
-  const latest = [dates.at(-1), ...prices.map((r) => r.day)].filter(Boolean).sort().at(-1) || iso(new Date());
+  const latest =
+    [dates.at(-1), ...prices.map((r) => r.day), ...brokerValues.map((r) => r.day)]
+      .filter(Boolean)
+      .sort()
+      .at(-1) || iso(new Date());
   const issues = db.prepare("SELECT * FROM sp_checks").all();
   return {
     db,
@@ -67,6 +78,7 @@ export function loadBook(db) {
     byAccount: groupBy(events, "account"),
     prices: groupBy(prices, "asset"),
     anchors: groupBy(anchors, "account"),
+    brokerValues: groupBy(brokerValues, "account"),
     archived: groupBy(archived, "account"),
     dates,
     latest,
@@ -118,6 +130,45 @@ export function posting(e) {
 function add(map, key, value) {
   if (key && value) map.set(key, (map.get(key) || D(0)).plus(value));
 }
+// Some Wealthfolio snapshots carry gross FX transfers. Correct only when the
+// original postings plus those exact fees independently reproduce the saved balance.
+function includeMigratedFxFees(anchors, events) {
+  const byAccount = groupBy(
+    events.flatMap((e) => (e.original && live(e.original) ? [e.original] : [])),
+    "accountId",
+  );
+  const fxFee = (e) =>
+    e.metadata?.brokerSync?.broker === "ibkr" &&
+    e.metadata?.fx &&
+    e.metadata?.flow?.is_external === false &&
+    ["TRANSFER_IN", "TRANSFER_OUT"].includes(e.activityType) &&
+    D(e.fee).gt(0);
+  for (const [id, accountAnchors] of groupBy(anchors, "account")) {
+    const rows = byAccount.get(id) || [];
+    if (!rows.some(fxFee)) continue;
+    rows.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const balances = new Map(),
+      fees = new Map(),
+      incomplete = new Set();
+    let index = 0;
+    for (const anchor of accountAnchors) {
+      while (index < rows.length && dayOf(rows[index].date) <= anchor.day) {
+        const e = rows[index++],
+          p = posting(e);
+        if (p) add(balances, e.currency, p.cash);
+        else incomplete.add(e.currency);
+        if (fxFee(e)) add(fees, e.currency, D(e.fee));
+      }
+      const cash = json(anchor.cash, {});
+      for (const [ccy, fee] of fees) {
+        if (cash[ccy] == null || incomplete.has(ccy)) continue;
+        const net = balances.get(ccy) || D(0);
+        if (D(cash[ccy]).minus(net.plus(fee)).abs().lt("0.000001")) cash[ccy] = net.toFixed();
+      }
+      anchor.cash = JSON.stringify(cash);
+    }
+  }
+}
 export function positions(book, acc, date) {
   const anchor = last(book.anchors.get(acc.id), date);
   const amounts = (obj) => new Map(Object.entries(obj).map(([k, v]) => [k, D(v)]));
@@ -150,10 +201,40 @@ function snapshot(book, acc, date, overrides = {}) {
     warnings = [...new Set(pos.warnings)];
   const sum = { cash: D(0), securities: D(0) },
     complete = { cash: true, securities: true };
+  const broker = last(book.brokerValues?.get(acc.id), date);
+  const marks = new Map(),
+    matched = new Set();
+  let quantitiesAgree = Boolean(broker);
+  const active = [...pos.holdings].filter(([, qty]) => !qty.isZero());
+  for (const item of broker?.positions || []) {
+    if (D(item.quantity).isZero()) continue;
+    const matches = active.filter(([id]) => {
+      const a = book.assets.get(id);
+      return (
+        a?.symbol.toUpperCase() === item.symbol &&
+        a.currency === item.currency &&
+        (!item.mic || a.mic === item.mic)
+      );
+    });
+    if (matches.length !== 1) {
+      quantitiesAgree = false;
+      continue;
+    }
+    const [id, qty] = matches[0];
+    if (matched.has(id) || qty.minus(item.quantity).abs().gt("0.00000001")) quantitiesAgree = false;
+    matched.add(id);
+    if (item.price != null && D(item.price).gt(0)) marks.set(id, item);
+  }
+  quantitiesAgree = quantitiesAgree && matched.size === active.length;
   function row(assetId, quantity, asset, ccy, q, isCash) {
     if (quantity.isZero()) return;
-    const fx = rate(book, ccy, date),
-      local = q ? quantity.mul(q.price) : null,
+    const mark = marks.get(assetId);
+    if (mark && (!q || q.day <= broker.day))
+      q = { price: mark.price, day: broker.day, source: broker.source };
+    let fx = rate(book, ccy, date);
+    if (mark?.fx && (!fx || fx.day <= broker.day))
+      fx = { price: mark.fx, day: broker.day, source: broker.source };
+    const local = q ? quantity.mul(q.price) : null,
       aud = local && fx ? local.mul(fx.price) : null;
     const kind = isCash ? "cash" : "securities";
     if (aud) sum[kind] = sum[kind].plus(aud);
@@ -196,6 +277,7 @@ function snapshot(book, acc, date, overrides = {}) {
       rawQuantity: quantity.toFixed(),
       price: q?.price ?? null,
       quoteSource: q?.source || "",
+      quoteObservedAt: q?.source === "Webull AU" ? broker?.observedAt : null,
       fx: fx?.price || null,
       fxDate: fx?.day || null,
       fxSource: fx?.source || "",
@@ -219,16 +301,50 @@ function snapshot(book, acc, date, overrides = {}) {
     complete.cash = false;
     complete.securities = false;
   }
-  const verified = complete.cash && complete.securities;
+  const sameDay = broker?.day === date;
+  const cashAgrees =
+    sameDay &&
+    [...new Set([...pos.cash.keys(), ...Object.keys(broker.cash)])].every((c) =>
+      (pos.cash.get(c) || D(0))
+        .minus(broker.cash[c] ?? 0)
+        .abs()
+        .lt("0.005"),
+    );
+  const useBroker = cashAgrees && quantitiesAgree && !pos.warnings.length;
+  if (sameDay && !useBroker) warnings.push("券商快照与本地现金或持仓数量有差异");
+  const cash =
+    useBroker && broker.cashTotal != null
+      ? Number(broker.cashTotal)
+      : complete.cash
+        ? sum.cash.toNumber()
+        : null;
+  const holdingsEstimate = complete.securities ? sum.securities.toNumber() : null;
+  const nonCashFromNav = useBroker && broker.securities == null && cash != null;
+  const securities = nonCashFromNav
+    ? D(broker.nav).minus(cash).toNumber()
+    : useBroker && broker.securities != null
+      ? Number(broker.securities)
+      : holdingsEstimate;
+  const total = useBroker
+    ? Number(broker.nav)
+    : cash != null && securities != null
+      ? D(cash).plus(securities).toNumber()
+      : null;
   return {
     id: acc.id,
     name: acc.name,
     rows,
     warnings,
-    cash: complete.cash ? sum.cash.toNumber() : null,
-    securities: complete.securities ? sum.securities.toNumber() : null,
-    known: (cashPending ? D(0) : sum.cash).plus(sum.securities).toNumber(),
-    total: verified ? sum.cash.plus(sum.securities).toNumber() : null,
+    cash,
+    securities,
+    total,
+    valuationSource: useBroker ? broker.source : null,
+    nonCashFromNav,
+    holdingsEstimate,
+    observedAt: useBroker ? broker.observedAt : null,
+    unrealized: useBroker && broker.unrealized != null ? Number(broker.unrealized) : null,
+    approximatePnl: useBroker && broker.approximatePnl,
+    known: total ?? (cashPending ? D(0) : sum.cash).plus(sum.securities).toNumber(),
   };
 }
 export const accountSnapshot = snapshot;

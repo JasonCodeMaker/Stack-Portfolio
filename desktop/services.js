@@ -5,6 +5,7 @@ import { runSync, importedKeysStorageKey, resetImportedKeysForMappings } from ".
 import { parseIbkrFlexReport, fetchIbkrFlexReport } from "../broker-sync/src/ibkrFlex";
 import {
   fetchWebullReport,
+  fetchWebullAccountValue,
   checkWebullToken,
   createWebullToken,
   listWebullAccounts,
@@ -26,6 +27,8 @@ import {
   transaction,
 } from "./ledger.js";
 import { loadBook, positions, accountSnapshot, storageContext } from "./flows.js";
+import { recordIdentity, ibkrHistoryPlan, applyIbkrHistoryPlan } from "./ibkrHistory.js";
+import { saveBrokerValue } from "./ledger.js";
 import { EtfCache } from "../src/storage/etfCache";
 import { loadAddonSettings } from "../src/storage/settings";
 import { createProviders, resolveEtfHoldings } from "../src/services/etf/providers";
@@ -184,8 +187,24 @@ export function detailedIbkr(text) {
 function withIbkrStatement(report) {
   const audit = report.audit,
     date = audit.period?.to;
+  const valuation =
+    date &&
+    audit.baseCurrency === "AUD" &&
+    audit.reportedNavBase != null &&
+    Object.keys(audit.endingCashByCurrency || {}).length &&
+    Array.isArray(audit.statementPositions)
+      ? {
+          date,
+          source: "IBKR Flex",
+          base: "AUD",
+          cash: audit.endingCashByCurrency,
+          positions: audit.statementPositions,
+          nav: audit.reportedNavBase,
+        }
+      : null;
   return {
     ...report,
+    valuation,
     unknown: [],
     statement: date
       ? {
@@ -243,7 +262,7 @@ function nativeEvent(db, v, id) {
     status: "POSTED",
   };
 }
-export function syncHost(db) {
+export function syncHost(db, history) {
   const key = importedKeysStorageKey();
   return {
     checkImport: async (rows) => rows.map(validActivity),
@@ -251,7 +270,20 @@ export function syncHost(db) {
       db
         .prepare("SELECT data FROM sp_events WHERE account=?")
         .all(id)
-        .map((r) => json(r.data, {})),
+        .map((r) => json(r.data, {}))
+        .filter((e) => !e.metadata?.supersededBy && !history?.superseded.has(e.id))
+        .map((e) =>
+          history?.aliases.has(e.id)
+            ? {
+                ...e,
+                isUserModified: true,
+                metadata: {
+                  ...e.metadata,
+                  brokerSync: { broker: "ibkr", recordId: history.aliases.get(e.id) },
+                },
+              }
+            : e,
+        ),
     loadImportedKeys: async () => new Set(json(preference(db, BROKER, key), [])),
     saveImportedKeys: async (keys) => putPref(db, BROKER, key, JSON.stringify([...keys].sort())),
     updatePortfolio: async () => {},
@@ -352,11 +384,12 @@ export function amendEvent(db, args) {
     return after.id;
   });
 }
-function splitConflicts(db, acc, report) {
+function splitConflicts(db, acc, report, history) {
   const exists = new Map();
   for (const { data } of db.prepare("SELECT data FROM sp_events WHERE account=?").all(acc)) {
     const e = json(data, {});
-    if (e.sourceRecordId) exists.set(String(e.sourceSystem).toLowerCase() + ":" + e.sourceRecordId, e);
+    const id = recordIdentity(e);
+    if (id && !e.metadata?.supersededBy && !history?.superseded.has(e.id)) exists.set(id, e);
   }
   const active = [],
     problems = [...(report.unknown || [])],
@@ -369,6 +402,10 @@ function splitConflicts(db, acc, report) {
   for (const r of report.activities) {
     const id = r.broker + ":" + r.brokerRecordId,
       prior = exists.get(id);
+    if (history?.blocked.has(id)) {
+      problems.push({ reason: history.blocked.get(id), symbol: r.symbol });
+      continue;
+    }
     if (!r.brokerRecordId || /^fallback-[a-f0-9]+(?:$|:)/i.test(r.brokerRecordId)) {
       problems.push({ reason: "缺少可靠的券商记录编号，请核对原始凭证", symbol: r.symbol });
       continue;
@@ -387,7 +424,10 @@ function splitConflicts(db, acc, report) {
       !prior.isUserModified &&
       (prior.activityType !== r.activityType ||
         prior.currency !== r.currency ||
-        ["quantity", "unitPrice", "amount", "fee", "tax"].some((k) => !D(prior[k]).eq(D(r[k]))));
+        (["BUY", "SELL"].includes(r.activityType)
+          ? ["quantity", "unitPrice", "fee", "tax"]
+          : ["quantity", "amount", "fee", "tax"]
+        ).some((k) => !D(prior[k]).eq(D(r[k]))));
     if (changed) {
       problems.push({ reason: "相同券商编号对应的内容已变化，保留原流水", symbol: r.symbol });
       continue;
@@ -398,13 +438,16 @@ function splitConflicts(db, acc, report) {
 }
 export async function batch(db, accountId, broker, report, source, commit = false) {
   account(db, accountId);
-  const { active, problems } = splitConflicts(db, accountId, report);
   const ownTransaction = commit === true;
   if (ownTransaction) db.exec("BEGIN IMMEDIATE");
   try {
+    const history = broker === "ibkr" ? ibkrHistoryPlan(db, accountId, report.activities) : null;
+    const { active, problems } = splitConflicts(db, accountId, report, history);
+    const repaired = history?.superseded.size || 0;
+    if (commit && repaired) applyIbkrHistoryPlan(db, history);
     const result = await runSync(
       { fetch: async () => active },
-      syncHost(db),
+      syncHost(db, history),
       { ibkr: "", webull: "", [broker]: accountId },
       !commit,
     );
@@ -414,6 +457,7 @@ export async function batch(db, accountId, broker, report, source, commit = fals
       account: accountId,
       imported: result.imported,
       updated: result.updated,
+      repaired,
       added: result.valid,
       duplicate: result.alreadyImported + result.duplicates,
       unknown: problems,
@@ -443,7 +487,8 @@ export async function batch(db, accountId, broker, report, source, commit = fals
             savePrice(db, "FX:" + currency(r.currency) + "/AUD", st.date, r.fxToBase, "IBKR 结单汇率", 30);
         }
       }
-      if (result.imported || result.updated || problems.length || result.invalid) {
+      if (report.valuation) saveBrokerValue(db, accountId, report.valuation);
+      if (result.imported || result.updated || repaired || problems.length || result.invalid) {
         db.prepare("INSERT INTO sp_batches VALUES(?,?,?,?,?)").run(
           randomUUID(),
           accountId,
@@ -499,6 +544,7 @@ export async function combinedBatch(db, parts, commit = false) {
       reports,
       imported: sum("imported"),
       updated: sum("updated"),
+      repaired: sum("repaired"),
       added: sum("added"),
       duplicate: sum("duplicate"),
       invalid: sum("invalid"),
@@ -681,6 +727,37 @@ export function compareStatement(db, args, commit = false) {
   }
   return { ok, rows: result, warnings: pos.warnings };
 }
+
+export function recordAccountValue(db, args, withinTransaction = false) {
+  if (args.nav == null || !Array.isArray(args.positions)) throw Error("请填写券商总资产及完整持仓。");
+  const save = () => {
+    const comparison = compareStatement(db, { ...args, nav: null });
+    if (!comparison.ok) throw Error("保存券商估值前，请先核齐各币种现金和持仓数量。");
+    const book = loadBook(db),
+      a = account(db, args.account),
+      date = day(args.date);
+    const held = [...positions(book, a, date).holdings].filter(([, q]) => !q.isZero());
+    const entries = held.map(([id, quantity]) => {
+      const asset = book.assets.get(id);
+      return { symbol: asset.symbol, currency: asset.currency, mic: asset.mic, quantity: quantity.toFixed() };
+    });
+    const onlyAud = Object.entries(args.cash).every(([c, value]) => c === "AUD" || D(value).isZero());
+    saveBrokerValue(db, a.id, {
+      date,
+      base: "AUD",
+      source: "券商账户页面（手工核对）",
+      cash: args.cash,
+      positions: entries,
+      cashTotal: onlyAud ? args.cash.AUD || "0" : null,
+      nav: args.nav,
+      unrealized: args.unrealized,
+      approximatePnl: args.approximatePnl,
+      observedAt: new Date().toISOString(),
+    });
+    return true;
+  };
+  return withinTransaction ? save() : transaction(db, save);
+}
 export async function brokerReport(db, broker, secrets) {
   if (broker === "ibkr") {
     const queryId = preference(db, BROKER, "ibkr.flex-query-id"),
@@ -690,7 +767,16 @@ export async function brokerReport(db, broker, secrets) {
   }
   const { appKey, appSecret, accessToken, accountId } = await webullCredentials(db, secrets);
   if (!appKey || !appSecret || !accessToken || !accountId) throw Error("请先连接并选择 Webull AU 券商账户。");
-  return fetchWebullReport(network, { appKey, appSecret, accessToken, accountId });
+  const credentials = { appKey, appSecret, accessToken, accountId };
+  const report = await fetchWebullReport(network, credentials);
+  try {
+    const value = await fetchWebullAccountValue(network, credentials);
+    report.valuation = { ...value, nav: D(value.cashTotal).plus(value.securities).toFixed() };
+    report.statement = report.valuation;
+  } catch {
+    report.audit.warnings.push("Webull 本次未提供完整的账户估值。");
+  }
+  return report;
 }
 async function webullCredentials(db, secrets) {
   return {

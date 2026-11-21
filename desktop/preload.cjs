@@ -13,6 +13,7 @@ const actions = [
   "preview",
   "commit",
   "compare",
+  "recordAccountValue",
   "confirmStatement",
   "opening",
   "savePrice",

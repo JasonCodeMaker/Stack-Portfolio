@@ -53,8 +53,8 @@ const packaged = process.argv[2];
     await p.getByRole("button", { name: "比较结单", exact: true }).click();
     await p.getByLabel("已核对期间资金流水及所有币种余额").check();
     await p.getByRole("button", { name: "完成对账并查看总览" }).click();
-    await p.getByText("A$128,400", { exact: true }).waitFor();
-    await p.getByText("+A$3,200", { exact: true }).waitFor();
+    await p.getByText("A$128,400.00", { exact: true }).waitFor();
+    await p.getByText("+A$3,200.00", { exact: true }).waitFor();
     if (process.env.STACK_PORTFOLIO_SCREENSHOT) {
       const image = await app.evaluate(async ({ BrowserWindow }) =>
         (
@@ -71,7 +71,7 @@ const packaged = process.argv[2];
     const summary = await p.locator(".mini-stats").innerText();
     assert.match(summary, /1\s*重复/);
     await p.reload();
-    await p.getByText("A$128,400", { exact: true }).waitFor();
+    await p.getByText("A$128,400.00", { exact: true }).waitFor();
     const backup = path.join(directory, "verify-backup.sqlite");
     await app.evaluate(({ dialog }, file) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
@@ -85,7 +85,7 @@ const packaged = process.argv[2];
     await p.getByRole("button", { name: "恢复账本备份", exact: true }).click();
     await p.waitForFunction(() => document.querySelector(".busy") === null);
     await p.getByRole("button", { name: "总览", exact: true }).click();
-    await p.getByText("A$128,400", { exact: true }).waitFor();
+    await p.getByText("A$128,400.00", { exact: true }).waitFor();
     assert.ok(fs.readdirSync(directory).some((f) => f.startsWith("before-restore-")));
     assert.deepEqual(errors, []);
     console.log(

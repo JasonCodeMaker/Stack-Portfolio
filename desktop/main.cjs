@@ -31,6 +31,7 @@ const {
   parseWebullCsv,
   detailedIbkr,
   compareStatement,
+  recordAccountValue,
   addManual,
   amendEvent,
   brokerReport,
@@ -263,6 +264,7 @@ const handlers = {
     return r;
   },
   compare: (args) => compareStatement(requireBook(), args),
+  recordAccountValue: (args) => recordAccountValue(requireBook(), args),
   confirmStatement: (args) => compareStatement(requireBook(), args, true),
   opening(args) {
     requireBook();

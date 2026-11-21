@@ -3,6 +3,7 @@ import type { NetworkResponse } from "@wealthfolio/addon-sdk";
 import {
   checkWebullToken,
   fetchWebullReport,
+  fetchWebullAccountValue,
   generateWebullSignature,
   listWebullAccounts,
   parseWebullCashActivities,
@@ -12,6 +13,47 @@ import {
 } from "@/webullOpenApi";
 
 describe("Webull OpenAPI", () => {
+  it("reads AUD account totals and native marks and dates them when observed in Australia", async () => {
+    const requests: Parameters<WebullNetwork["request"]>[0][] = [];
+    const network: WebullNetwork = {
+      request: async (request) => {
+        requests.push(request);
+        const data =
+          requests.length === 1
+            ? {
+                total_asset_currency: "AUD",
+                total_market_value: "30.60",
+                total_cash_balance: "9.21",
+                total_unrealized_profit_loss: "-1.20",
+                account_currency_assets: [{ currency: "AUD", cash_balance: "9.21" }],
+              }
+            : [{ symbol: "ABC", currency: "AUD", quantity: "3", last_price: "10.20" }];
+        return {
+          status: 200,
+          headers: { date: "Mon, 01 Jun 2026 17:00:00 GMT" },
+          body: JSON.stringify(data),
+        };
+      },
+    };
+    const snapshot = await fetchWebullAccountValue(network, {
+      appKey: "demo-key",
+      appSecret: "demo-secret",
+      accessToken: "demo",
+      accountId: "sample",
+    });
+    expect(snapshot).toMatchObject({
+      source: "Webull AU",
+      date: "2026-06-02",
+      cash: { AUD: "9.21" },
+      securities: "30.60",
+      cashTotal: "9.21",
+      unrealized: "-1.20",
+      positions: [{ symbol: "ABC", currency: "AUD", price: "10.20", quantity: "3" }],
+    });
+    expect(requests.every((r) => r.method === "GET")).toBe(true);
+    expect(new URL(requests[0].url).searchParams.get("total_asset_currency")).toBe("AUD");
+    expect(new URL(requests[1].url).pathname).toBe("/trading/assets/positions/list");
+  });
   it("matches the current SDK HMAC-SHA256 algorithm", async () => {
     await expect(generateWebullSignature({
       path: "/trade/place_order",

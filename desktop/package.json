@@ -1,7 +1,7 @@
 {
   "name": "stack-portfolio-desktop",
   "productName": "Stack Portfolio",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "Local investment portfolio, allocation and broker reconciliation for Windows",
   "author": "Stack Portfolio",

@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS sp_prices_date ON sp_prices(asset,day);
 CREATE TABLE IF NOT EXISTS sp_archive(account TEXT NOT NULL, day TEXT NOT NULL, total TEXT, cash TEXT, invested TEXT, base TEXT, status TEXT, PRIMARY KEY(account,day));
 CREATE TABLE IF NOT EXISTS sp_prefs(scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,key));
 CREATE TABLE IF NOT EXISTS sp_statements(id TEXT PRIMARY KEY, account TEXT NOT NULL, day TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sp_broker_values(account TEXT NOT NULL REFERENCES sp_accounts(id), day TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(account,day));
 CREATE TABLE IF NOT EXISTS sp_checks(account TEXT NOT NULL, day TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(account,day));
 CREATE TABLE IF NOT EXISTS sp_batches(id TEXT PRIMARY KEY, account TEXT NOT NULL, created TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sp_corrections(id TEXT PRIMARY KEY, event TEXT NOT NULL, created TEXT NOT NULL, reason TEXT NOT NULL, prior TEXT NOT NULL, amended TEXT NOT NULL);
@@ -230,6 +231,56 @@ export function saveEvent(db, event, original = null) {
     "INSERT INTO sp_events VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account=excluded.account,day=excluded.day,data=excluded.data",
   ).run(event.id, event.accountId, day(event.date), data, original === true ? data : original);
   return event;
+}
+export function saveBrokerValue(db, accountId, input) {
+  const date = day(input.date),
+    source = String(input.source || "").trim();
+  if (
+    !source ||
+    input.base !== "AUD" ||
+    !Array.isArray(input.positions) ||
+    !Object.keys(input.cash || {}).length
+  )
+    throw Error("券商估值需要日期、来源、分币种现金和完整持仓。");
+  const cash = Object.fromEntries(Object.entries(input.cash).map(([c, n]) => [currency(c), money(n)]));
+  const positions = input.positions.map((p) => {
+    const symbol = String(p.symbol || "")
+      .trim()
+      .toUpperCase();
+    if (!symbol) throw Error("券商估值缺少证券代码。");
+    return {
+      symbol,
+      currency: currency(p.currency),
+      quantity: money(p.quantity),
+      mic: p.mic || null,
+      price: p.price == null ? null : money(p.price, true),
+      fx: p.fxToBase == null ? null : money(p.fxToBase, true),
+    };
+  });
+  const cashTotal = input.cashTotal == null ? null : money(input.cashTotal),
+    securities = input.securities == null ? null : money(input.securities);
+  if (input.nav == null && (cashTotal == null || securities == null)) throw Error("券商估值缺少账户总额。");
+  const nav = input.nav == null ? new Decimal(cashTotal).plus(securities).toFixed() : money(input.nav);
+  const data = {
+    cash,
+    positions,
+    cashTotal,
+    securities,
+    nav,
+    observedAt: input.observedAt || null,
+    unrealized: input.unrealized == null ? null : money(input.unrealized),
+    approximatePnl: input.approximatePnl === true,
+  };
+  const previous = db
+    .prepare("SELECT source,data FROM sp_broker_values WHERE account=? AND day=?")
+    .get(accountId, date);
+  if (previous && data.observedAt && json(previous.data, {}).observedAt > data.observedAt) return;
+  db.prepare("INSERT OR REPLACE INTO sp_broker_values VALUES(?,?,?,?)").run(
+    accountId,
+    date,
+    source,
+    JSON.stringify(data),
+  );
 }
 function loadLegacy(db) {
   function* read(table) {

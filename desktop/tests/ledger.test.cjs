@@ -170,6 +170,193 @@ test("a dual-broker batch rolls back both accounts when the second account is in
   assert.equal((await combinedBatch(db, [first, second], true)).imported, 2);
   assert.equal((await combinedBatch(db, [first, second], true)).duplicate, 2);
 });
+
+test("a migrated IBKR fill with a local timestamp and booked amount is linked without another cash posting", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, resolveAsset, saveEvent } = require("../out/ledger.cjs");
+  const { loadBook, positions } = require("../out/flows.cjs");
+  const id = createAccount(db, "Test", "AUD");
+  const assetId = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
+  const row = {
+    broker: "ibkr",
+    brokerRecordId: "exec-A",
+    activityType: "BUY",
+    currency: "AUD",
+    symbol: "ABC",
+    exchangeMic: "XASX",
+    quantity: 2,
+    unitPrice: 30,
+    fee: 1,
+    date: "2025-03-11T01:12:00Z",
+    comment: "IBKR Flex trade 91001",
+  };
+  const old = {
+    ...row,
+    id: "prior",
+    accountId: id,
+    date: "2025-03-11T00:00:00Z",
+    amount: "60",
+    assetId,
+    assetSymbol: "ABC",
+    sourceSystem: "MANUAL",
+    isUserModified: true,
+    status: "POSTED",
+  };
+  saveEvent(db, old, true);
+  const report = { activities: [row] };
+  assert.equal((await batch(db, id, "ibkr", report, "Flex")).added, 0);
+  assert.equal((await batch(db, id, "ibkr", report, "Flex", true)).imported, 0);
+  saveEvent(db, {
+    ...old,
+    id: "extra",
+    amount: null,
+    date: row.date,
+    isUserModified: false,
+    sourceSystem: "IBKR",
+    sourceRecordId: "exec-A",
+  });
+  const tax = {
+    broker: "ibkr",
+    brokerRecordId: "tax-A",
+    activityType: "TAX",
+    date: row.date,
+    comment: "ABC CASH DIVIDEND - US TAX",
+    amount: 0.5,
+    currency: "AUD",
+    symbol: "",
+    importRevision: "cash-semantics-v2",
+  };
+  saveEvent(db, { ...tax, id: "levy", accountId: id, sourceSystem: "IBKR", sourceRecordId: "tax-A" }, true);
+  saveEvent(
+    db,
+    { ...tax, id: "legacy-income", accountId: id, activityType: "DIVIDEND", sourceSystem: "MANUAL" },
+    true,
+  );
+  const fresh = { ...row, brokerRecordId: "exec-B", comment: "IBKR Flex trade 91002" };
+  const input = { activities: [row, fresh, tax] };
+  const before = db.prepare("SELECT data FROM sp_events WHERE id='extra'").get().data;
+  const preview = await batch(db, id, "ibkr", input, "Flex");
+  assert.equal(preview.repaired, 2);
+  assert.equal(db.prepare("SELECT data FROM sp_events WHERE id='extra'").get().data, before);
+  const first = await batch(db, id, "ibkr", input, "Flex", true);
+  assert.equal(first.imported, 1);
+  assert.equal(first.repaired, 2);
+  assert.equal((await batch(db, id, "ibkr", input, "Flex", true)).repaired, 0);
+  assert.equal(db.prepare("SELECT count(*) n FROM sp_corrections").get().n, 2);
+  assert.equal(positions(loadBook(db), { id }, "2025-03-11").cash.get("AUD").toFixed(), "-122.5");
+});
+
+test("migrated FX fees are charged once when a legacy cash snapshot included the gross transfer", (t) => {
+  const { db } = fixture(t);
+  const { createAccount, saveEvent, putPref } = require("../out/ledger.cjs");
+  const { loadBook, positions } = require("../out/flows.cjs");
+  const id = createAccount(db, "Test", "AUD");
+  putPref(db, "app", "migration", "{}");
+  const day = "2025-04-23",
+    event = { accountId: id, date: day, currency: "AUD", status: "POSTED" };
+  saveEvent(db, { ...event, id: "fund", activityType: "DEPOSIT", amount: "100" }, true);
+  saveEvent(
+    db,
+    {
+      ...event,
+      id: "conversion",
+      activityType: "TRANSFER_OUT",
+      amount: "20",
+      fee: "2",
+      metadata: { brokerSync: { broker: "ibkr", recordId: "fx-out" }, flow: { is_external: false }, fx: {} },
+    },
+    true,
+  );
+  const get = () => positions(loadBook(db), { id }, day).cash.get("AUD").toFixed();
+  const anchor = db.prepare("INSERT OR REPLACE INTO sp_anchors VALUES(?,?,?,?)");
+  anchor.run(id, day, "{}", '{"AUD":"80"}');
+  assert.equal(get(), "78");
+  anchor.run(id, day, "{}", '{"AUD":"78"}');
+  assert.equal(get(), "78");
+  anchor.run(id, day, "{}", '{"AUD":"300"}');
+  assert.equal(get(), "300");
+});
+
+test("a dated Webull snapshot values matched local holdings with broker marks even during a duplicate-only sync", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, resolveAsset, savePrice } = require("../out/ledger.cjs");
+  const { accountSnapshot, loadBook } = require("../out/flows.cjs");
+  const id = createAccount(db, "Webull", "AUD"),
+    other = createAccount(db, "Other", "AUD"),
+    day = "2025-04-23";
+  const a = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
+  for (const key of [id, other])
+    db.prepare("INSERT INTO sp_anchors VALUES(?,?,?,?)").run(
+      key,
+      day,
+      JSON.stringify({ [a]: "2" }),
+      '{"AUD":"12"}',
+    );
+  savePrice(db, a, day, "11", "YAHOO", 10);
+  const observation = {
+    date: day,
+    source: "Webull AU",
+    base: "AUD",
+    cash: { AUD: "12" },
+    positions: [{ symbol: "ABC", currency: "AUD", quantity: "2", price: "10" }],
+    cashTotal: "12",
+    securities: "20",
+    nav: "32",
+    unrealized: "-3",
+  };
+  const report = { activities: [], valuation: observation };
+  const view = (key) => accountSnapshot(loadBook(db), { id: key, currency: "AUD" }, day);
+  await batch(db, id, "webull", report, "Webull", false);
+  assert.equal(view(id).total, 34);
+  await batch(db, id, "webull", report, "Webull", true);
+  assert.deepEqual([view(id).cash, view(id).securities, view(id).total], [12, 20, 32]);
+  assert.equal(view(other).total, 34);
+  db.prepare("UPDATE sp_anchors SET cash=? WHERE account=?").run('{"AUD":"13"}', id);
+  assert.notEqual(view(id).total, 32);
+});
+
+test("a broker page NAV requires independently matched cash and holdings and keeps approximate P&L separate", (t) => {
+  const { db } = fixture(t);
+  const { createAccount, resolveAsset, savePrice } = require("../out/ledger.cjs");
+  const { recordAccountValue } = require("../out/services.cjs");
+  const { loadBook, accountSnapshot } = require("../out/flows.cjs");
+  const id = createAccount(db, "Test", "AUD"),
+    day = "2025-04-23";
+  const assetId = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
+  db.prepare("INSERT INTO sp_anchors VALUES(?,?,?,?)").run(
+    id,
+    day,
+    JSON.stringify({ [assetId]: "2" }),
+    '{"AUD":"12"}',
+  );
+  savePrice(db, assetId, day, "11", "YAHOO", 10);
+  const input = {
+    account: id,
+    date: day,
+    cash: { AUD: "12" },
+    positions: [{ symbol: "ABC", quantity: "2", currency: "AUD" }],
+    nav: "32",
+    unrealized: "-3",
+    approximatePnl: true,
+  };
+  assert.throws(() => recordAccountValue(db, { ...input, cash: { AUD: "13" } }), /核齐/);
+  assert.throws(() => recordAccountValue(db, { ...input, positions: [] }), /核齐/);
+  recordAccountValue(db, input);
+  const view = accountSnapshot(loadBook(db), { id, currency: "AUD" }, day);
+  assert.deepEqual(
+    [
+      view.total,
+      view.cash,
+      view.securities,
+      view.nonCashFromNav,
+      view.holdingsEstimate,
+      view.unrealized,
+      view.approximatePnl,
+    ],
+    [32, 12, 20, true, 22, -3, true],
+  );
+  assert.equal(accountSnapshot(loadBook(db), { id, currency: "AUD" }, "2025-04-24").valuationSource, null);
+});
 test("manual corrections keep their original identity, evidence and protection against re-import", async (t) => {
   const { db } = fixture(t);
   await seedDemo(db);

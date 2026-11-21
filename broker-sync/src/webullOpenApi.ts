@@ -745,6 +745,70 @@ export interface WebullReport {
   audit: WebullAudit;
 }
 
+/** The AU position feed supplies a last price without a market timestamp. Date
+ * this observation when the broker answers, never backdate it to a market close. */
+export async function fetchWebullAccountValue(
+  network: WebullNetwork,
+  credentials: WebullCredentials & { accessToken: string; accountId: string },
+) {
+  const get = (path: string, query: Record<string, string>) =>
+    signedRequest(network, credentials, {
+      path,
+      method: "GET",
+      query: { account_id: credentials.accountId, ...query },
+      accessToken: credentials.accessToken,
+    });
+  const balance = await get("/trading/assets/balances/get", { total_asset_currency: "AUD" });
+  requireSuccess(balance, "account balance");
+  const positionResponse = await get("/trading/assets/positions/list", {});
+  requireSuccess(positionResponse, "account positions");
+  const b = asObject(unwrapData(parseJson(balance)));
+  const list = unwrapData(parseJson(positionResponse));
+  if (b?.total_asset_currency !== "AUD" || !Array.isArray(b.account_currency_assets) || !Array.isArray(list))
+    throw Error("Webull returned an incomplete account valuation.");
+  const numeric = (v: unknown) => {
+    if ((typeof v !== "number" && typeof v !== "string") || !/^-?\d+(\.\d+)?$/.test(String(v)))
+      throw Error("Webull valuation amount is missing.");
+    return String(v);
+  };
+  const currencyCode = (v: unknown) => {
+    if (typeof v !== "string" || !/^[A-Z]{3}$/.test(v)) throw Error("Webull valuation currency is missing.");
+    return v;
+  };
+  const cash: Record<string, string> = {};
+  for (const item of b.account_currency_assets) {
+    const row = asObject(item),
+      c = currencyCode(row?.currency);
+    if (Object.hasOwn(cash, c)) throw Error("Webull returned more than one cash balance for a currency.");
+    cash[c] = numeric(row?.cash_balance);
+  }
+  if (!Object.keys(cash).length) throw Error("Webull returned no currency balances.");
+  const positions = list.map((item) => {
+    const row = asObject(item);
+    if (!row || typeof row.symbol !== "string" || !row.symbol.trim())
+      throw Error("Webull position symbol is missing.");
+    return {
+      symbol: row.symbol,
+      currency: currencyCode(row.currency),
+      quantity: numeric(row.quantity),
+      price: row.last_price == null ? null : numeric(row.last_price),
+    };
+  });
+  const serverTime = Date.parse(balance.headers?.date || "");
+  const captured = Number.isFinite(serverTime) ? new Date(serverTime) : new Date();
+  return {
+    source: "Webull AU",
+    base: "AUD",
+    date: new Intl.DateTimeFormat("en-CA", { timeZone: "Australia/Brisbane" }).format(captured),
+    observedAt: captured.toISOString(),
+    cash,
+    cashTotal: numeric(b.total_cash_balance),
+    securities: numeric(b.total_market_value),
+    unrealized: b.total_unrealized_profit_loss == null ? null : numeric(b.total_unrealized_profit_loss),
+    positions,
+  };
+}
+
 export async function fetchWebullReport(
   network: WebullNetwork,
   credentials: WebullCredentials & { accessToken: string; accountId: string },

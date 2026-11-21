@@ -69,9 +69,11 @@ function Trend({ d }) {
 }
 export function Overview({ d, onPage, setScope, options, change }) {
   const [info, setInfo] = useState("");
+  const sourced = d.byAccount.filter(a => a.valuationSource);
+  const nonCash = sourced.some(a => a.nonCashFromNav);
   const tags = [
-    ["总资产", d.total, d.total == null ? "已估值小计 " + aud(d.known) : "证券市值＋账户现金"],
-    ["证券市值", d.securities, "按估值日折算 AUD"],
+    ["总资产", d.total, d.total == null ? "已估值小计 " + aud(d.known) : sourced.length === d.byAccount.length && sourced.length ? "同日券商账户净值" : "按账户估值汇总"],
+    [nonCash ? "非现金资产" : "证券市值", d.securities, nonCash ? "含按券商净值减现金计算的余额" : "按估值日折算 AUD"],
     ["账户现金", d.cash, "按原币余额汇总"],
     ["期间投资盈亏", d.pnl, d.pnl == null ? "待核对估值与资金流水" : "期间净入金 " + aud(d.flows)],
   ];
@@ -90,7 +92,7 @@ export function Overview({ d, onPage, setScope, options, change }) {
             </span>
             <strong className={i === 3 && v > 0 ? "positive" : ""}>
               {i === 3 && v > 0 ? "+" : ""}
-              {aud(v)}
+              {aud(v, 2)}
             </strong>
             <small>{caption}</small>
           </button>
@@ -187,7 +189,7 @@ export function Overview({ d, onPage, setScope, options, change }) {
           <dl>
             <dt>估值日期</dt>
             <dd>{d.date}</dd>
-            <dt>合计证券市值</dt>
+            <dt>{nonCash ? "合计非现金资产" : "合计证券市值"}</dt>
             <dd>{aud(d.securities, 2)}</dd>
             <dt>合计分币种现金</dt>
             <dd>{aud(d.cash, 2)}</dd>
@@ -198,6 +200,11 @@ export function Overview({ d, onPage, setScope, options, change }) {
             <dt>期末资产 − 期初资产 − 净外部资金流</dt>
             <dd>{aud(d.pnl, 2)}</dd>
           </dl>
+          {sourced.map(a => <p key={a.id}>
+            {a.name} · {a.valuationSource} · 净值 {aud(a.total, 2)}
+            {a.nonCashFromNav && <> · 净值减现金 {aud(a.securities, 2)} · 逐只持仓报价估值 {aud(a.holdingsEstimate, 2)}</>}
+            {a.unrealized != null && <> · 未实现盈亏 {a.approximatePnl ? "约 " : ""}{aud(a.unrealized, 2)}</>}
+          </p>)}
           {d.originalValue != null && <p>Wealthfolio 同日原始估值 {aud(d.originalValue, 2)}</p>}
           <button
             className="primary"
@@ -274,7 +281,7 @@ export function Holdings({ d, initial = {}, onPage }) {
       {!rows.length ? (
         <Empty>没有符合条件的持仓。</Empty>
       ) : (
-        <Table head={["证券 / 现金", "账户", "数量", "原币市值", "澳元市值", "报价日期", ""]}>
+        <Table head={["证券 / 现金", "账户", "数量", "原币市值", "澳元市值", "估值依据日期", ""]}>
           {rows.map((r) => (
             <tr key={r.id}>
               <td>
@@ -291,6 +298,7 @@ export function Holdings({ d, initial = {}, onPage }) {
               <td>{aud(r.audValue, 2)}</td>
               <td>
                 {r.priceUpdatedAt || "待报价"}
+                {r.quoteObservedAt && <small>券商快照读取日</small>}
                 {r.type !== "cash" && r.priceUpdatedAt && r.priceUpdatedAt < d.date && (
                   <small>沿用最近报价</small>
                 )}
@@ -327,7 +335,7 @@ export function Holdings({ d, initial = {}, onPage }) {
             <dd>
               {num(row.price)} · {row.quoteSource || "缺少报价"}
             </dd>
-            <dt>报价日期</dt>
+            <dt>{row.quoteObservedAt ? "券商快照读取日" : "报价日期"}</dt>
             <dd>{row.priceUpdatedAt || "—"}</dd>
             <dt>兑澳元汇率 · 日期</dt>
             <dd>
@@ -342,6 +350,7 @@ export function Holdings({ d, initial = {}, onPage }) {
                 <p key={e.id}>
                   {String(e.date).slice(0, 10)} · {types[e.activityType] || e.activityType} · {e.currency}{" "}
                   {num(e.amount ?? e.unitPrice)}
+                  {e.metadata?.supersededBy && " · 已冲销"}
                 </p>
               ))
             ) : (
