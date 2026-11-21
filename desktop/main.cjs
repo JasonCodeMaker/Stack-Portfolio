@@ -46,7 +46,7 @@ const { parseManualCsv, snapshotToCsv } = require("../src/domain/etf.ts");
 const { saveAddonSettings } = require("../src/storage/settings.ts");
 const { saveRebalanceSettings } = require("../src/storage/rebalance.ts");
 const { FxService } = require("../src/services/fx/fxService.ts");
-app.setName("Stack Portfolio");
+app.setName("Stock Portfolio");
 if (process.env.STACK_PORTFOLIO_TEST_DIR) app.setPath("userData", process.env.STACK_PORTFOLIO_TEST_DIR);
 else app.setPath("userData", path.join(app.getPath("appData"), "Stack Portfolio"));
 let db,
@@ -139,7 +139,7 @@ function sourcePreview(file) {
   stagedSource = { file, token: randomUUID() };
   return { counts, token: stagedSource.token, name: path.basename(file) };
 }
-const nativeBackup = [{ name: "Stack Portfolio 账本", extensions: ["sqlite"] }];
+const nativeBackup = [{ name: "Stock Portfolio 账本", extensions: ["sqlite"] }];
 const handlers = {
   async home() {
     if (!mode && ["real", "demo"].includes(lastMode()) && fs.existsSync(fileFor(lastMode())))
@@ -476,7 +476,7 @@ const handlers = {
     const file = await pick(
       nativeBackup,
       true,
-      "Stack-Portfolio-" + new Date().toISOString().slice(0, 10) + ".sqlite",
+      "Stock-Portfolio-" + new Date().toISOString().slice(0, 10) + ".sqlite",
     );
     if (!file) return null;
     if (path.resolve(file) === path.resolve(fileFor(mode))) throw Error("请选择其他位置。");
@@ -546,7 +546,7 @@ for (const [name, fn] of Object.entries(handlers))
   });
 function createWindow() {
   win = new BrowserWindow({
-    title: "Stack Portfolio",
+    title: "Stock Portfolio",
     width: 1420,
     height: 930,
     minWidth: 920,

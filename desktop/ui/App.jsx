@@ -55,7 +55,7 @@ function Welcome({ home, run, enter, onClose }) {
     <div className="welcome">
       <header>
         <Mark />
-        <strong>Stack Portfolio</strong>
+        <strong>Stock Portfolio</strong>
       </header>
       <main>
         <div className="intro">
@@ -124,7 +124,7 @@ function Welcome({ home, run, enter, onClose }) {
               }, false)
             }
           >
-            从 Stack Portfolio 备份恢复
+            从 Stock Portfolio 备份恢复
           </button>
           {onClose && (
             <button className="text-btn" onClick={onClose}>
@@ -134,7 +134,7 @@ function Welcome({ home, run, enter, onClose }) {
         </div>
         {preview && (
           <Modal title="确认迁入旧账本和设置" close={() => setPreview(null)}>
-            <p>{preview.name} · 迁入后由 Stack Portfolio 独立保存和更新。</p>
+            <p>{preview.name} · 迁入后由 Stock Portfolio 独立保存和更新。</p>
             <dl>
               {Object.entries({
                 accounts: "账户",
@@ -319,7 +319,7 @@ function Application() {
   if (!home)
     return (
       <div className="boot">
-        <Mark /> 正在打开 Stack Portfolio…{banners}
+        <Mark /> 正在打开 Stock Portfolio…{banners}
       </div>
     );
   if (welcome || !d)
@@ -335,7 +335,7 @@ function Application() {
         <div className="brand">
           <Mark />
           <div>
-            Stack<span>Portfolio</span>
+            Stock<span>Portfolio</span>
           </div>
         </div>
         <nav>
@@ -352,7 +352,7 @@ function Application() {
           </span>
           <span>
             {mode === "demo" ? "示例账本" : "本地账本"}
-            <small>Stack Portfolio</small>
+            <small>Stock Portfolio</small>
           </span>
           <ChevronDown size={14} />
         </button>
@@ -362,7 +362,7 @@ function Application() {
           <header className="page-head">
             <div>
               <p className="crumb">
-                Stack Portfolio <span>/</span> 投资账本
+                Stock Portfolio <span>/</span> 投资账本
               </p>
               <h1>{pages[page][0]}</h1>
             </div>
