@@ -16,12 +16,13 @@ const packaged = process.argv[2];
 (async () => {
   let app;
   try {
-    app = await electron.launch({
+    const launch = (profile) => electron.launch({
       executablePath: packaged || require("electron"),
       args: packaged ? [] : [root],
-      env,
+      env: { ...env, STACK_PORTFOLIO_TEST_DIR: profile },
       timeout: 30000,
     });
+    app = await launch(directory);
     const p = await app.firstWindow();
     p.setDefaultTimeout(8000);
     const errors = [];
@@ -101,7 +102,8 @@ const packaged = process.argv[2];
     await preview.getByRole("button", { name: "取消预览" }).click();
     await p.reload();
     await p.getByText("A$128,400.00", { exact: true }).waitFor();
-    const backup = path.join(directory, "verify-backup.sqlite");
+    const backup = path.join(directory, "verify-backup.spbackup");
+    const password = require("node:crypto").randomBytes(24).toString("base64");
     await app.evaluate(({ dialog }, file) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
@@ -109,14 +111,43 @@ const packaged = process.argv[2];
     }, backup);
     await p.getByRole("button", { name: "数据与设置", exact: true }).click();
     await p.getByRole("button", { name: "备份账本", exact: true }).click();
-    await p.getByText("已保存 verify-backup.sqlite", { exact: true }).waitFor();
+    await p.getByLabel("备份密码（至少 12 个字符）").fill(password);
+    await p.getByLabel("再次输入密码").fill(password);
+    await p.getByRole("button", { name: "选择文件位置" }).click();
+    await p.getByText("已保存 verify-backup.spbackup", { exact: true }).waitFor();
     assert.ok(fs.existsSync(backup));
+    const saved = fs.readFileSync(path.join(directory, "sample.sqlite"));
+    const failed = await p.evaluate(async () => {
+      const { token } = await window.portfolio.selectBackup();
+      try { await window.portfolio.restore({ token, password: "incorrect backup password" }); }
+      catch { return true; }
+      return false;
+    });
+    assert.ok(failed);
+    assert.deepEqual(fs.readFileSync(path.join(directory, "sample.sqlite")), saved);
     await p.getByRole("button", { name: "恢复账本备份", exact: true }).click();
+    await p.getByLabel("备份密码", { exact: true }).fill(password);
+    await p.getByRole("button", { name: "解锁并恢复" }).click();
     await p.waitForFunction(() => document.querySelector(".busy") === null);
     await p.getByRole("button", { name: "总览", exact: true }).click();
     await p.getByText("A$128,400.00", { exact: true }).waitFor();
     assert.ok(fs.readdirSync(directory).some((f) => f.startsWith("before-restore-")));
     assert.deepEqual(errors, []);
+    await app.close();
+    app = null;
+    const fresh = path.join(directory, "new-profile");
+    fs.mkdirSync(fresh);
+    app = await launch(fresh);
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+      dialog.showMessageBox = async () => ({ response: 1 });
+    }, backup);
+    const clean = await app.firstWindow();
+    await clean.getByRole("button", { name: "从账本备份恢复" }).click();
+    await clean.getByLabel("备份密码", { exact: true }).fill(password);
+    await clean.getByRole("button", { name: "解锁并恢复" }).click();
+    await clean.getByText("A$128,400.00", { exact: true }).waitFor();
+    assert.notDeepEqual(fs.readFileSync(path.join(directory, "ledger-key.v1")), fs.readFileSync(path.join(fresh, "ledger-key.v1")));
     console.log(
       "Windows UI verified: onboarding, holdings, allocation, target saving, import, reconciliation, duplicate detection, reload, backup and restore.",
     );

@@ -38,7 +38,7 @@ await Promise.all([
     format: "cjs",
     outdir: output,
     outExtension: { ".js": ".cjs" },
-    external: ["electron", "node:sqlite"],
+    external: ["electron", "better-sqlite3-multiple-ciphers"],
   }),
   build({
     ...shared,

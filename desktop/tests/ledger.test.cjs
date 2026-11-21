@@ -4,7 +4,9 @@ const { test } = require("node:test"),
   path = require("node:path"),
   os = require("node:os");
 const { DatabaseSync } = require("node:sqlite");
-const { createBook, migrate, copyBook, putPref, preference } = require("../out/ledger.cjs");
+const { createBook, migrate, putPref, preference } = require("../out/ledger.cjs");
+const { encryptedCopy } = require("../bookStorage.cjs");
+const key = Buffer.from("raw:" + require("node:crypto").randomBytes(32).toString("hex"));
 const { dashboard } = require("../out/flows.cjs");
 const { seedDemo, demoCsv, demoXml } = require("../out/demo.cjs");
 const {
@@ -19,12 +21,9 @@ const {
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stack-book-")),
     book = path.join(dir, "portfolio.sqlite");
-  let db = createBook(book);
+  const db = createBook(book, key);
   t.after(() => {
-    if (db.isOpen !== false)
-      try {
-        db.close();
-      } catch {}
+    if (db.open) db.close();
     for (const f of fs.readdirSync(dir)) fs.unlinkSync(path.join(dir, f));
     fs.rmdirSync(dir);
   });
@@ -78,8 +77,8 @@ test("sample reconciliation updates holdings, external cashflow and P&L exactly 
     /已经入账/,
   );
   const dest = path.join(dir, "backup.db");
-  copyBook(book, dest);
-  const restored = createBook(dest);
+  encryptedCopy(db, dest, key);
+  const restored = createBook(dest, key);
   try {
     assert.equal((await dashboard(restored)).pnl, 3200);
   } finally {
@@ -171,10 +170,10 @@ test("migration leaves original data intact and preserves decimal text, source I
     INSERT INTO addon_storage VALUES('portfolio-xray','rebalance.v1','{"schemaVersion":1,"tolerance":0.01,"targets":{"strategy:cash":1}}');`);
   s.close();
   const original = fs.readFileSync(source);
-  const summary = migrate(source, dest);
+  const summary = migrate(source, dest, key);
   assert.equal(summary.activities, 1);
   assert.equal(summary.allocation, 1);
-  const db = createBook(dest);
+  const db = createBook(dest, key);
   try {
     const e = JSON.parse(db.prepare("SELECT data FROM sp_events").get().data);
     assert.equal(e.amount, "1234.567890123456789");
@@ -185,7 +184,7 @@ test("migration leaves original data intact and preserves decimal text, source I
     db.close();
   }
   assert.deepEqual(fs.readFileSync(source), original);
-  assert.throws(() => migrate(source, dest), /存在/);
+  assert.throws(() => migrate(source, dest, key), /存在/);
 });
 test("a matched transfer changes external cash flow only when the scope crosses an account boundary", async (t) => {
   const { db } = fixture(t);

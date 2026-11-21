@@ -1,12 +1,22 @@
 # Stock Portfolio for Windows
 
-运行新版安装程序后，从 Windows 开始菜单打开 **Stock Portfolio**。[Windows x64 安装程序（v1.0.3）](https://github.com/JasonCodeMaker/Stack-Portfolio/releases/download/v1.0.3/Stock-Portfolio-Setup-1.0.3-x64.exe)
+运行安装程序后，从 Windows 开始菜单打开 **Stock Portfolio**。旧版 1.0.x 无法打开升级后的加密账本。[Windows x64 安装程序（v1.1.1）](https://github.com/JasonCodeMaker/Stack-Portfolio/releases/download/v1.1.1/Stock-Portfolio-Setup-1.1.1-x64.exe)
 
 ## 接手现有账本
 
 首页可预览本机 Wealthfolio 账户、流水、行情和设置的数量，或选择未加密的 SQLite 账本备份。确认迁入后，应用在当前 Windows 用户的 `%APPDATA%\Stack Portfolio\portfolio.sqlite` 中独立保存账本。保留原记录编号、手工更正、同步去重记录、配置目标、ETF 数据及原始估值。加密的 Wealthfolio 备份可先在 Wealthfolio 中导出为未加密的本地数据库。
 
 在 **数据与设置 → 券商与行情连接** 重新授权 IBKR Flex、Webull Australia 和所用的数据源。IBKR 按需读取最近 365 天，Webull 读取最近六个月。更早的记录可从文件导入。现金流水未覆盖时，可用同日月结单核对并补录。**数据与设置 → 账本与备份** 提供本地备份和恢复。恢复已有正式账本时，会先保留一份恢复前的副本。
+
+## 加密、备份与恢复
+
+首次启动 1.1 后，应用会加密正式账本、示例账本及应用数据目录内的旧版 SQLite 账本备份。升级会先读取已提交的数据库日志，再校验加密副本，最后原子替换文件。平时使用 SQLCipher 按页读写。随机生成的 256 位密钥由当前 Windows 用户保护，券商 token 和行情密钥另有一层 Windows 加密。
+
+在 **数据与设置 → 账本与备份 → 备份账本** 创建 `.spbackup` 文件。为备份设置独立密码，将密码保存在密码管理器。重装系统或换电脑后，可在欢迎页选择 **从账本备份恢复**。忘记备份密码且已失去原账本访问权限时，无法恢复这份密码备份。跨 Windows 账户恢复后，需要重新授权券商和行情连接。
+
+**加密旧备份** 可把其他目录中的旧版明文备份、或本机的自动恢复副本，直接转成密码备份。转换保留来源文件。应用只会自动升级自己数据目录中的账本，其他位置的原始文件仍需单独保管。每次覆盖已有账本前，应用会在数据目录保存一份经校验的本机加密副本。
+
+若 Windows 配置损坏导致自动解锁失败，请保留整个 `%APPDATA%\Stack Portfolio` 目录。退出应用后可将目录改名留存，重新启动应用，再从独立的密码备份恢复。
 
 ## 试用示例组合
 

@@ -31,6 +31,7 @@ const actions = [
   "refreshMarket",
   "autoRefresh",
   "backup",
+  "selectBackup",
   "restore",
 ];
 contextBridge.exposeInMainWorld(

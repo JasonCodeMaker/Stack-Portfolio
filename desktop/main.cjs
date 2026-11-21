@@ -3,10 +3,15 @@ const path = require("node:path"),
   fs = require("node:fs"),
   { pathToFileURL } = require("node:url");
 const { randomUUID } = require("node:crypto");
-const { DatabaseSync } = require("node:sqlite");
+const {
+  localKeyName, localKey, backupKey, isPlainDatabase, openDatabase, checkIntegrity,
+  encryptedCopy, publishFile, lockForReplacement, assertNoJournal,
+} = require("./bookStorage.cjs");
 const {
   createBook,
-  copyBook,
+  protectOldBook,
+  backupMode,
+  hasTable,
   knownSources,
   inspectSource,
   migrate,
@@ -53,6 +58,8 @@ let db,
   mode,
   win,
   stagedSource,
+  selectedBackup,
+  bookKey,
   previews = new Map(),
   lastFxCheck = 0;
 const fundChecks = new Map();
@@ -61,6 +68,39 @@ const dataDir = () => app.getPath("userData"),
 const originalDir = () =>
   process.env.STACK_PORTFOLIO_TEST_SOURCE || path.join(app.getPath("appData"), "com.teymz.wealthfolio");
 const preferenceFile = () => path.join(dataDir(), "workspace.json");
+const localFiles = () => fs.readdirSync(dataDir(), { withFileTypes: true })
+  .filter((entry) => entry.isFile() && /\.sqlite$/i.test(entry.name))
+  .map((entry) => path.join(dataDir(), entry.name));
+const isManagedBook = (file) => /^(portfolio|sample|before-.+|(stack|stock)-portfolio-.+)\.sqlite$/i.test(path.basename(file));
+function getBookKey() {
+  if (!bookKey) {
+    const canCreate = fs.existsSync(path.join(dataDir(), localKeyName)) ||
+      !localFiles().some((f) => isManagedBook(f) && !isPlainDatabase(f));
+    bookKey = localKey(dataDir(), safeStorage, canCreate);
+  }
+  return bookKey;
+}
+let checkedLocalFiles = false;
+function protectLocalFiles() {
+  if (checkedLocalFiles) return;
+  for (const file of localFiles()) {
+    if (!isPlainDatabase(file)) continue;
+    if (!isManagedBook(file)) {
+      const check = openDatabase(file, null, { readonly: true, existing: true });
+      try {
+        if (!hasTable(check, "sp_meta")) continue;
+      } finally {
+        check.close();
+      }
+    }
+    try {
+      protectOldBook(file, getBookKey());
+    } catch (e) {
+      throw Error("未能加密 " + path.basename(file) + "。" + e.message);
+    }
+  }
+  checkedLocalFiles = true;
+}
 function writeFileAtomic(file, data) {
   const part = file + "." + randomUUID() + ".tmp";
   try {
@@ -79,9 +119,13 @@ function lastMode() {
 }
 async function activate(m) {
   if (db && mode === m) return m;
-  const next = createBook(fileFor(m));
+  const file = fileFor(m);
+  const key = getBookKey();
+  if (fs.existsSync(file)) protectOldBook(file, key);
+  const next = createBook(file, key);
   try {
     if (m === "demo") await seedDemo(next);
+    writeFileAtomic(preferenceFile(), JSON.stringify({ mode: m }));
   } catch (e) {
     next.close();
     throw e;
@@ -92,7 +136,6 @@ async function activate(m) {
   previews.clear();
   fundChecks.clear();
   lastFxCheck = 0;
-  writeFileAtomic(preferenceFile(), JSON.stringify({ mode }));
   return mode;
 }
 function requireBook() {
@@ -117,7 +160,7 @@ const secrets = {
       throw Error("当前 Windows 账户无法解锁此授权，请重新连接。");
     }
   },
-  async set(key, value) {
+  set(key, value) {
     if (!secretNames.has(key)) throw Error("未知连接。");
     if (!value) {
       putPref(db, "credentials", key, null);
@@ -139,12 +182,20 @@ function sourcePreview(file) {
   stagedSource = { file, token: randomUUID() };
   return { counts, token: stagedSource.token, name: path.basename(file) };
 }
-const nativeBackup = [{ name: "Stock Portfolio 账本", extensions: ["sqlite"] }];
+const portableBackup = [{ name: "密码加密的账本备份", extensions: ["spbackup"] }];
+const nativeBackup = [{ name: "投资账本备份", extensions: ["spbackup", "sqlite", "db"] }];
 const handlers = {
   async home() {
-    if (!mode && ["real", "demo"].includes(lastMode()) && fs.existsSync(fileFor(lastMode())))
-      await activate(lastMode());
+    let storageError;
+    try {
+      protectLocalFiles();
+      if (!mode && ["real", "demo"].includes(lastMode()) && fs.existsSync(fileFor(lastMode())))
+        await activate(lastMode());
+    } catch (e) {
+      storageError = e.message;
+    }
     return {
+      storageError,
       mode: mode || null,
       hasReal: fs.existsSync(fileFor("real")),
       sources: knownSources(originalDir()).map((p, i) => ({ id: i, label: path.relative(originalDir(), p) })),
@@ -167,7 +218,7 @@ const handlers = {
   },
   async migrationCommit({ token }) {
     if (!stagedSource || token !== stagedSource.token) throw Error("请重新预览迁移。");
-    const summary = migrate(stagedSource.file, fileFor("real"));
+    const summary = migrate(stagedSource.file, fileFor("real"), getBookKey());
     stagedSource = null;
     await activate("real");
     return summary;
@@ -351,7 +402,10 @@ const handlers = {
     const entry = await new EtfCache(storageContext(requireBook(), ALLOCATION)).get(a.key);
     if (!entry?.snapshot) throw Error("缺少成分表。");
     const file = await pick([{ name: "ETF 成分 CSV", extensions: ["csv"] }], true, "ETF-holdings.csv");
-    if (file) writeFileAtomic(file, "\uFEFF" + snapshotToCsv(entry.snapshot));
+    if (file) {
+      if (path.extname(file).toLowerCase() !== ".csv") throw Error("请选择扩展名为 .csv 的文件。");
+      writeFileAtomic(file, "\uFEFF" + snapshotToCsv(entry.snapshot));
+    }
     return !!file;
   },
   fundRefresh: (a) => refreshFund(requireBook(), a.asset, secrets),
@@ -371,11 +425,13 @@ const handlers = {
     requireBook();
     if (mode === "demo") throw Error("请在正式账本连接数据源。");
     const allowed = new Set(["ibkr.flex-query-id", "webull.app-key", "webull.api-account-id"]);
-    for (const [k, v] of Object.entries(args)) {
-      if (secretNames.has(k)) await secrets.set(k, v);
-      else if (allowed.has(k)) putPref(db, BROKER, k, v || null);
-      else throw Error("未知连接设置。");
-    }
+    transaction(db, () => {
+      for (const [k, v] of Object.entries(args)) {
+        if (secretNames.has(k)) secrets.set(k, v);
+        else if (allowed.has(k)) putPref(db, BROKER, k, v || null);
+        else throw Error("未知连接设置。");
+      }
+    });
     return true;
   },
   async connectWebull() {
@@ -471,76 +527,141 @@ const handlers = {
     }
     return { updated, failed, fx: !!(fx?.provider === "twelvedata" && day(fx.fetchedAt) === day(now)) };
   },
-  async backup() {
-    requireBook();
-    const file = await pick(
-      nativeBackup,
-      true,
-      "Stock-Portfolio-" + new Date().toISOString().slice(0, 10) + ".sqlite",
-    );
-    if (!file) return null;
-    if (path.resolve(file) === path.resolve(fileFor(mode))) throw Error("请选择其他位置。");
-    const temp = file + "." + randomUUID() + ".tmp";
+  async backup({ password, convertLegacy = false }) {
+    const key = backupKey(password);
+    let external;
     try {
-      copyBook(fileFor(mode), temp);
-      fs.renameSync(temp, file);
+      let source;
+      if (convertLegacy) {
+        const old = await pick([{ name: "旧版或本机加密的账本备份", extensions: ["sqlite", "db"] }]);
+        if (!old) return null;
+        external = openDatabase(old, isPlainDatabase(old) ? null : getBookKey(), { readonly: true, existing: true });
+        backupMode(external);
+        source = external;
+      } else source = requireBook();
+      const file = await pick(portableBackup, true, "Stock-Portfolio-" + new Date().toISOString().slice(0, 10) + ".spbackup");
+      if (!file) return null;
+      if (path.extname(file).toLowerCase() !== ".spbackup") throw Error("请选择扩展名为 .spbackup 的备份文件。");
+      publishFile(file, (temp) => encryptedCopy(source, temp, key));
+      return path.basename(file);
     } finally {
-      if (fs.existsSync(temp)) fs.unlinkSync(temp);
+      key.fill(0);
+      external?.close();
     }
-    return path.basename(file);
   },
-  async restore() {
-    const source = await pick(nativeBackup);
-    if (!source) return null;
-    const check = new DatabaseSync(source, { readOnly: true });
-    let destinationMode;
-    try {
-      if (
-        check.prepare("PRAGMA quick_check").get().quick_check !== "ok" ||
-        check.prepare("SELECT value FROM sp_meta WHERE key='version'").get()?.value !== "1"
-      )
-        throw Error("不是支持的账本备份。");
-      destinationMode = preference(check, "app", "demo") === "1" ? "demo" : "real";
-    } finally {
-      check.close();
-    }
-    const target = fileFor(destinationMode);
-    const title = destinationMode === "demo" ? "示例账本" : "正式账本";
-    if (path.resolve(source) === path.resolve(target)) throw Error("请选择独立的备份文件。");
-    const ok = await dialog.showMessageBox(win, {
-      type: "question",
-      buttons: ["取消", "恢复到" + title],
-      defaultId: 0,
-      cancelId: 0,
-      message: "恢复这份" + title + "？",
-      detail: "现有账本会先保存为带时间戳的本地备份。",
-    });
-    if (ok.response !== 1) return null;
-    const temp = target + "." + randomUUID() + ".tmp";
-    try {
-      copyBook(source, temp);
-      if (fs.existsSync(target))
-        copyBook(target, path.join(dataDir(), "before-restore-" + Date.now() + ".sqlite"));
-      if (db) {
-        db.close();
-        db = null;
-        mode = null;
+  async selectBackup() {
+    selectedBackup = null;
+    const file = await pick(nativeBackup);
+    if (!file) return null;
+    const resolved = fs.realpathSync.native(file).toLowerCase();
+    if (["real", "demo"].some((m) => fs.existsSync(fileFor(m)) && fs.realpathSync.native(fileFor(m)).toLowerCase() === resolved))
+      throw Error("请选择独立的备份文件。");
+    let kind = "plain";
+    if (!isPlainDatabase(file)) {
+      kind = "password";
+      if (fs.existsSync(path.join(dataDir(), localKeyName))) {
+        try {
+          openDatabase(file, getBookKey(), { readonly: true, existing: true }).close();
+          kind = "local";
+        } catch { /* A portable backup uses its own password. */ }
       }
-      fs.renameSync(temp, target);
-      await activate(destinationMode);
-      return destinationMode;
+    }
+    selectedBackup = { file, kind, token: randomUUID() };
+    return { token: selectedBackup.token, name: path.basename(file), needsPassword: kind === "password" };
+  },
+  async restore({ token, password }) {
+    if (!selectedBackup || token !== selectedBackup.token) throw Error("请重新选择备份。");
+    const { file, kind } = selectedBackup;
+    const passwordKey = kind === "password" ? backupKey(password) : null;
+    const sourceKey = kind === "local" ? getBookKey() : passwordKey;
+    let source, replaced, rollback;
+    const previousMode = mode;
+    try {
+      source = openDatabase(file, sourceKey, { readonly: true, existing: true });
+      const nextMode = backupMode(source);
+      checkIntegrity(source);
+      const target = fileFor(nextMode);
+      const title = nextMode === "demo" ? "示例账本" : "正式账本";
+      const ok = await dialog.showMessageBox(win, {
+        type: "question", buttons: ["取消", "恢复到" + title], defaultId: 0, cancelId: 0,
+        message: "恢复这份" + title + "？",
+        detail: "现有账本会先保存为本机加密备份。跨 Windows 账户恢复后，请重新授权券商和行情连接。",
+      });
+      if (ok.response !== 1) return null;
+      const key = getBookKey();
+      publishFile(target, (stage) => {
+        encryptedCopy(source, stage, key);
+        const next = createBook(stage, key);
+        try {
+          if (backupMode(next) !== nextMode) throw Error("备份在恢复期间发生了变化，请重试。");
+          loadBook(next);
+          // Keep working tokens on this computer. On a different Windows profile
+          // the backup retains the original ciphertext and the restored book can reconnect.
+          for (const name of secretNames) {
+            const value = preference(next, "credentials", name);
+            if (!value) continue;
+            try { safeStorage.decryptString(Buffer.from(value, "base64")); }
+            catch { putPref(next, "credentials", name, null); }
+          }
+        } finally {
+          next.close();
+        }
+        if (mode === nextMode) {
+          db.close();
+          db = null;
+          mode = null;
+        }
+        if (fs.existsSync(target)) {
+          const old = openDatabase(target, isPlainDatabase(target) ? null : key, { existing: true });
+          try {
+            lockForReplacement(old);
+            rollback = path.join(dataDir(), "before-restore-" + Date.now() + "-" + randomUUID() + ".sqlite");
+            publishFile(rollback, (temp) => encryptedCopy(old, temp, key));
+          } finally {
+            old.close();
+          }
+        }
+        assertNoJournal(target);
+      });
+      replaced = target;
+      selectedBackup = null;
+      return await activate(nextMode);
+    } catch (e) {
+      if (replaced && rollback)
+        publishFile(replaced, (stage) => fs.copyFileSync(rollback, stage, fs.constants.COPYFILE_EXCL));
+      if (!db && previousMode) await activate(previousMode);
+      throw e;
     } finally {
-      if (fs.existsSync(temp)) fs.unlinkSync(temp);
+      source?.close();
+      passwordKey?.fill(0);
     }
   },
 };
 let queue = Promise.resolve();
+const readers = new Set();
+let switchingBooks = false;
 const page = pathToFileURL(path.join(__dirname, "index.html")).href;
 for (const [name, fn] of Object.entries(handlers))
   ipcMain.handle("portfolio:" + name, (event, args) => {
-    if (event.sender !== win?.webContents || event.senderFrame?.url !== page) throw Error("请求来源无效。");
-    if (["dashboard", "history", "connections"].includes(name)) return fn(args || {});
-    const run = queue.then(() => fn(args || {}));
+    if (event.sender !== win?.webContents || event.senderFrame !== win.webContents.mainFrame ||
+        event.senderFrame?.url !== page) throw Error("请求来源无效。");
+    if (!switchingBooks && ["dashboard", "history", "connections"].includes(name)) {
+      const read = Promise.resolve().then(() => fn(args || {}));
+      readers.add(read);
+      return read.finally(() => readers.delete(read));
+    }
+    const run = queue.then(async () => {
+      const switchBook = ["openDemo", "openReal", "newBook", "migrationCommit", "restore"].includes(name) ||
+        (name === "home" && !mode);
+      if (!switchBook) return fn(args || {});
+      switchingBooks = true;
+      try {
+        await Promise.allSettled(readers);
+        return await fn(args || {});
+      } finally {
+        switchingBooks = false;
+      }
+    });
     queue = run.catch(() => {});
     return run;
   });
@@ -582,5 +703,6 @@ else {
   app.on("window-all-closed", () => app.quit());
   app.on("will-quit", () => {
     db?.close();
+    bookKey?.fill(0);
   });
 }

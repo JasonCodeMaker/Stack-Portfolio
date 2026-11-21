@@ -1,7 +1,7 @@
 {
   "name": "stock-portfolio-desktop",
   "productName": "Stock Portfolio",
-  "version": "1.0.3",
+  "version": "1.1.1",
   "private": true,
   "description": "Local investment portfolio, allocation and broker reconciliation for Windows",
   "author": "Stock Portfolio",
@@ -21,8 +21,19 @@
     },
     "files": [
       "out/**",
-      "package.json"
+      "package.json",
+      "!node_modules/better-sqlite3-multiple-ciphers/{deps,src}/**",
+      "!node_modules/better-sqlite3-multiple-ciphers/prebuilds/{darwin*,linux*,win32-arm64}.node",
+      "!node_modules/node-addon-api/**"
     ],
+    "npmRebuild": false,
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "asarUnpack": ["node_modules/better-sqlite3-multiple-ciphers/prebuilds/win32-x64.node"],
     "win": {
       "target": [
         "nsis"
@@ -46,5 +57,11 @@
     "playwright-core": "1.65.1",
     "react": "19.2.8",
     "react-dom": "19.2.8"
+  },
+  "dependencies": {
+    "better-sqlite3-multiple-ciphers": "13.2.0"
+  },
+  "overrides": {
+    "minimatch@>=7 <11.0.1": "11.0.1"
   }
 }

@@ -1,9 +1,12 @@
-import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import Decimal from "decimal.js";
+import {
+  openDatabase, checkIntegrity, isPlainDatabase, encryptedCopy, publishFile,
+  lockForReplacement, assertNoJournal,
+} from "./bookStorage.cjs";
 
 export const ALLOCATION = "portfolio-xray";
 export const BROKER = "broker-sync";
@@ -63,20 +66,21 @@ CREATE TABLE IF NOT EXISTS sp_checks(account TEXT NOT NULL, day TEXT NOT NULL, r
 CREATE TABLE IF NOT EXISTS sp_batches(id TEXT PRIMARY KEY, account TEXT NOT NULL, created TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sp_corrections(id TEXT PRIMARY KEY, event TEXT NOT NULL, created TEXT NOT NULL, reason TEXT NOT NULL, prior TEXT NOT NULL, amended TEXT NOT NULL);
 `;
-export function createBook(filename) {
+export function createBook(filename, key) {
   mkdirSync(path.dirname(filename), { recursive: true });
-  const db = new DatabaseSync(filename);
-  db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA trusted_schema=OFF");
-  if (hasTable(db, "sp_meta")) {
-    const version = db.prepare("SELECT value FROM sp_meta WHERE key='version'").get()?.value;
-    if (version !== "1") {
-      db.close();
-      throw Error("此账本版本需要更新的 Stack Portfolio。");
-    }
+  const db = openDatabase(filename, key);
+  try {
+    if (hasTable(db, "sp_meta") && db.prepare("SELECT value FROM sp_meta WHERE key='version'").get()?.value !== "1")
+      throw Error("此账本版本需要更新的 Stock Portfolio。");
+    transaction(db, () => {
+      db.exec(schema);
+      db.prepare("INSERT OR IGNORE INTO sp_meta VALUES('version','1')").run();
+    });
+    return db;
+  } catch (e) {
+    db.close();
+    throw e;
   }
-  db.exec(schema);
-  db.prepare("INSERT OR IGNORE INTO sp_meta VALUES('version','1')").run();
-  return db;
 }
 export function preference(db, scope, key) {
   return db.prepare("SELECT value FROM sp_prefs WHERE scope=? AND key=?").get(scope, key)?.value ?? null;
@@ -96,13 +100,14 @@ export function knownSources(folder) {
 function rowCount(db, table) {
   return hasTable(db, table) ? db.prepare(`SELECT count(*) AS n FROM "${table}"`).get().n : 0;
 }
-export function inspectSource(file) {
-  const db = new DatabaseSync(file, { readOnly: true });
+export function inspectSource(file, key = null) {
+  const db = openDatabase(file, key, { readonly: true, existing: true });
   try {
     db.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF");
     if (!["accounts", "activities", "assets"].every((t) => hasTable(db, t)))
       throw Error("请选择 Wealthfolio 的 SQLite 账本或未加密 .db 备份。");
-    if (hasTable(db, "sp_meta")) throw Error("这是 Stack Portfolio 账本，请使用恢复备份。");
+    if (db.prepare("SELECT 1 FROM sqlite_schema WHERE lower(name) GLOB 'sp_*' LIMIT 1").get())
+      throw Error("来源包含投资账本专用的数据库对象。请检查来源，或使用恢复备份。");
     const count = (scope) =>
       hasTable(db, "addon_storage")
         ? db.prepare("SELECT COUNT(*) n FROM addon_storage WHERE addon_id=?").get(scope).n
@@ -283,13 +288,9 @@ export function saveBrokerValue(db, accountId, input, write = true) {
     db.prepare("INSERT OR REPLACE INTO sp_broker_values VALUES(?,?,?,?)").run(accountId, date, source, JSON.stringify(data));
   return sameValue ? "time" : "value";
 }
-function loadLegacy(db) {
+function loadLegacy(db, source) {
   function* read(table) {
-    if (!hasTable(db, table)) return;
-    const statement = db.prepare(`SELECT * FROM "${table}"`);
-    yield* statement.iterate();
-    // Keep the statement alive until its iterator has finished on Node 22.
-    void statement;
+    if (hasTable(source, table)) yield* source.prepare(`SELECT * FROM "${table}"`).iterate();
   }
   const accounts = db.prepare("INSERT INTO sp_accounts VALUES(?,?,?,?,?)");
   for (const r of read("accounts"))
@@ -362,43 +363,66 @@ function loadLegacy(db) {
     if (["base_currency", "language", "timezone"].includes(r.setting_key))
       putPref(db, "legacy", r.setting_key, r.setting_value);
 }
-export function copyBook(source, destination) {
-  if (existsSync(destination)) throw Error("目标账本已经存在。");
-  const src = new DatabaseSync(source, { readOnly: true });
+export function backupMode(db) {
+  // sp_broker_values was added after version 1.0.0 and is created on restore.
+  const requiredTables = [...schema.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)]
+    .map((match) => match[1]).filter((name) => name !== "sp_broker_values");
+  if (!requiredTables.every((t) => hasTable(db, t)) ||
+      db.prepare("SELECT value FROM sp_meta WHERE key='version'").get()?.value !== "1")
+    throw Error("请选择支持的投资账本备份。");
+  if (db.prepare(`SELECT 1 FROM sqlite_schema WHERE
+      (type IN ('trigger','view') AND (lower(name) GLOB 'sp_*' OR lower(tbl_name) GLOB 'sp_*'))
+      OR (lower(name) GLOB 'sp_*' AND upper(sql) LIKE 'CREATE VIRTUAL TABLE%') LIMIT 1`).get())
+    throw Error("备份中有不受支持的账本对象。");
+  return preference(db, "app", "demo") === "1" ? "demo" : "real";
+}
+
+export function protectOldBook(file, key) {
+  if (!isPlainDatabase(file)) return;
+  let src = openDatabase(file, null, { existing: true });
   try {
-    src.exec("PRAGMA busy_timeout=10000");
-    src.prepare("VACUUM INTO ?").run(destination);
+    backupMode(src);
+    lockForReplacement(src);
+    checkIntegrity(src);
+    publishFile(file, (stage) => {
+      encryptedCopy(src, stage, key);
+      src.close();
+      src = null;
+      assertNoJournal(file);
+    });
   } finally {
-    src.close();
+    src?.close();
   }
 }
-export function migrate(source, destination) {
+export function migrate(source, destination, key) {
   inspectSource(source);
   if (existsSync(destination)) throw Error("正式账本已存在，迁移不会覆盖它。");
   mkdirSync(path.dirname(destination), { recursive: true });
-  const stage = destination + "." + randomUUID() + ".tmp";
-  let db;
-  try {
-    copyBook(source, stage);
-    const summary = inspectSource(stage);
-    db = createBook(stage);
-    transaction(db, () => {
-      loadLegacy(db);
-      for (const [t, key] of [
-        ["sp_accounts", "accounts"],
-        ["sp_events", "activities"],
-        ["sp_assets", "assets"],
-      ])
-        if (rowCount(db, t) !== summary[key]) throw Error("迁移记录数不一致。");
-      putPref(db, "app", "migration", JSON.stringify({ ...summary, at: new Date().toISOString() }));
-    });
-    if (db.prepare("PRAGMA quick_check").get().quick_check !== "ok") throw Error("迁入账本完整性检查失败。");
-    db.close();
-    db = null;
-    renameSync(stage, destination);
+  return publishFile(destination, (stage) => {
+    const legacy = openDatabase(source, null, { readonly: true, existing: true });
+    try {
+      encryptedCopy(legacy, stage, key);
+    } finally {
+      legacy.close();
+    }
+    const summary = inspectSource(stage, key);
+    const reader = openDatabase(stage, key, { readonly: true, existing: true });
+    let db;
+    try {
+      db = createBook(stage, key);
+      transaction(db, () => {
+        loadLegacy(db, reader);
+        for (const [table, name] of [
+          ["sp_accounts", "accounts"], ["sp_events", "activities"], ["sp_assets", "assets"],
+        ])
+          if (rowCount(db, table) !== summary[name]) throw Error("迁移记录数不一致。");
+        putPref(db, "app", "migration", JSON.stringify({ ...summary, at: new Date().toISOString() }));
+      });
+      checkIntegrity(db);
+    } finally {
+      reader.close();
+      db?.close();
+    }
     return summary;
-  } finally {
-    db?.close();
-    if (existsSync(stage)) rmSync(stage);
-  }
+  });
 }

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { Database, Download, ExternalLink, Upload, Wifi, Link2 } from "lucide-react";
+import { Database, ExternalLink, Wifi, Link2 } from "lucide-react";
 import { api, aud, Card, Field, Modal, Tabs, Table, Empty, kind } from "./common";
 import { scopedAliasKey } from "../../src/domain/identifiers";
+import { BookBackups } from "./BookBackups";
 export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
   const [tab, setTab] = useState(initial.tab || "book"),
     [name, setName] = useState(""),
@@ -105,28 +106,7 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
             )}
             <div className="actions">
               <button onClick={openHome}>切换账本 / 迁入 Wealthfolio</button>
-              <button
-                onClick={() =>
-                  run(async () => {
-                    const f = await api.backup();
-                    if (!f) return false;
-                    return "已保存 " + f;
-                  }, false)
-                }
-              >
-                <Download size={15} />
-                备份账本
-              </button>
-              <button
-                onClick={() =>
-                  run(async () => {
-                    if (await api.restore()) await workspace();
-                  }, false)
-                }
-              >
-                <Upload size={15} />
-                恢复账本备份
-              </button>
+              <BookBackups run={run} restored={workspace} />
             </div>
           </Card>
           <Card title="账户">

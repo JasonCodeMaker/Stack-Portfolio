@@ -25,6 +25,7 @@ import { Overview, Holdings } from "./Cockpit";
 import { Imports } from "./Imports";
 import { Allocation } from "./Allocation";
 import { Settings } from "./Settings";
+import { BookBackups } from "./BookBackups";
 import "./styles.css";
 const pages = {
   overview: ["总览", LayoutDashboard],
@@ -115,17 +116,7 @@ function Welcome({ home, run, enter, onClose }) {
               建立空白账本
             </button>
           )}
-          <button
-            className="text-btn"
-            onClick={() =>
-              run(async () => {
-                const restored = await api.restore();
-                if (restored) await enter(restored === "demo" ? "openDemo" : "openReal");
-              }, false)
-            }
-          >
-            从 Stock Portfolio 备份恢复
-          </button>
+          <BookBackups welcome run={run} restored={(m) => enter(m === "demo" ? "openDemo" : "openReal")} />
           {onClose && (
             <button className="text-btn" onClick={onClose}>
               返回当前账本
@@ -202,6 +193,7 @@ function Application() {
   const workspace = useCallback(async () => {
     const h = await api.home();
     setHome(h);
+    if (h.storageError) setFatal(h.storageError);
     setMode(h.mode);
     if (h.mode) {
       await refresh();
