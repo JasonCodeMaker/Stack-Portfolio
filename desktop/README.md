@@ -1,6 +1,6 @@
 # Stack Portfolio for Windows
 
-下载并运行安装程序，然后从 Windows 开始菜单打开 **Stack Portfolio**。[Windows x64 安装程序](https://github.com/JasonCodeMaker/Stack-Portfolio/releases/download/v1.0.0/Stack-Portfolio-Setup-1.0.0-x64.exe)
+下载并运行安装程序，然后从 Windows 开始菜单打开 **Stack Portfolio**。[Windows x64 安装程序](https://github.com/JasonCodeMaker/Stack-Portfolio/releases/download/v1.0.1/Stack-Portfolio-Setup-1.0.1-x64.exe)
 
 ## 接手现有账本
 

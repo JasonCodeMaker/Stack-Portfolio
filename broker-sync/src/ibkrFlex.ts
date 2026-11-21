@@ -1,8 +1,10 @@
 import type { NetworkRequest, NetworkResponse } from "@wealthfolio/addon-sdk";
 import type { BrokerActivity } from "@/types";
 
-const SEND_URL = "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest";
-const STATEMENT_URL = "https://gdcdyn.interactivebrokers.com/Universal/servlet/FlexStatementService.GetStatement";
+const FLEX_BASE = {
+  global: "https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService",
+  australia: "https://www.interactivebrokers.com.au/AccountManagement/FlexWebService",
+} as const;
 const LOOKBACK_DAYS = 365;
 const IBKR_HEADERS = {
   Accept: "application/xml,text/xml",
@@ -429,11 +431,16 @@ function delay(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-export async function fetchIbkrFlexReport(network: IbkrFlexNetwork, credentials: IbkrFlexCredentials): Promise<IbkrFlexReport> {
+export async function fetchIbkrFlexReport(
+  network: IbkrFlexNetwork,
+  credentials: IbkrFlexCredentials,
+  region: keyof typeof FLEX_BASE = "global",
+): Promise<IbkrFlexReport> {
+  const base = FLEX_BASE[region];
   const query = encodeURIComponent(credentials.queryId.trim());
   const token = encodeURIComponent(credentials.token.trim());
   const requested = await safeNetworkRequest(network, {
-    url: `${SEND_URL}?t=${token}&q=${query}&v=3&p=${LOOKBACK_DAYS}`,
+    url: `${base}/SendRequest?t=${token}&q=${query}&v=3&p=${LOOKBACK_DAYS}`,
     method: "GET",
     headers: IBKR_HEADERS,
   }, "report request");
@@ -448,7 +455,7 @@ export async function fetchIbkrFlexReport(network: IbkrFlexNetwork, credentials:
   for (let attempt = 0; attempt < 6; attempt += 1) {
     if (attempt > 0) await delay(1000 * attempt);
     const statement = await safeNetworkRequest(network, {
-      url: `${STATEMENT_URL}?t=${token}&q=${encodeURIComponent(reference)}&v=3`,
+      url: `${base}/GetStatement?t=${token}&q=${encodeURIComponent(reference)}&v=3`,
       method: "GET",
       headers: IBKR_HEADERS,
     }, "statement download");

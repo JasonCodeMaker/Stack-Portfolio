@@ -172,6 +172,7 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
         <>
           {mode === "demo" && <div className="notice">正式账本可保存券商授权。示例账本使用随附样例。</div>}
           <Card title="Interactive Brokers · Activity Flex">
+            <p className="muted">在盈透客户门户打开 Performance &amp; Reports → Flex Queries，点 Flex Web Service Configuration 的齿轮，复制 Current Token。</p>
             <div className="form-grid">
               <Field label="Flex Query ID">
                 <input
@@ -233,7 +234,9 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
             </div>
             {web && (
               <p>
-                {web.status === "PENDING" ? "请在 Webull 手机应用批准请求，再点击检查手机授权。" : web.status}
+                {web.status === "PENDING"
+                  ? "在 Webull 手机 App 打开 Menu → Messages → OpenAPI Notifications，选择最新消息，点 Check Now 完成验证，再点击这里的「检查手机授权」。"
+                  : web.status}
               </p>
             )}
             {web?.accounts.length > 0 && (

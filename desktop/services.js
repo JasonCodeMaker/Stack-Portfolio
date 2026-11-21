@@ -33,8 +33,7 @@ import { createProviders, resolveEtfHoldings } from "../src/services/etf/provide
 const D = (x) => new Decimal(x ?? 0);
 const networkHosts = new Set([
   "api.webull.com.au",
-  "ndcdyn.interactivebrokers.com",
-  "gdcdyn.interactivebrokers.com",
+  "www.interactivebrokers.com.au",
   "api.twelvedata.com",
   "www.alphavantage.co",
   "www.ishares.com",
@@ -687,7 +686,7 @@ export async function brokerReport(db, broker, secrets) {
     const queryId = preference(db, BROKER, "ibkr.flex-query-id"),
       token = await secrets.get("ibkr.flex-token");
     if (!queryId || !token) throw Error("请先保存 IBKR Query ID 和 Flex Token。");
-    return withIbkrStatement(await fetchIbkrFlexReport(network, { queryId, token }));
+    return withIbkrStatement(await fetchIbkrFlexReport(network, { queryId, token }, "australia"));
   }
   const { appKey, appSecret, accessToken, accountId } = await webullCredentials(db, secrets);
   if (!appKey || !appSecret || !accessToken || !accountId) throw Error("请先连接并选择 Webull AU 券商账户。");

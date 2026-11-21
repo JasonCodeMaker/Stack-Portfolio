@@ -2,7 +2,7 @@
 
 Stack Portfolio 是在 Windows 上管理投资组合的本地应用。可以从 Wealthfolio 迁入历史账本，查看持仓与 ETF 穿透配置，导入和同步 IBKR、Webull Australia 交易，并按券商结单对账。
 
-[下载 Windows x64 安装包](https://github.com/JasonCodeMaker/Stack-Portfolio/releases/download/v1.0.0/Stack-Portfolio-Setup-1.0.0-x64.exe) · [使用与构建说明](desktop/README.md)
+[下载 Windows x64 安装包](https://github.com/JasonCodeMaker/Stack-Portfolio/releases/download/v1.0.1/Stack-Portfolio-Setup-1.0.1-x64.exe) · [使用与构建说明](desktop/README.md)
 
 ## Allocation for Wealthfolio
 

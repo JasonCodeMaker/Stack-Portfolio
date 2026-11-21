@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchIbkrFlexActivities, parseIbkrFlexReport, parseIbkrFlexStatement } from "@/ibkrFlex";
+import { fetchIbkrFlexActivities, fetchIbkrFlexReport, parseIbkrFlexReport, parseIbkrFlexStatement } from "@/ibkrFlex";
 
 const XML = `<?xml version="1.0"?><FlexQueryResponse><FlexStatements><FlexStatement accountId="U123" baseCurrency="AUD">
 <Trades><Trade accountId="U123" currency="USD" assetCategory="STK" symbol="AAPL" description="APPLE INC" listingExchange="NASDAQ" tradeDate="20260828" dateTime="20260828;143015" buySell="BUY" quantity="2" tradePrice="225.50" ibCommission="-1.00" taxes="0" tradeID="T1" ibExecID="E1" /></Trades>
@@ -118,6 +118,20 @@ describe("parseIbkrFlexStatement", () => {
 });
 
 describe("fetchIbkrFlexActivities", () => {
+  it.each([
+    ["global", "ndcdyn.interactivebrokers.com"],
+    ["australia", "www.interactivebrokers.com.au"],
+  ] as const)("uses the same official %s Flex service for both requests", async (region, host) => {
+    const request = vi.fn()
+      .mockResolvedValueOnce({ status: 200, body: "<Status>Success</Status><ReferenceCode>R1</ReferenceCode><url>https://example.invalid/unused</url>" })
+      .mockResolvedValueOnce({ status: 200, body: XML });
+    await fetchIbkrFlexReport({ request }, { queryId: "demo-query", token: "demo-token" }, region);
+    const base = `https://${host}/AccountManagement/FlexWebService`;
+    expect(request.mock.calls.map(([r]) => r.url.split("?")[0])).toEqual([
+      base + "/SendRequest", base + "/GetStatement",
+    ]);
+  });
+
   it("requests and downloads a generated report without exposing credentials in errors", async () => {
     const request = vi.fn()
       .mockResolvedValueOnce({ status: 200, headers: {}, body: "<FlexStatementResponse><Status>Success</Status><ReferenceCode>R1</ReferenceCode></FlexStatementResponse>" })
