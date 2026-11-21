@@ -115,9 +115,10 @@ test("an unknown CSV row and changed broker amount remain pending", async (t) =>
   assert.equal(changed.unknown.length, 1);
   assert.equal(changed.imported, 0);
   assert.deepEqual(changed.rows.map((r) => [r.status, r.symbol, r.quantity, r.unitPrice]), [["review", "BHP", 15, 44]]);
+  assert.deepEqual(changed.rows[0].edits.map((e) => [e.label, Number(e.before), Number(e.after)]), [["数量", 10, 15]]);
 });
 
-test("preview keeps booked, new and unresolved records distinguishable by broker identity", async (t) => {
+test("preview omits booked rows and keeps new and unresolved records by broker identity", async (t) => {
   const { db } = fixture(t);
   const { createAccount, saveBrokerValue } = require("../out/ledger.cjs");
   const id = createAccount(db, "Flex account");
@@ -134,13 +135,29 @@ test("preview keeps booked, new and unresolved records distinguishable by broker
     activities: [deposit, returned, withdrawal, invalid], statement: { date: "2025-04-03", cash: {} },
   }, "Flex");
   assert.deepEqual(result.rows.map((r) => [r.type, r.amount, r.status]), [
-    ["DEPOSIT", 100, "existing"], ["DEPOSIT", 60, "new"], ["WITHDRAWAL", 60, "existing"], ["DEPOSIT", 30, "review"],
+    ["DEPOSIT", 60, "new"], ["DEPOSIT", 30, "review"],
   ]);
+  assert.equal(result.duplicate, 2);
+  assert.deepEqual(result.amountEdits, []);
   assert.equal(result.valueChange, null);
   assert.equal(result.previousValue.date, "2025-04-04");
   assert.equal(result.previousValue.nav, "40");
   assert.equal(result.statement.nav, undefined);
   assert.equal(result.prices, 0);
+});
+
+test("a revised broker record already booked under the same revision still exposes a changed amount", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount } = require("../out/ledger.cjs");
+  const id = createAccount(db, "Funding");
+  const original = { broker: "ibkr", brokerRecordId: "wire-only", importRevision: "cash-v2", activityType: "DEPOSIT",
+    date: "2025-03-18", currency: "AUD", amount: 120 };
+  await batch(db, id, "ibkr", { activities: [original] }, "Flex", true);
+  const same = await batch(db, id, "ibkr", { activities: [original] }, "Flex");
+  assert.deepEqual(same.rows, []);
+  const changed = await batch(db, id, "ibkr", { activities: [{ ...original, amount: 150 }] }, "Flex");
+  assert.equal(changed.rows[0].status, "review");
+  assert.deepEqual(changed.rows[0].edits.map((e) => [e.label, Number(e.before), e.after]), [["金额", 120, 150]]);
 });
 test("migration leaves original data intact and preserves decimal text, source IDs and preferences", async (t) => {
   const { dir } = fixture(t),
@@ -338,12 +355,14 @@ test("a dated Webull snapshot values matched local holdings with broker marks ev
   const first = await batch(db, id, "webull", report, "Webull", false);
   assert.equal(first.previousValue, null);
   assert.equal(first.valueChange, "value");
+  assert.ok(first.amountEdits.some((e) => e.label === "现金余额" && e.before === null && e.after === "12"));
   assert.equal(view(id).total, 34);
   await batch(db, id, "webull", report, "Webull", true);
   assert.equal((await batch(db, id, "webull", report, "Webull")).valueChange, null);
   const again = { ...observation, observedAt: day + "T10:00:00Z" };
   const timeOnly = { activities: [], valuation: again, statement: again };
   assert.equal((await batch(db, id, "webull", timeOnly, "Webull")).valueChange, "time");
+  assert.deepEqual((await batch(db, id, "webull", timeOnly, "Webull")).amountEdits, []);
   assert.equal((await batch(db, id, "webull", timeOnly, "Webull", true)).valueChange, "time");
   const stale = { ...again, observedAt: day + "T09:00:00Z" };
   assert.equal((await batch(db, id, "webull", { activities: [], valuation: stale }, "Webull")).valueChange, null);
@@ -352,6 +371,14 @@ test("a dated Webull snapshot values matched local holdings with broker marks ev
   assert.equal(updated.valueChange, "value");
   assert.equal(updated.previousValue.nav, "32");
   assert.equal(updated.statement.cashTotal, "0");
+  assert.deepEqual(updated.amountEdits.map(({ label, before, after }) => [label, before, after]),
+    [["账户总额", "32", "20"], ["现金余额", "12", "0"]]);
+  const nextDay = { ...again, date: "2025-04-24", cashTotal: "12.000", positions: [{ ...again.positions[0], quantity: "2.0" }] };
+  assert.deepEqual((await batch(db, id, "webull", { activities: [], valuation: nextDay }, "Webull")).amountEdits, []);
+  const holding = { ...again, observedAt: day + "T13:00:00Z", positions: [{ symbol: "XYZ", currency: "AUD", quantity: "4", price: "5" }] };
+  const onlyHoldings = await batch(db, id, "webull", { activities: [], valuation: holding }, "Webull");
+  assert.deepEqual(onlyHoldings.amountEdits.map(({ label, before, after }) => [label, before, after]),
+    [["ABC 持仓数量", "2", 0], ["XYZ 持仓数量", 0, "4"], ["XYZ 持仓报价", null, "5"]]);
   assert.deepEqual([view(id).cash, view(id).securities, view(id).total], [12, 20, 32]);
   assert.equal(view(other).total, 34);
   db.prepare("UPDATE sp_anchors SET cash=? WHERE account=?").run('{"AUD":"13"}', id);

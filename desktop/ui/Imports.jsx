@@ -255,7 +255,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                 <button onClick={() => prepare("file")}>
                   <FileUp />
                   <b>选择{broker === "ibkr" ? " Flex XML" : "成交 CSV"}</b>
-                  <small>预览文件中的新增、重复和待核对记录</small>
+                  <small>查看本次新增和修改</small>
                 </button>
               )}
               {demo ? (
@@ -289,14 +289,14 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               done={Boolean(last)}
               accounts={d.accounts}
               confirm={commit}
-              close={() => setPreview(null)}
+              close={() => { setPreview(null); setLast(null); }}
               reconcile={(r) => {
                 selectAccount(r.account, true);
                 useStatement(r.statement || { date: d.date });
               }}
             />
           )}
-          {d.batches.length > 0 && (
+          {!preview && !last && d.batches.length > 0 && (
             <Card title="最近导入批次">
               <Table head={["文件或连接", "时间", "新增", "重复", "更正"]}>
                 {d.batches
