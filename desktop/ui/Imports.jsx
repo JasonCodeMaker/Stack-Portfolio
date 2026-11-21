@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { FileUp, CloudDownload, FileText, Check, History, ArrowRight } from "lucide-react";
+import { ImportPreview } from "./ImportPreview";
 import {
   api,
-  fmt,
   num,
   aud,
   types,
@@ -71,16 +71,20 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     [revisions, setRevisions] = useState([]);
   const demo = mode === "demo",
     webullSample = demo && account === "demo-webull";
-  useEffect(() => {
-    setPreview(null);
-    setLast(null);
+  function selectAccount(next, keepImport = false) {
+    if (next === account) return;
+    setAccount(next);
+    if (!keepImport) {
+      setPreview(null);
+      setLast(null);
+    }
     setCompare(null);
     setFlow(false);
     setCash("");
     setPos("");
     setNav("");
     setOffset(0);
-  }, [account]);
+  }
   useEffect(() => {
     let a = true;
     if (tab === "history" && account)
@@ -101,7 +105,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   }
   function chooseBroker(b) {
     setBroker(b);
-    if (b !== "both") setAccount(accountFor(b));
+    if (b !== "both") selectAccount(accountFor(b));
     setPreview(null);
     setLast(null);
   }
@@ -119,12 +123,12 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       const v = await api.commit({ token: preview.token });
       setLast(v);
       setPreview(null);
-    }, "导入完成");
+    });
   }
   function useStatement(v) {
     setDate(v.date);
     setCash(
-      Object.entries(v.cash)
+      Object.entries(v.cash || {})
         .map(([k, n]) => k + " " + n)
         .join("\n"),
     );
@@ -178,13 +182,6 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     });
     setModal("amend");
   }
-  const checks = (result) =>
-    result?.unknown?.map((v, i) => (
-      <li key={i}>
-        {v.line ? "第 " + v.line + " 行 · " : ""}
-        {v.symbol} {v.reason}
-      </li>
-    ));
   if (!d.accounts.some((a) => a.active))
     return (
       <Card title="导入与对账">
@@ -207,7 +204,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           value={tab}
           onChange={setTab}
         />
-        <AccountSelect data={d} value={account} set={setAccount} />
+        {(tab !== "file" || broker !== "both") && <AccountSelect data={d} value={account} set={selectAccount} />}
       </div>
       {tab === "file" && (
         <>
@@ -237,6 +234,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                       onChange={(e) => {
                         setMapping({ ...mapping, [k]: e.target.value });
                         setPreview(null);
+                        setLast(null);
                       }}
                     >
                       <option value="">选择账户</option>
@@ -265,7 +263,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   <FileText />
                   <b>载入示例文件</b>
                   <small>
-                    {broker === "ibkr" ? "一笔 AAPL 买入和同期现金、持仓结单" : "一笔 BHP 买入，可重复导入"}
+                    {broker === "both" ? "分别查看 IBKR 结单和 Webull 成交" : broker === "ibkr" ? "一笔 AAPL 买入和同期现金、持仓结单" : "一笔 BHP 买入，可重复导入"}
                   </small>
                 </button>
               ) : (
@@ -273,7 +271,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   <CloudDownload />
                   <b>从券商拉取</b>
                   <small>
-                    {broker === "ibkr" ? "最近 365 天的 Activity Flex 记录" : "最近六个月的 Webull AU 记录"}
+                    {broker === "both" ? "IBKR Flex 报表和 Webull AU 近六个月流水及账户金额" : broker === "ibkr" ? "最近 365 天的 Activity Flex 记录" : "最近六个月的流水及本次账户金额"}
                   </small>
                 </button>
               )}
@@ -284,88 +282,25 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               </button>
             )}
           </Card>
-          {(preview || last) &&
-            (() => {
-              const p = preview || last;
-              return (
-                <Card title={preview ? "导入预览 · " + p.source : "导入结果 · " + p.source}>
-                  <div className="mini-stats">
-                    <span>
-                      <b>{preview ? p.added : p.imported}</b>
-                      {preview ? "新增" : "已导入"}
-                    </span>
-                    <span>
-                      <b>{p.duplicate}</b>重复 / 已存在
-                    </span>
-                    {p.repaired > 0 && <span><b>{p.repaired}</b>{preview ? "待冲销重复流水" : "已冲销重复流水"}</span>}
-                    <span>
-                      <b>{p.invalid + p.unknown.length}</b>待核对
-                    </span>
-                    {last && (
-                      <span>
-                        <b>{p.updated}</b>已核对更正
-                      </span>
-                    )}
-                  </div>
-                  {!!p.rows.length && (
-                    <Table head={["日期", "记录", "方向", "数量 / 金额", "状态"]}>
-                      {p.rows.map((v, i) => (
-                        <tr key={i}>
-                          <td>{String(v.date).slice(0, 10)}</td>
-                          <td>{v.symbol}</td>
-                          <td>{types[v.type] || v.type}</td>
-                          <td>
-                            {num(v.quantity ?? v.amount)} {v.quantity ? "" : v.currency}
-                          </td>
-                          <td>
-                            {v.status}
-                            <small>{v.reason}</small>
-                          </td>
-                        </tr>
-                      ))}
-                    </Table>
-                  )}
-                  {p.unknown.length > 0 && <ul className="warning">{checks(p)}</ul>}
-                  {p.audit?.warnings?.length > 0 && <p className="muted">{p.audit.warnings.join(" ")}</p>}
-                  {p.audit?.endingCashByCurrency && (
-                    <details>
-                      <summary>券商报告中的期末余额与资产</summary>
-                      <p>
-                        {Object.entries(p.audit.endingCashByCurrency)
-                          .map(([k, v]) => k + " " + fmt(v, 2))
-                          .join(" · ")}{" "}
-                        · 净资产 {p.audit.baseCurrency} {fmt(p.audit.reportedNavBase, 2)}
-                      </p>
-                    </details>
-                  )}
-                  <div className="actions">
-                    {preview ? (
-                      <>
-                        <button className="primary" onClick={commit}>
-                          确认导入
-                        </button>
-                        <button onClick={() => setPreview(null)}>取消预览</button>
-                      </>
-                    ) : (
-                      <button
-                        className="primary"
-                        onClick={() => {
-                          if (p.statement) useStatement(p.statement);
-                          else setTab("check");
-                        }}
-                      >
-                        前往结单对账 <ArrowRight size={15} />
-                      </button>
-                    )}
-                  </div>
-                </Card>
-              );
-            })()}
+          {(preview || last) && (
+            <ImportPreview
+              key={preview?.token || "result"}
+              result={preview || last}
+              done={Boolean(last)}
+              accounts={d.accounts}
+              confirm={commit}
+              close={() => setPreview(null)}
+              reconcile={(r) => {
+                selectAccount(r.account, true);
+                useStatement(r.statement || { date: d.date });
+              }}
+            />
+          )}
           {d.batches.length > 0 && (
             <Card title="最近导入批次">
               <Table head={["文件或连接", "时间", "新增", "重复", "更正"]}>
                 {d.batches
-                  .filter((b) => b.account === account)
+                  .filter((b) => broker === "both" ? Object.values(mapping).includes(b.account) : b.account === account)
                   .slice(0, 8)
                   .map((b) => (
                     <tr key={b.id}>

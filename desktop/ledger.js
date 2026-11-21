@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
 import path from "node:path";
 import Decimal from "decimal.js";
@@ -232,7 +233,7 @@ export function saveEvent(db, event, original = null) {
   ).run(event.id, event.accountId, day(event.date), data, original === true ? data : original);
   return event;
 }
-export function saveBrokerValue(db, accountId, input) {
+export function saveBrokerValue(db, accountId, input, write = true) {
   const date = day(input.date),
     source = String(input.source || "").trim();
   if (
@@ -274,13 +275,13 @@ export function saveBrokerValue(db, accountId, input) {
   const previous = db
     .prepare("SELECT source,data FROM sp_broker_values WHERE account=? AND day=?")
     .get(accountId, date);
-  if (previous && data.observedAt && json(previous.data, {}).observedAt > data.observedAt) return;
-  db.prepare("INSERT OR REPLACE INTO sp_broker_values VALUES(?,?,?,?)").run(
-    accountId,
-    date,
-    source,
-    JSON.stringify(data),
-  );
+  const prior = previous && json(previous.data, {});
+  if (data.observedAt && prior?.observedAt > data.observedAt) return null;
+  const sameValue = previous?.source === source && isDeepStrictEqual({ ...prior, observedAt: data.observedAt }, data);
+  if (sameValue && prior.observedAt === data.observedAt) return null;
+  if (write)
+    db.prepare("INSERT OR REPLACE INTO sp_broker_values VALUES(?,?,?,?)").run(accountId, date, source, JSON.stringify(data));
+  return sameValue ? "time" : "value";
 }
 function loadLegacy(db) {
   function* read(table) {

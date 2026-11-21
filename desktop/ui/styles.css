@@ -563,19 +563,6 @@ td small {
 .import-options svg {
   color: var(--green);
 }
-.mini-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 28px;
-  margin: 16px 0;
-  color: var(--muted);
-  font-size: 12px;
-}
-.mini-stats b {
-  display: block;
-  font-size: 20px;
-  color: #203d2b;
-}
 .form-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
@@ -807,6 +794,81 @@ summary {
   cursor: pointer;
   font-weight: 600;
 }
+.import-preview { scroll-margin-top: 12px; }
+.import-preview:focus { outline: none; }
+.import-impact {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px 24px;
+  padding: 15px 18px;
+  border-left: 3px solid var(--green);
+  border-radius: 6px;
+  background: #eff6f0;
+}
+.import-impact h3 {
+  margin: 0;
+  color: var(--deep);
+  font-size: 20px;
+  line-height: 1.4;
+}
+.import-impact p, .import-note { margin: 4px 0 0; }
+.import-decisions, .import-filters, .import-account header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.import-section-title { font-size: 15px; margin: 19px 0 9px; }
+.import-accounts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 12px;
+}
+.import-account {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+.import-account h3 { font-size: 16px; margin: 0; }
+.import-account header span, .import-caption, .import-recent, .import-filters small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.import-caption { margin: 4px 0 0; }
+.import-unavailable { margin: 8px 0; color: #735527; }
+.import-amounts {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 22px;
+  row-gap: 8px;
+  margin: 9px 0;
+  font-variant-numeric: tabular-nums;
+}
+.import-amounts div { min-width: 64px; }
+.import-amounts dt, .import-note, .import-amounts small { color: var(--muted); font-size: 12px; }
+.import-amounts dd { margin: 2px 0 0; color: var(--deep); font-size: 16px; font-weight: 650; }
+.import-amounts .amount-missing { font-size: 13px; font-weight: 400; color: var(--muted); }
+.import-amounts small { display: block; }
+.import-account .text-btn, .import-activities .text-btn { margin-top: 7px; }
+.import-activities {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.import-activities summary::marker { color: var(--green); }
+.import-activities summary small {
+  margin-left: 12px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.import-recent { display: block; padding-left: 16px; margin-top: 2px; font-weight: 400; }
+.import-filters { margin: 12px 0 8px; }
+.import-filters label { font-size: 12px; color: var(--muted); }
+.import-filters select { padding: 3px 7px; }
+.import-activities td small { display: block; }
 @media (max-width: 1100px) {
   .shell {
     grid-template-columns: 155px minmax(0, 1fr);

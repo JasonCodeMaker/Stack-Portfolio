@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
 import { parseCsvRows } from "../src/domain/etf";
-import { runSync, importedKeysStorageKey, resetImportedKeysForMappings } from "../broker-sync/src/syncEngine";
+import { runSync, sourceKey, importedKeysStorageKey, resetImportedKeysForMappings } from "../broker-sync/src/syncEngine";
 import { parseIbkrFlexReport, fetchIbkrFlexReport } from "../broker-sync/src/ibkrFlex";
 import {
   fetchWebullReport,
@@ -171,7 +171,7 @@ export function parseWebullCsv(text) {
           (/^X[A-Z]{3}$/.test(market) ? market : undefined),
       });
     } catch (e) {
-      unknown.push({ line: i + 2, symbol: value("symbol"), reason: e.message });
+      unknown.push({ line: i + 2, date: value("date"), symbol: value("symbol"), reason: e.message });
     }
   });
   return {
@@ -384,6 +384,14 @@ export function amendEvent(db, args) {
     return after.id;
   });
 }
+function activityDetail(r) {
+  return {
+    date: r.date, type: r.activityType, symbol: r.symbol, quantity: r.quantity,
+    currency: r.currency, amount: r.amount, unitPrice: r.unitPrice, fee: r.fee, tax: r.tax,
+    exchange: Boolean(r.metadata?.fx),
+  };
+}
+
 function splitConflicts(db, acc, report, history) {
   const exists = new Map();
   for (const { data } of db.prepare("SELECT data FROM sp_events WHERE account=?").all(acc)) {
@@ -403,19 +411,19 @@ function splitConflicts(db, acc, report, history) {
     const id = r.broker + ":" + r.brokerRecordId,
       prior = exists.get(id);
     if (history?.blocked.has(id)) {
-      problems.push({ reason: history.blocked.get(id), symbol: r.symbol });
+      problems.push({ ...activityDetail(r), reason: history.blocked.get(id) });
       continue;
     }
     if (!r.brokerRecordId || /^fallback-[a-f0-9]+(?:$|:)/i.test(r.brokerRecordId)) {
-      problems.push({ reason: "缺少可靠的券商记录编号，请核对原始凭证", symbol: r.symbol });
+      problems.push({ ...activityDetail(r), reason: "缺少可靠的券商记录编号，请核对原始凭证" });
       continue;
     }
     if (opening && dayOf(r.date) <= opening) {
-      problems.push({ reason: "记录落在已确认的期初余额之内", symbol: r.symbol });
+      problems.push({ ...activityDetail(r), reason: "记录落在已确认的期初余额之内" });
       continue;
     }
     if (counts.get(id) > 1) {
-      problems.push({ reason: "文件中券商编号重复，请核对", symbol: r.symbol });
+      problems.push({ ...activityDetail(r), reason: "文件中券商编号重复，请核对" });
       continue;
     }
     const changed =
@@ -429,12 +437,68 @@ function splitConflicts(db, acc, report, history) {
           : ["quantity", "amount", "fee", "tax"]
         ).some((k) => !D(prior[k]).eq(D(r[k]))));
     if (changed) {
-      problems.push({ reason: "相同券商编号对应的内容已变化，保留原流水", symbol: r.symbol });
+      problems.push({ ...activityDetail(r), reason: "相同券商编号对应的内容已变化，保留原流水" });
       continue;
     }
     active.push(r);
   }
   return { active, problems };
+}
+
+function checkReason(errors) {
+  if (!errors?.migration) return Object.values(errors || {}).flat().join(" ");
+  const reason = errors.migration.join(" ");
+  if (reason.includes("edited by the user")) return "本地已手工修改，请对照券商记录核实。";
+  if (reason.includes("no longer exists")) return "找不到原来关联的流水，请核对交易记录。";
+  if (reason.includes("different broker record")) return "原关联指向另一笔券商流水，请核对来源。";
+  return "有多笔可能对应的流水，请核对原始凭证。";
+}
+
+function importRows(active, problems, result, accountId) {
+  const byLine = new Map(result.checked.map((row) => [row.lineNumber, row]));
+  const byKey = new Map(result.candidates.map((c) => [c.sourceKey, c]));
+  const rows = active.map((r) => {
+    const candidate = byKey.get(sourceKey(r, accountId));
+    if (!candidate) return { ...activityDetail(r), status: "existing" };
+    const checked = byLine.get(candidate.activity.lineNumber);
+    let status = "new";
+    if (!checked.isValid) status = "review";
+    else if (checked.duplicateOfId) status = candidate.preserveExisting ? "link" : "update";
+    return { ...activityDetail(r), status, reason: checkReason(checked.errors) };
+  });
+  return rows.concat(problems.map((row) => ({ ...row, status: "review" })));
+}
+
+function statementPrices(db, statement, checked, write) {
+  const changes = new Map();
+  const previous = db.prepare("SELECT price FROM sp_prices WHERE asset=? AND day=? AND source=?");
+  function add(asset, price, source) {
+    if (!asset || !(Number(price) > 0)) return;
+    if (previous.get(asset, statement.date, source)?.price === money(price, true)) return;
+    changes.set(JSON.stringify([asset, source]), { asset, price, source });
+  }
+  for (const r of statement.positions || []) {
+    let id = resolveAsset(db, { symbol: r.symbol, exchangeMic: r.mic }, r.currency, false);
+    // A new fill creates its security during confirmation, after the read-only preview.
+    if (!write && !id && checked.some((v) => v.isValid && v.symbol === r.symbol && v.currency === r.currency &&
+      (!r.mic || !v.exchangeMic || r.mic === v.exchangeMic))) id = JSON.stringify([r.symbol, r.currency, r.mic]);
+    add(id, r.price, "IBKR 结单报价");
+    if (statement.base === "AUD" && r.currency !== "AUD")
+      add("FX:" + currency(r.currency) + "/AUD", r.fxToBase, "IBKR 结单汇率");
+  }
+  if (write)
+    for (const { asset, price, source } of changes.values())
+      savePrice(db, asset, statement.date, price, source, 30);
+  return changes.size;
+}
+
+function lastBrokerValue(db, accountId, through) {
+  const row = db.prepare(
+    "SELECT day,source,data FROM sp_broker_values WHERE account=? AND (? IS NULL OR day<=?) ORDER BY day DESC LIMIT 1",
+  ).get(accountId, through || null, through || null);
+  if (!row) return null;
+  const { cash, cashTotal, securities, nav, observedAt } = json(row.data, {});
+  return { date: row.day, source: row.source, base: "AUD", cash, cashTotal, securities, nav, observedAt };
 }
 export async function batch(db, accountId, broker, report, source, commit = false) {
   account(db, accountId);
@@ -451,6 +515,11 @@ export async function batch(db, accountId, broker, report, source, commit = fals
       { ibkr: "", webull: "", [broker]: accountId },
       !commit,
     );
+    const rows = importRows(active, problems, result, accountId);
+    const previousValue = lastBrokerValue(db, accountId, report.valuation?.date);
+    const valueChange = report.valuation ? saveBrokerValue(db, accountId, report.valuation, Boolean(commit)) : null;
+    const prices = broker === "ibkr" && report.statement
+      ? statementPrices(db, report.statement, result.checked, Boolean(commit)) : 0;
     const summary = {
       source,
       broker,
@@ -463,38 +532,21 @@ export async function batch(db, accountId, broker, report, source, commit = fals
       unknown: problems,
       invalid: result.invalid,
       audit: report.audit || {},
-      statement: report.statement,
-      rows: result.checked.map((r) => ({
-        date: r.date,
-        symbol: r.symbol || r.activityType,
-        type: r.activityType,
-        quantity: r.quantity,
-        amount: r.amount,
-        currency: r.currency,
-        status: r.isValid ? (r.duplicateOfId ? "已存在／待核对更正" : "新增") : "待核对",
-        reason: Object.values(r.errors || {})
-          .flat()
-          .join(" "),
-      })),
+      statement: report.statement || report.valuation,
+      previousValue,
+      valueChange,
+      prices,
+      rows,
     };
     if (commit) {
-      if (report.statement) {
-        const st = report.statement;
-        for (const r of st.positions || []) {
-          const id = resolveAsset(db, { symbol: r.symbol, exchangeMic: r.mic }, r.currency, false);
-          if (id && Number(r.price) > 0) savePrice(db, id, st.date, r.price, "IBKR 结单报价", 30);
-          if (st.base === "AUD" && r.currency !== "AUD" && Number(r.fxToBase) > 0)
-            savePrice(db, "FX:" + currency(r.currency) + "/AUD", st.date, r.fxToBase, "IBKR 结单汇率", 30);
-        }
-      }
-      if (report.valuation) saveBrokerValue(db, accountId, report.valuation);
       if (result.imported || result.updated || repaired || problems.length || result.invalid) {
+        const { previousValue: _previous, rows: _rows, ...batchRecord } = summary;
         db.prepare("INSERT INTO sp_batches VALUES(?,?,?,?,?)").run(
           randomUUID(),
           accountId,
           new Date().toISOString(),
           source,
-          JSON.stringify(summary),
+          JSON.stringify({ ...batchRecord, rows: rows.filter((r) => r.status !== "existing") }),
         );
         const latest = [
           ...report.activities.map((a) => dayOf(a.date)),
@@ -549,9 +601,6 @@ export async function combinedBatch(db, parts, commit = false) {
       duplicate: sum("duplicate"),
       invalid: sum("invalid"),
       unknown: reports.flatMap((r) => r.unknown),
-      rows: reports.flatMap((r) =>
-        r.rows.map((v) => ({ ...v, symbol: r.broker.toUpperCase() + " · " + v.symbol })),
-      ),
       audit: { warnings: reports.flatMap((r) => r.audit?.warnings || []) },
     };
     if (commit) db.exec("COMMIT");

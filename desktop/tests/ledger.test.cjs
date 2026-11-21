@@ -114,6 +114,33 @@ test("an unknown CSV row and changed broker amount remain pending", async (t) =>
   );
   assert.equal(changed.unknown.length, 1);
   assert.equal(changed.imported, 0);
+  assert.deepEqual(changed.rows.map((r) => [r.status, r.symbol, r.quantity, r.unitPrice]), [["review", "BHP", 15, 44]]);
+});
+
+test("preview keeps booked, new and unresolved records distinguishable by broker identity", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, saveBrokerValue } = require("../out/ledger.cjs");
+  const id = createAccount(db, "Flex account");
+  const deposit = { broker: "ibkr", brokerRecordId: "wire-a", activityType: "DEPOSIT", date: "2025-04-01", amount: 100, currency: "AUD" };
+  const withdrawal = { ...deposit, brokerRecordId: "wire-b", activityType: "WITHDRAWAL", amount: 60 };
+  const returned = { ...deposit, brokerRecordId: "wire-c", date: "2025-04-02", amount: 60 };
+  const invalid = { ...deposit, brokerRecordId: "", amount: 30 };
+  await batch(db, id, "ibkr", { activities: [deposit, withdrawal] }, "Flex", true);
+  saveBrokerValue(db, id, {
+    date: "2025-04-04", source: "手工结单", base: "AUD", cash: { AUD: "40" }, cashTotal: "40", nav: "40", positions: [],
+  });
+  db.exec("PRAGMA query_only=ON");
+  const result = await batch(db, id, "ibkr", {
+    activities: [deposit, returned, withdrawal, invalid], statement: { date: "2025-04-03", cash: {} },
+  }, "Flex");
+  assert.deepEqual(result.rows.map((r) => [r.type, r.amount, r.status]), [
+    ["DEPOSIT", 100, "existing"], ["DEPOSIT", 60, "new"], ["WITHDRAWAL", 60, "existing"], ["DEPOSIT", 30, "review"],
+  ]);
+  assert.equal(result.valueChange, null);
+  assert.equal(result.previousValue.date, "2025-04-04");
+  assert.equal(result.previousValue.nav, "40");
+  assert.equal(result.statement.nav, undefined);
+  assert.equal(result.prices, 0);
 });
 test("migration leaves original data intact and preserves decimal text, source IDs and preferences", async (t) => {
   const { dir } = fixture(t),
@@ -204,7 +231,9 @@ test("a migrated IBKR fill with a local timestamp and booked amount is linked wi
   };
   saveEvent(db, old, true);
   const report = { activities: [row] };
-  assert.equal((await batch(db, id, "ibkr", report, "Flex")).added, 0);
+  const linked = await batch(db, id, "ibkr", report, "Flex");
+  assert.equal(linked.added, 0);
+  assert.equal(linked.rows[0].status, "link");
   assert.equal((await batch(db, id, "ibkr", report, "Flex", true)).imported, 0);
   saveEvent(db, {
     ...old,
@@ -304,11 +333,25 @@ test("a dated Webull snapshot values matched local holdings with broker marks ev
     nav: "32",
     unrealized: "-3",
   };
-  const report = { activities: [], valuation: observation };
+  const report = { activities: [], valuation: observation, statement: observation };
   const view = (key) => accountSnapshot(loadBook(db), { id: key, currency: "AUD" }, day);
-  await batch(db, id, "webull", report, "Webull", false);
+  const first = await batch(db, id, "webull", report, "Webull", false);
+  assert.equal(first.previousValue, null);
+  assert.equal(first.valueChange, "value");
   assert.equal(view(id).total, 34);
   await batch(db, id, "webull", report, "Webull", true);
+  assert.equal((await batch(db, id, "webull", report, "Webull")).valueChange, null);
+  const again = { ...observation, observedAt: day + "T10:00:00Z" };
+  const timeOnly = { activities: [], valuation: again, statement: again };
+  assert.equal((await batch(db, id, "webull", timeOnly, "Webull")).valueChange, "time");
+  assert.equal((await batch(db, id, "webull", timeOnly, "Webull", true)).valueChange, "time");
+  const stale = { ...again, observedAt: day + "T09:00:00Z" };
+  assert.equal((await batch(db, id, "webull", { activities: [], valuation: stale }, "Webull")).valueChange, null);
+  const fresh = { ...observation, observedAt: day + "T12:00:00Z", cashTotal: "0", cash: { AUD: "0" }, nav: "20" };
+  const updated = await batch(db, id, "webull", { activities: [], valuation: fresh, statement: fresh }, "Webull");
+  assert.equal(updated.valueChange, "value");
+  assert.equal(updated.previousValue.nav, "32");
+  assert.equal(updated.statement.cashTotal, "0");
   assert.deepEqual([view(id).cash, view(id).securities, view(id).total], [12, 20, 32]);
   assert.equal(view(other).total, 34);
   db.prepare("UPDATE sp_anchors SET cash=? WHERE account=?").run('{"AUD":"13"}', id);
