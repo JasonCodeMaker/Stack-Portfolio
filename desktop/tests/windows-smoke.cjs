@@ -148,7 +148,7 @@ async function verifyPeriods(p) {
   for (const name of ["今年以来", "近一年"]) {
     await preset(p, name).click();
     await p.getByText("2025-01-01 至 2025-12-31 · 365 天", { exact: true }).waitFor();
-    await returns.getByText(/年化 \+1\.09%/).waitFor();
+    await returns.getByText(/^年化\s*▲\s*\+1\.09%/).waitFor();
   }
   assert.deepEqual(await gains(breakdown.getByRole("button")), yearGains);
 }
