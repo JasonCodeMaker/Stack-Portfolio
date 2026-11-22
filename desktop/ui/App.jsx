@@ -354,7 +354,7 @@ function Application() {
         )}
         {page === "overview" && <Overview d={d} run={run} onPage={onPage} filters={filters} onFilters={changeFilters} />}
         {page === "holdings" && (
-          <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} onPage={onPage} />
+          <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} historical={Boolean(filters.date)} />
         )}
         {page === "allocation" && (
           <Allocation d={d} run={run} onPage={onPage} />
