@@ -102,6 +102,25 @@ test("the overview and the review report the same investment gain and time-weigh
   assert.deepEqual([year.startValue, year.netFlow, year.gain], [1000, 500, 20]);
 });
 
+test("the asset trend retains earlier contributions while investment gain starts at the review period", async (t) => {
+  const { db, account, event } = book(t);
+  const a = account("A", "2025-01-01", 1000);
+  event(a, "2025-02-10", "INTEREST", 50);
+  event(a, "2025-03-01", "DEPOSIT", 500);
+  event(a, "2025-03-15", "FEE", 30);
+  const to = "2025-03-31";
+  const month = await dashboard(db, { ids: [a], date: to, period: "mtd" });
+  const year = await dashboard(db, { ids: [a], date: to, period: "ytd" });
+  const point = ({ points }, date) => {
+    const { value, invested, gain } = points.find((p) => p.date === date);
+    return [value, invested, gain];
+  };
+  assert.deepEqual(point(month, "2025-02-28"), [1050, 1000, 0]);
+  assert.deepEqual(point(month, "2025-03-01"), [1550, 1500, 0]);
+  assert.deepEqual(point(month, to), [1520, 1500, -30]);
+  assert.deepEqual(point(year, to), [1520, 1500, 20]);
+});
+
 test("the overview measures a custom range from the review through its own end, within the valuation date", async (t) => {
   const { db, account, event } = book(t);
   const a = account("A", "2025-01-01", 1000);
@@ -167,17 +186,20 @@ test("an open reconciliation check leaves the period valued from the local ledge
     [overview.pnl, overview.flows, overview.summary.twr],
     [review.money.gain, review.money.flows, review.metrics.portfolio.totalReturn],
   );
+  assert.deepEqual(overview.valuation, { cash: 13040, total: 127400 });
+  assert.deepEqual(overview.byAccount.find((a) => a.id === "demo-webull").valuation, { cash: 7040, total: 43700 });
   // The check itself remains for the imports page.
   assert.equal(db.prepare("SELECT COUNT(*) n FROM sp_checks").get().n, 1);
 });
 
-test("a security that has never had a quote leaves the period unmeasured", (t) => {
+test("a security that has never had a quote leaves the valuation and the period unmeasured", async (t) => {
   const { db, account } = book(t);
   const a = account("A", "2025-02-03", 100);
   const stock = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
   db.prepare("UPDATE sp_anchors SET positions=? WHERE account=?").run(JSON.stringify({ [stock]: 1 }), a);
   const s = periodSummary(db, { ids: [a], from: "2025-02-04", to: "2025-02-06" });
   assert.deepEqual([s.twr, s.gain, s.drawdown], [null, null, null]);
+  assert.equal((await dashboard(db, { ids: [a], date: "2025-02-06" })).valuation.total, null);
   savePrice(db, stock, "2025-02-03", 10, "close");
   near(periodSummary(db, { ids: [a], from: "2025-02-04", to: "2025-02-06" }).twr, 0);
 });
