@@ -155,6 +155,7 @@ function linkedSecurity(d, { assetId, symbol }) {
   return { assetId, symbol, rowId: row?.id };
 }
 
+// A review link can point to a listing with history but no open position.
 function selectedSecurity(d, selection) {
   if (!selection) return null;
   const { assetId, rowId, symbol } = selection;
@@ -229,7 +230,10 @@ function DetailHistory({ events, error, accounts }) {
                     {accounts.length > 1 && <small title={name}>{name}</small>}
                   </td>
                   <td>{e.quantity == null ? "—" : num(e.quantity)}</td>
-                  <td>{amount == null ? "—" : e.currency + " " + fmt(amount, 2)}</td>
+                  <td>
+                    {amount == null ? "—" : e.currency + " " + fmt(amount, 2)}
+                    {Boolean(Number(e.fee)) && <small>费用 {fmt(e.fee, 2)}</small>}
+                  </td>
                 </tr>
               );
             })}
@@ -280,32 +284,38 @@ function SecurityDetail({ d, security, day, onClose, openRepair }) {
           {currency && <span className="tag">{currency}</span>}
           {!row && <span className="tag">{events?.some((e) => e.activityType === "SELL") ? "已卖清" : "当前无持仓"}</span>}
         </div>
-        <div className="dl">
-          <div><span className="cap">市值</span><b>{aud(group ? group.value : 0, 2)}</b></div>
-          <div>
-            <span className="cap">未实现盈亏</span>
-            <b>{missingCost ? <span className="warn">待补</span> : <Delta amount={group?.gain} />}</b>
-            {gainRate != null && <span className="cap">盈亏率 {signedPct(gainRate)}</span>}
+        {group && (
+          <div className="dl">
+            <div><span className="cap">市值</span><b>{aud(group.value, 2)}</b></div>
+            <div>
+              <span className="cap">未实现盈亏</span>
+              <b>{missingCost ? <span className="warn">待补</span> : <Delta amount={group.gain} />}</b>
+              {gainRate != null && <span className="cap">盈亏率 {signedPct(gainRate)}</span>}
+            </div>
+            <div><span className="cap">成本（含费用）</span><b>{missingCost ? "待补" : aud(group.cost, 2)}</b></div>
+            <div>
+              <span className="cap">{day}涨跌</span><b><Delta amount={daily?.change} /></b>
+              {daily?.priceChange && <span className="cap">涨跌幅 {signedPct(daily.priceChange.change)}（{currency}）</span>}
+            </div>
           </div>
-          <div><span className="cap">成本（含费用）</span><b>{missingCost ? "待补" : aud(group?.cost, 2)}</b></div>
-          <div>
-            <span className="cap">{day}涨跌</span><b><Delta amount={daily?.change} /></b>
-            {daily?.priceChange && <span className="cap">涨跌幅 {signedPct(daily.priceChange.change)}（{currency}）</span>}
-          </div>
-        </div>
+        )}
         <section>
-          <h3>价格与成本</h3>
+          <h3>{group ? "价格与成本" : "累计收益"}</h3>
           <table>
             <tbody>
               <tr><th scope="row">合计股数</th><td><b>{num(group?.quantity ?? 0)}</b></td></tr>
               {quantities.map((a) => <tr key={a.id}><th scope="row">{a.name}</th><td>{num(a.quantity)}</td></tr>)}
-              <tr><th scope="row">买入均价</th><td>{missingCost ? "待补" : withinCurrency(average)}</td></tr>
-              <tr>
-                <th scope="row">现价</th>
-                <td title={[row?.quoteSource, row?.priceUpdatedAt].filter(Boolean).join(" · ")}>{withinCurrency(row?.price)}</td>
-              </tr>
-              {row?.fx && currency !== "AUD" && (
-                <tr><th scope="row">汇率</th><td title={[row.fxSource, row.fxDate].filter(Boolean).join(" · ")}>1 {currency} = {num(row.fx)} AUD</td></tr>
+              {row && (
+                <>
+                  <tr><th scope="row">买入均价</th><td>{missingCost ? "待补" : withinCurrency(average)}</td></tr>
+                  <tr>
+                    <th scope="row">现价</th>
+                    <td title={[row.quoteSource, row.priceUpdatedAt].filter(Boolean).join(" · ")}>{withinCurrency(row.price)}</td>
+                  </tr>
+                  {row.fx && currency !== "AUD" && (
+                    <tr><th scope="row">汇率</th><td title={[row.fxSource, row.fxDate].filter(Boolean).join(" · ")}>1 {currency} = {num(row.fx)} AUD</td></tr>
+                  )}
+                </>
               )}
               <tr><th scope="row">累计已实现盈亏</th><td><Delta amount={security.realised} /></td></tr>
               <tr><th scope="row">累计分红</th><td>{aud(security.dividends, 2)}</td></tr>
