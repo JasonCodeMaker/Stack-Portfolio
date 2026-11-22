@@ -169,7 +169,6 @@ const lifetimeColumns = [
   { label: "累计净投入", cell: (r) => money(r.lifetime?.invested) },
   { label: "现值", cell: (r, total) => money(total) },
   { label: "累计盈亏", cell: (r) => <Delta amount={r.lifetime?.gain} /> },
-  { label: "收益率", cell: (r) => <Delta rate={r.lifetime?.rate} /> },
 ];
 
 export function Overview({ d, run, onPage, onPeriod }) {
@@ -418,13 +417,13 @@ export function Overview({ d, run, onPage, onPeriod }) {
             <div>
               <dt>累计盈亏</dt>
               <dd>
-                <Delta amount={account.result.lifetime?.gain} rate={account.result.lifetime?.rate} />
+                <Delta amount={account.result.lifetime?.gain} />
               </dd>
             </div>
             <div>
               <dt>{span}盈亏</dt>
               <dd>
-                <Delta amount={account.result.period?.gain} rate={account.result.period?.rate} />
+                <Delta amount={account.result.period?.gain} rate={account.result.period?.twr} />
               </dd>
             </div>
             <div>
@@ -465,7 +464,7 @@ export function Overview({ d, run, onPage, onPeriod }) {
       {detail?.kind === "lifetime" && (
         <Modal wide title={"累计盈亏 · " + signedAud(life?.gain)} close={() => setDetail(null)}>
           <p className="muted">
-            累计盈亏 = 现值 − 累计净投入，包含已实现盈亏、分红、费用和汇率变动。收益率 = 累计盈亏 ÷ 累计转入。
+            累计盈亏 = 现值 − 累计净投入，包含已实现盈亏、分红、费用和汇率变动。
           </p>
           <ResultTable d={d} columns={lifetimeColumns} />
           <div className="actions">
@@ -479,8 +478,7 @@ export function Overview({ d, run, onPage, onPeriod }) {
       {detail?.kind === "period" && (
         <Modal wide title={span + "盈亏 · " + signedAud(period?.gain)} close={() => setDetail(null)}>
           <p className="muted">
-            {d.start} 至 {d.date}。盈亏 = 期末资产 − 期初资产 − 期间净入金；收益率 = 盈亏 ÷（期初资产 +
-            期间转入的资金）。
+            {d.start} 至 {d.date}。盈亏 = 期末资产 − 期初资产 − 期间净入金，按每日收盘估值。
             {d.fromOpening &&
               "所选账户自 " + d.start + " 起才有记录，此前资产为零，此后转入的资金都计入期间净入金。"}
           </p>
@@ -489,13 +487,13 @@ export function Overview({ d, run, onPage, onPeriod }) {
             columns={[
               { label: "期初资产", cell: (r) => money(r.period?.start) },
               { label: "期间净入金", cell: (r) => money(r.period?.flows) },
-              { label: "期末资产", cell: (r, total) => money(total) },
+              { label: "期末资产", cell: (r) => money(r.period?.end) },
               { label: "盈亏", cell: (r) => <Delta amount={r.period?.gain} /> },
-              { label: "收益率", cell: (r) => <Delta rate={r.period?.rate} /> },
+              { label: "时间加权收益率", cell: (r) => <Delta rate={r.period?.twr} /> },
             ]}
           />
           <p className="muted">
-            「策略复盘」使用剔除出入金影响的时间加权收益率，便于和指数比较，数值会与这里不同。
+            时间加权收益率剔除出入金影响，与「策略复盘」同一期间的数字一致。
           </p>
           <div className="actions">
             <button className="primary" onClick={() => go("performance")}>

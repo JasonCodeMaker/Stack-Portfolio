@@ -162,7 +162,7 @@ async function verifyReview(p) {
     await p.getByRole("button", { name: /^近 1 月盈亏 \+A\$3,200\.00/ }).waitFor();
     await p.getByRole("button", { name: /^近 1 月盈亏/ }).click();
     await p.getByRole("heading",{name:"这段时间的盈亏来自哪里"}).waitFor();
-    assert.equal(await p.getByLabel("复盘起点").inputValue(),"2026-09-30");
+    assert.equal(await p.getByLabel("复盘起点").inputValue(),"2026-10-01");
     assert.equal(await p.getByLabel("复盘终点").inputValue(),"2026-10-30");
     assert.match(await p.getByRole("row").filter({hasText:"组合期间盈亏"}).innerText(),/3,200/);
     await p.getByRole("button",{name:"总览",exact:true}).click();
