@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net, screen } = require("electron");
 const path = require("node:path"),
   fs = require("node:fs"),
   { pathToFileURL } = require("node:url");
@@ -35,6 +35,7 @@ const { dashboard, storageContext, loadBook, positions, targetScope } = require(
 const { portfolioReview, reviewDay, saveReviewNote, reviewNotes } = require("./performance.js");
 const { refreshBenchmarks, refreshCloses, refreshReviewPrices } = require("./reviewMarket.js");
 const { shiftDay } = require("./marketDays.js");
+const { initialWindow, minimumSize } = require("./windowState.js");
 const {
   batch,
   parseWebullCsv,
@@ -120,13 +121,17 @@ function writeFileAtomic(file, data) {
     if (fs.existsSync(part)) fs.unlinkSync(part);
   }
 }
-function lastMode() {
+function readPreferences() {
   try {
-    return JSON.parse(fs.readFileSync(preferenceFile(), "utf8")).mode;
+    const value = JSON.parse(fs.readFileSync(preferenceFile(), "utf8"));
+    return value && typeof value === "object" ? value : {};
   } catch {
-    return null;
+    return {};
   }
 }
+const writePreferences = (patch) =>
+  writeFileAtomic(preferenceFile(), JSON.stringify({ ...readPreferences(), ...patch }));
+const lastMode = () => readPreferences().mode ?? null;
 async function activate(m) {
   if (db && mode === m) return m;
   const file = fileFor(m);
@@ -135,7 +140,7 @@ async function activate(m) {
   const next = createBook(file, key);
   try {
     if (m === "demo") await seedDemo(next);
-    writeFileAtomic(preferenceFile(), JSON.stringify({ mode: m }));
+    writePreferences({ mode: m });
   } catch (e) {
     next.close();
     throw e;
@@ -774,12 +779,17 @@ for (const [name, fn] of Object.entries(handlers))
     return run;
   });
 function createWindow() {
+  const headless = !!process.env.STACK_PORTFOLIO_HEADLESS;
+  const { bounds, maximized } = initialWindow(
+    headless ? null : readPreferences().window,
+    screen.getAllDisplays(),
+    screen.getPrimaryDisplay(),
+  );
   win = new BrowserWindow({
     title: "Stock Portfolio",
-    width: 1420,
-    height: 930,
-    minWidth: 920,
-    minHeight: 650,
+    ...bounds,
+    minWidth: minimumSize.width,
+    minHeight: minimumSize.height,
     backgroundColor: "#f4f5ee",
     show: false,
     webPreferences: {
@@ -796,8 +806,16 @@ function createWindow() {
   });
   Menu.setApplicationMenu(null);
   win.once("ready-to-show", () => {
-    if (!process.env.STACK_PORTFOLIO_HEADLESS) win.show();
+    if (headless) return;
+    if (maximized) win.maximize();
+    win.show();
   });
+  if (!headless)
+    win.on("close", () => {
+      try {
+        writePreferences({ window: { bounds: win.getNormalBounds(), maximized: win.isMaximized() } });
+      } catch {}
+    });
   win.loadFile(path.join(__dirname, "index.html"));
 }
 if (!app.requestSingleInstanceLock()) app.quit();
