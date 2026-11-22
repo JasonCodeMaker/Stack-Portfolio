@@ -5,6 +5,45 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
+async function seedFullYear(app, root) {
+  await app.evaluate(({ app, safeStorage }, root) => {
+    const require = process.getBuiltinModule("node:module").createRequire(root + "/package.json");
+    const { createBook, createAccount, putPref, resolveAsset, saveEvent, savePrice } = require("./out/ledger.cjs");
+    const { localKey } = require("./bookStorage.cjs");
+    const directory = app.getPath("userData");
+    const db = createBook(directory + "/sample.sqlite", localKey(directory, safeStorage, true));
+    try {
+      const account = createAccount(db, "Review fixture");
+      const start = "2024-12-31", end = "2025-12-31";
+      const holdings = {};
+      const stock = (symbol, change) => {
+        const id = resolveAsset(db, { symbol, exchangeMic: "XASX" }, "AUD");
+        holdings[id] = 1;
+        savePrice(db, id, start, 100, "test close");
+        savePrice(db, id, end, 100 + change, "test close");
+        return id;
+      };
+      const ivv = stock("IVV", 100);
+      for (let i = 0; i < 16; i++) stock("AU" + String(i).padStart(2, "0"), i - 8);
+      db.prepare("INSERT INTO sp_anchors VALUES(?,?,?,?)").run(account, start, JSON.stringify(holdings), '{"AUD":500}');
+      const activity = (id, activityType, amount, more = {}) =>
+        saveEvent(db, { id, accountId: account, date: "2025-12-19", activityType, currency: "AUD", amount, ...more });
+      activity("sale", "SELL", null, { assetId: ivv, quantity: 1, unitPrice: 200, fee: 2 });
+      activity("dividend", "DIVIDEND", 8, { assetId: ivv });
+      activity("interest", "INTEREST", 3);
+      activity("unassigned", "FEE", 1, { sourceRecordId: "fee-voucher" });
+      for (const day of [start, end]) {
+        savePrice(db, "FX:USD/AUD", day, 1.5, "test FX");
+        for (const id of ["SP500TR", "XNDX"])
+          db.prepare("INSERT INTO sp_benchmark_levels VALUES(?,?,?,?)").run(id, day, day === start ? 100 : 103, "test level");
+      }
+      for (const flag of ["demo", "demo-costs-v1", "demo-review-v1"]) putPref(db, "app", flag, "1");
+    } finally {
+      db.close();
+    }
+  }, root);
+}
+
 (async () => {
   const root = path.join(__dirname, "..");
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "stack-portfolio-review-"));
@@ -73,7 +112,51 @@ const path = require("node:path");
     const contribution = page.getByRole("region", { name: "持仓贡献" });
     await contribution.getByRole("button", { name: /^IVV/ }).click();
     await page.getByRole("heading", { name: "持仓", exact: true }).waitFor();
-    console.log("Short review periods still show the drawdown and recovery dates.");
+    await app.close();
+    app = null;
+
+    const annualDir = path.join(directory, "annual");
+    fs.mkdirSync(annualDir);
+    app = await electron.launch({
+      executablePath: require("electron"), args: [root], env: { ...env, STACK_PORTFOLIO_TEST_DIR: annualDir }, timeout: 30000,
+    });
+    await seedFullYear(app, root);
+    const annual = await app.firstWindow();
+    annual.setDefaultTimeout(8000);
+    await annual.getByRole("button", { name: "打开示例账本" }).click();
+    const annualNav = annual.getByRole("navigation", { name: "页面" });
+    await annual.getByLabel("估值日").fill("2025-12-31");
+    await annualNav.getByRole("button", { name: "收益复盘", exact: true }).click();
+    await annual.getByRole("group", { name: "期间" }).getByRole("button", { name: "近一年" }).click();
+    const summary = annual.getByRole("region", { name: "时间加权收益率", exact: true });
+    await summary.getByText(/年化 \+4\.55%/).waitFor();
+    await annual.getByRole("group", { name: "主图视图" }).getByRole("button", { name: "回撤", exact: true }).click();
+    await annual.getByRole("img", { name: "回撤曲线" }).getByText("标普 500").waitFor();
+
+    const ranked = annual.getByRole("region", { name: "持仓贡献" });
+    await ranked.getByRole("button", { name: /^IVV.*期间已卖清.*\+A\$106/ }).waitFor();
+    const fold = ranked.getByRole("button", { name: /^中间 5 项合计/ });
+    await fold.click();
+    await ranked.getByRole("button", { name: /^现金利息.*\+A\$3/ }).waitFor();
+    await ranked.getByRole("button", { name: /^待归属/ }).click();
+    const evidence = annual.getByRole("dialog", { name: /待归属 · 区间原始流水/ });
+    await evidence.getByText("fee-voucher", { exact: true }).waitFor();
+    await annual.keyboard.press("Escape");
+
+    const gainNumbers = async (rows) => (await rows.allTextContents()).map((text) =>
+      Number(text.match(/[+−]?(?:A\$)?[\d,]+(?:\.\d+)?/)?.[0].replace(/[A$,]/g, "").replace("−", "-")));
+    const reviewGain = await gainNumbers(annual.getByRole("region", { name: "盈亏构成" }).getByRole("button"));
+    assert.deepEqual(reviewGain, [-8, 100, 11, -3, 0]);
+    await annualNav.getByRole("button", { name: "总览", exact: true }).click();
+    await annual.getByRole("region", { name: "关键数字" }).getByText("+4.55%", { exact: true }).waitFor();
+    const overviewGain = await gainNumbers(annual.getByRole("region", { name: "盈亏构成" }).locator("dd"));
+    assert.deepEqual(overviewGain, reviewGain);
+    await annualNav.getByRole("button", { name: "收益复盘", exact: true }).click();
+    await annual.getByRole("group", { name: "期间" }).getByRole("button", { name: "自定义…" }).click();
+    const customEnd = annual.getByLabel("期间终点");
+    await customEnd.fill("2026-01-01");
+    assert.equal(await customEnd.inputValue(), "2025-12-31");
+    console.log("Performance review verified: drawdown eligibility, benchmark selection, inspectors, contributions and Overview parity.");
   } finally {
     if (app) await app.close().catch(() => {});
     fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

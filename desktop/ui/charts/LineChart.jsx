@@ -138,7 +138,10 @@ export function LineChart({
       if (event.key === "ArrowLeft") setHover(Math.max(0, index - 1));
       else if (event.key === "ArrowRight") setHover(Math.min(l.count - 1, index + 1));
       else if (event.key === "Enter" && onSelect) onSelect(dates[index]);
-      else if (event.key === "Escape") setHover(null);
+      else if (event.key === "Escape") {
+        setHover(null);
+        return;
+      }
       else return;
       event.preventDefault();
     };

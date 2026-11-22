@@ -29,11 +29,11 @@
   opacity: 0.5;
   pointer-events: none;
 }
-.review-metrics {
+.kpis.review-metrics {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 @container (max-width: 900px) {
-  .review-metrics {
+  .kpis.review-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -50,7 +50,7 @@
   vertical-align: .2em;
   margin-inline-end: 4px;
 }
-.review-metrics .d {
+.review-metrics .kpi .d {
   font-weight: 400;
   white-space: normal;
 }
@@ -159,8 +159,10 @@
   flex-wrap: wrap;
   gap: 6px;
 }
-.review-benchmarks .btn {
+.review-benchmarks .btn.sm {
   height: 28px;
+  padding-inline: 10px;
+  font-size: 13px;
 }
 .review-benchmarks [aria-pressed="true"] {
   background: var(--surface2);
@@ -189,7 +191,7 @@
 .review-breakdown button:first-child {
   border: 0;
 }
-.review-breakdown button[aria-expanded="true"] {
+.review-breakdown button:is(:hover, [aria-expanded="true"]) {
   background: var(--surface2);
   border-radius: 6px;
 }
@@ -201,7 +203,7 @@
 .review-drill {
   margin-top: 10px;
 }
-@container (max-width: 640px) {
+@container (max-width: 620px) {
   .review-breakdown {
     grid-template-columns: 1fr;
   }
@@ -232,6 +234,9 @@
   background: transparent;
   text-align: start;
   font-size: 13px;
+}
+button.review-contribution:hover {
+  background: var(--surface2);
 }
 .review-contribution > span:first-child {
   min-width: 0;

@@ -345,7 +345,7 @@ function Breakdown({ data, period, selected, select, openHolding }) {
                   onClick={row.kind === "security" ? () => openHolding(row) : undefined}>
                   <td>
                     {row.kind === "security"
-                      ? <button type="button" className="lnk">{row.label}</button>
+                      ? <button type="button" className="ticker">{row.label}</button>
                       : <span className="cap">{row.label}</span>}
                     {row.listing && <i>{row.listing}</i>}
                   </td>
@@ -427,7 +427,7 @@ function ContributionEvidence({ row, accountName, onPage }) {
             {e.currency} {num(Number(e.fee || 0) + Number(e.tax || 0))}
           </td>
           <td>
-            {e.reference}
+            <span>{e.reference}</span>
             <button type="button" className="text-btn" onClick={() => onPage("imports", { tab: "history", account: e.account })}>
               查看流水
             </button>
@@ -861,7 +861,7 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
             </Detail>
           )}
           <Notes
-            key={"notes" + review.token}
+            key={scopeKey}
             review={review}
             notes={review.notes}
             opened={current ? opened : null}
