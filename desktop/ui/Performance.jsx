@@ -267,7 +267,7 @@ function DataPanel({ review, mode, busy, updating, refresh, results }) {
           )}
           {mode === "real" && review.missingAssets.length > 0 && !review.canBackfill && (
             <p className="muted">
-              自动来源没有的收盘价，可在「数据与设置 → 报价、分类与来源」手工补录。
+              自动来源没有的收盘价，可在「设置 → 报价、分类与来源」手工补录。
             </p>
           )}
         </>

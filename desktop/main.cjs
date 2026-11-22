@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net, nativeTheme } = require("electron");
 const path = require("node:path"),
   fs = require("node:fs"),
   { pathToFileURL } = require("node:url");
@@ -778,9 +778,10 @@ function createWindow() {
     title: "Stock Portfolio",
     width: 1420,
     height: 930,
-    minWidth: 920,
-    minHeight: 650,
-    backgroundColor: "#f4f5ee",
+    minWidth: 1024,
+    minHeight: 640,
+    // Page background of the design tokens, light or dark with the system.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0E1410" : "#ECF1EA",
     show: false,
     webPreferences: {
       ...(process.env.STACK_PORTFOLIO_HEADLESS ? {offscreen:true, backgroundThrottling:false} : {}),
