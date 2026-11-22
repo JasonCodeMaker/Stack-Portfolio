@@ -230,7 +230,7 @@ async function verifyReview(p) {
       dialog.showMessageBox = async () => ({ response: 1 });
     }, backup);
     await p.getByRole("button", { name: "设置", exact: true }).click();
-    await p.getByRole("button",{ name:"账本与备份", exact:true }).click();
+    await p.getByRole("button",{ name:"账本", exact:true }).click();
     await p.getByRole("button", { name: "备份账本", exact: true }).click();
     await p.getByLabel("备份密码（至少 12 个字符）").fill(password);
     await p.getByLabel("再次输入密码").fill(password);
