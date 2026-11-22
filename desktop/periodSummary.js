@@ -218,6 +218,7 @@ export function valuation(context, date, detail = false) {
       if (detail)
         rows.push({
           account: account.name,
+          accountId: account.id,
           assetId: r.assetId,
           key: r.identityKey || r.assetId,
           symbol: r.ticker,
