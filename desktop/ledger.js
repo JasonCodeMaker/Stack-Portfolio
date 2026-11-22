@@ -7,21 +7,12 @@ import {
   openDatabase, checkIntegrity, isPlainDatabase, encryptedCopy, publishFile,
   lockForReplacement, assertNoJournal,
 } from "./bookStorage.cjs";
+import { day, dayOf } from "./periods.js";
 
 // Existing ledgers and Wealthfolio migrations use these preference scopes.
 export const ALLOCATION = "portfolio-xray";
 export const BROKER = "broker-sync";
-export const dayOf = (date) => String(date || "").slice(0, 10);
-export function day(value) {
-  const text = dayOf(value);
-  if (
-    !/^\d{4}-\d\d-\d\d$/.test(text) ||
-    !Number.isFinite(Date.parse(text)) ||
-    new Date(text).toISOString().slice(0, 10) !== text
-  )
-    throw Error("请输入有效日期。");
-  return text;
-}
+export { day, dayOf } from "./periods.js";
 export function money(value, nonnegative = false) {
   if (value === "" || value == null) throw Error("缺少金额或数量。");
   const n = new Decimal(value);
