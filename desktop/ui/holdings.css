@@ -1,0 +1,127 @@
+.holdings {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+}
+
+.holdings-tools input {
+  width: 220px;
+}
+
+.holdings-totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 22px;
+  padding: 10px 14px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.holdings-total-value {
+  font-size: 16px;
+}
+
+.holdings-card {
+  padding: var(--card-pad) 10px 6px;
+  container-type: inline-size;
+}
+
+.holdings-card-head {
+  padding-inline: 12px;
+}
+
+.holdings-table-scroll {
+  overflow-x: auto;
+}
+
+.holdings-card :is(th, td):first-child {
+  padding-left: 12px;
+}
+
+.holdings-card :is(th, td):last-child {
+  padding-right: 12px;
+}
+
+.holdings-sort {
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  gap: 4px;
+}
+
+.holdings-sort:hover {
+  color: var(--l1);
+}
+
+.holdings-name {
+  display: inline-block;
+  vertical-align: bottom;
+  max-width: min(20cqw, 260px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.holdings-cash {
+  color: var(--l2);
+}
+
+.holdings-card tr.holdings-arrival {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+
+.holdings-card tr.sel td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.holdings-card tr {
+  transition: background-color var(--fast);
+}
+
+.modal-inner:has(> .holdings-detail) > header h2 {
+  font: 600 20px/28px var(--display);
+}
+
+.holdings-detail {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.holdings-detail .dl {
+  margin: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.holdings-detail .dl b {
+  overflow-wrap: anywhere;
+}
+
+.holdings-detail h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--l2);
+}
+
+.holdings-detail th[scope="row"] {
+  white-space: normal;
+}
+
+.holdings-detail tbody tr:last-child th {
+  border-bottom: 0;
+}
+
+.holdings-detail td small {
+  max-width: 24cqw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.holdings-repairs {
+  gap: 6px;
+}
