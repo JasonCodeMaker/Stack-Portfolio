@@ -424,6 +424,8 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     complete.cash = false;
     warnings.push("已记录股数，现金余额待结单核对");
   }
+  // An open check stays on the maintenance page. Actual ledger gaps still leave the valuation unknown.
+  const ledgerCash = complete.cash && !pos.warnings.length ? sum.cash.toNumber() : null;
   const cashPending = needsCash || book.issues.some((issue) => issue.account === acc.id && issue.day <= date);
   for (const issue of book.issues)
     if (issue.account === acc.id && issue.day <= date && !warnings.includes(issue.reason)) {
@@ -446,20 +448,15 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     );
   const useBroker = cashAgrees && quantitiesAgree && !pos.warnings.length;
   if (sameDay && !useBroker) warnings.push("券商快照与本地现金或持仓数量有差异");
-  const cash =
-    useBroker && broker.cashTotal != null
-      ? Number(broker.cashTotal)
-      : complete.cash
-        ? sum.cash.toNumber()
-        : null;
+  const brokerCash = useBroker && broker.cashTotal != null ? Number(broker.cashTotal) : null;
+  const cash = brokerCash ?? (complete.cash ? sum.cash.toNumber() : null);
   const securities = complete.securities ? sum.securities.toNumber() : null;
   const itemizedTotal = complete.securities && complete.cash
     ? sum.securities.plus(sum.cash).toNumber() : null;
-  const total = useBroker
-    ? Number(broker.nav)
-    : cash != null && securities != null
-      ? D(cash).plus(securities).toNumber()
-      : null;
+  const accountTotal = (cash) =>
+    useBroker ? Number(broker.nav) : cash != null && securities != null ? D(cash).plus(securities).toNumber() : null;
+  const total = accountTotal(cash);
+  const valuationCash = brokerCash ?? ledgerCash;
   return {
     id: acc.id,
     name: acc.name,
@@ -469,6 +466,7 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     itemizedCash: complete.cash ? sum.cash.toNumber() : null,
     securities,
     total,
+    valuation: { cash: valuationCash, total: accountTotal(valuationCash) },
     valuationSource: useBroker ? broker.source : null,
     itemizedTotal,
     valuationDifference: useBroker && itemizedTotal != null ? D(broker.nav).minus(itemizedTotal).toNumber() : null,
@@ -522,8 +520,9 @@ function summarizeHoldings(rows) {
 }
 function combined(book, selected, date, settings) {
   const accounts = selected.map((a) => snapshot(book, a, date, settings.typeOverrides));
-  const sum = (key) =>
-    accounts.some((a) => a[key] == null) ? null : accounts.reduce((n, a) => n.plus(a[key]), D(0)).toNumber();
+  const valuations = accounts.map((a) => a.valuation);
+  const sum = (key, values = accounts) =>
+    values.some((a) => a[key] == null) ? null : values.reduce((n, a) => n.plus(a[key]), D(0)).toNumber();
   const itemizedTotal = sum("itemizedTotal"), total = sum("total");
   return {
     accounts,
@@ -532,6 +531,7 @@ function combined(book, selected, date, settings) {
     itemizedCash: sum("itemizedCash"),
     securities: sum("securities"),
     total,
+    valuation: { cash: sum("cash", valuations), total: sum("total", valuations) },
     itemizedTotal,
     valuationDifference: accounts.some(a => a.valuationSource) && total != null && itemizedTotal != null
       ? D(total).minus(itemizedTotal).toNumber() : null,
@@ -860,12 +860,22 @@ export async function dashboard(db, options = {}) {
       }
     }
   }
-  // Daily closes from the eve of the period, with the opening value plus net flows to date.
-  let basis = null;
+  // Net contribution starts with the first record. Period gain starts at the opening value.
+  const funding = summary && lifetimeFlows(closes, selected, end)?.sort((a, b) => a.day.localeCompare(b.day));
+  let basis = null,
+    invested = D(0),
+    nextFlow = 0;
   const points = (summary?.points || []).map((p) => {
     if (p.date === summary.origin) basis = p.value == null ? null : D(p.value);
     else if (p.date > summary.origin && basis) basis = p.flow == null ? null : basis.plus(p.flow);
-    return { date: p.date, value: p.value, basis: p.date < summary.origin || !basis ? null : basis.toNumber() };
+    while (funding?.[nextFlow] && funding[nextFlow].day <= p.date) invested = invested.plus(funding[nextFlow++].value);
+    return {
+      date: p.date,
+      value: p.value,
+      basis: basis?.toNumber() ?? null,
+      invested: funding ? invested.toNumber() : null,
+      gain: p.value != null && basis && p.date <= summary.valuedThrough ? D(p.value).minus(basis).toNumber() : null,
+    };
   });
   const daily = new Set(["points", "outages", "intervals"]);
   const periodFigures = summary && Object.fromEntries(Object.entries(summary).filter(([k]) => !daily.has(k)));
@@ -873,7 +883,7 @@ export async function dashboard(db, options = {}) {
   // A reconciled same-day broker NAV can supply the denominator even when
   // an individual price is missing. Only fully valued listings get a weight.
   const unpriced = new Set(current.rows.filter((r) => r.audValue == null).map((r) => r.identityKey));
-  portfolio.totalAud = current.rows.some((r) => r.status === "unsupported-position") ? null : current.total;
+  portfolio.totalAud = current.rows.some((r) => r.status === "unsupported-position") ? null : current.valuation.total;
   portfolio.incomplete ||= portfolio.totalAud == null;
   for (const row of portfolio.instrumentAllocation)
     row.weight = portfolio.totalAud > 0 && !unpriced.has(row.key) ? row.valueAud / portfolio.totalAud : null;
