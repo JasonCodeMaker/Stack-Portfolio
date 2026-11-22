@@ -1,0 +1,314 @@
+/* 导入与对账 (spec §4.5, prototype maintenance/index.html variant A). Scoped to .imp, which also wraps the
+   inspector and dialog contents of the page. */
+.imp-page {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+}
+.imp .stack {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+  container-type: inline-size;
+}
+.imp .cap880 {
+  max-width: 880px;
+}
+.imp .cap1760 {
+  max-width: 1760px;
+}
+.imp .row > h2 {
+  margin: 0;
+}
+.imp h3 {
+  margin: 0;
+}
+.imp p {
+  line-height: 20px;
+}
+
+/* Forms: limited to 760 wide, fields 32 high. */
+.imp .fg {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px 14px;
+  margin: 12px 0;
+  max-width: 760px;
+}
+.imp .fg.w {
+  max-width: none;
+}
+.imp :is(.f, .field) {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  align-content: start;
+  font-weight: 400;
+  font-size: 14px;
+}
+.imp :is(.f, .field) > span {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--l2);
+}
+.imp :is(.f, .field, .line) :is(input:not([type="checkbox"]), select) {
+  height: 32px;
+  border: 1px solid var(--sep);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--l1);
+  font: inherit;
+  padding: 0 10px;
+  min-width: 0;
+  width: 100%;
+}
+.imp .chk {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.imp .acts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 12px;
+}
+.imp .muted {
+  color: var(--l2);
+  font-size: 13px;
+  max-width: 72ch;
+  margin: 6px 0;
+}
+.imp .card details {
+  border-top: 1px solid var(--sep);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+.imp details > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 400;
+}
+.imp button.lnk {
+  border: 0;
+  background: none;
+  padding: 0;
+  height: auto;
+  color: var(--accent);
+  font-weight: 400;
+  cursor: pointer;
+  display: inline;
+}
+.imp button.lnk:hover {
+  background: none;
+  text-decoration: underline;
+}
+.imp button.lnk.cap {
+  font-size: 12px;
+  line-height: 16px;
+}
+.imp .more,
+.imp .next {
+  display: inline-block;
+  margin-top: 8px;
+}
+.imp .next {
+  margin-top: 10px;
+}
+.imp .notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  color: var(--warn);
+  font-size: 13px;
+}
+.imp .notice .btn {
+  margin: 0;
+  color: var(--l1);
+}
+
+/* 更新投资记录: three large options. */
+.imp .opts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.imp .opts button {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+  align-content: start;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--l1);
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+}
+.imp .opts button:hover {
+  background: var(--surface2);
+  border-color: var(--sep);
+}
+.imp .opts b {
+  font-weight: 600;
+}
+.imp .opts small {
+  color: var(--l2);
+  font-size: 12px;
+  line-height: 16px;
+}
+.imp .opts svg {
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+@container (max-width: 560px) {
+  .imp .opts {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Broker preview: impact strip, change table and account field changes. */
+.imp .impact {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--surface2);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 6px;
+}
+.imp .impact .what {
+  flex: 1;
+  min-width: 220px;
+}
+.imp .impact h3 {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+}
+.imp .impact p {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--l2);
+}
+.imp-preview:focus {
+  outline: none;
+}
+.imp .st {
+  font-weight: 600;
+  font-size: 12px;
+}
+.imp .st.new {
+  color: var(--up);
+}
+.imp .st.fix {
+  color: var(--warn);
+}
+.imp .st.dup {
+  color: var(--l2);
+}
+.imp td small {
+  display: block;
+  color: var(--l2);
+  font-size: 12px;
+  line-height: 14px;
+}
+.imp :is(td, th).l {
+  text-align: left;
+}
+.imp td.wrap {
+  white-space: normal;
+  min-width: 160px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.imp .tw {
+  overflow-x: auto;
+}
+.imp .diff s {
+  color: var(--l2);
+}
+.imp .diff small {
+  display: inline;
+}
+.imp td .diff {
+  display: block;
+}
+.imp .diffs {
+  font-size: 13px;
+  display: flex;
+  gap: 6px 24px;
+  flex-wrap: wrap;
+}
+.imp .changes > .cap {
+  margin: 6px 0;
+}
+.imp .sub {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 16px 0 4px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.imp .sub .cap {
+  font-weight: 400;
+}
+
+/* Statement and opening lines. */
+.imp .line {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(90px, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 8px;
+  max-width: 520px;
+}
+.imp .line.full {
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  align-items: end;
+  max-width: 760px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--sep);
+}
+.imp .line.full > .btn {
+  justify-self: start;
+}
+
+/* 已补录的股数凭据 */
+.imp .ev {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 9px 0;
+  border-top: 1px solid var(--sep);
+  font-size: 13px;
+}
+.imp .ev:first-of-type {
+  border: 0;
+}
+@container (max-width: 620px) {
+  .imp .ev {
+    grid-template-columns: 1fr auto;
+  }
+}
+.imp .result {
+  margin: 14px 0 4px;
+  font-size: 13px;
+}
+.imp .history-search {
+  width: 260px;
+}
