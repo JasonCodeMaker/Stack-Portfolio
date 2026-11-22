@@ -1,4 +1,5 @@
 // Sidebar icons, drawn on a 24 box with a 1.8 stroke (prototypes/_kit/kit.js).
+import React from "react";
 const paths = {
   overview: (
     <>
