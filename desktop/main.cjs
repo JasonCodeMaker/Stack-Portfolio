@@ -31,7 +31,7 @@ const {
   transaction,
   json,
 } = require("./ledger.js");
-const { dashboard, storageContext, loadBook, positions, targetScope } = require("./flows.js");
+const { dashboard, storageContext, loadBook, positions, saveGroupedTargets } = require("./flows.js");
 const { portfolioReview, reviewDay, saveReviewNote, reviewNotes } = require("./performance.js");
 const { refreshBenchmarks, refreshCloses, refreshReviewPrices } = require("./reviewMarket.js");
 const { shiftDay } = require("./marketDays.js");
@@ -56,7 +56,6 @@ network.browserFetch = (url, init) => net.fetch(url, init);
 const { EtfCache } = require("./allocation/storage/etfCache.ts");
 const { parseManualCsv, snapshotToCsv } = require("./allocation/domain/etf.ts");
 const { saveAllocationSettings } = require("./allocation/storage/settings.ts");
-const { saveRebalanceSettings } = require("./allocation/storage/rebalance.ts");
 const { FxService } = require("./allocation/services/fx/fxService.ts");
 app.setName("Stock Portfolio");
 if (process.env.STACK_PORTFOLIO_TEST_DIR) app.setPath("userData", process.env.STACK_PORTFOLIO_TEST_DIR);
@@ -469,21 +468,7 @@ const handlers = {
     savePrice(db, id, a.date, a.price, "手工报价", 40);
     return true;
   },
-  targets: async (args) => {
-    const values = Object.values(args.targets || {});
-    if (
-      values.some((v) => !Number.isFinite(v) || v < 0 || v > 1) ||
-      values.reduce((a, b) => a + b, 0) > 1.0001 ||
-      !(args.tolerance >= 0.005 && args.tolerance <= 0.25)
-    )
-      throw Error("目标合计最多为 100%，允许偏离须为 0.5 至 25 个百分点。");
-    const settings = { schemaVersion: 1, tolerance: args.tolerance, targets: args.targets };
-    const scope = targetScope(requireBook(), args.ids);
-    if (args.scope === "instruments")
-      putPref(db, scope, "targets.instruments.v1", JSON.stringify(settings));
-    else await saveRebalanceSettings(storageContext(db, scope), settings);
-    return true;
-  },
+  targets: (args) => saveGroupedTargets(requireBook(), args),
   allocationSettings: async (args) => {
     await saveAllocationSettings(storageContext(requireBook(), ALLOCATION), args);
     return true;

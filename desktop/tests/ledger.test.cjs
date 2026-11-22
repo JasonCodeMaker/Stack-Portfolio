@@ -743,6 +743,22 @@ test("coverage counts securities by listing across accounts and does not net unr
   assert.deepEqual(one.instrumentTargets.targets, {});
 });
 
+test("legacy individual targets roll up to stocks and cash for their original account scope", async (t) => {
+  const { db } = fixture(t);
+  const { ALLOCATION, createAccount } = require("../out/ledger.cjs");
+  await seedDemo(db);
+  const old = { "mic:ARCX:IVV": 0.45, "mic:XNAS:AAPL": 0.25, "mic:XASX:BHP": 0.10, "cash:AUD": 0.15, "cash:USD": 0.05 };
+  putPref(db, ALLOCATION, "targets.instruments.v1", JSON.stringify({ tolerance: 0.02, targets: old }));
+  const view = (ids) => dashboard(db, { ids, date: "2026-10-30" });
+  const first = await view("all");
+  assert.deepEqual(first.targets.targets, { "mic:ARCX:IVV": 0.45, "strategy:individual-stocks": 0.35, "strategy:cash": 0.2 });
+  assert.equal(first.targets.tolerance, 0.02);
+  assert.deepEqual(first.instrumentTargets.targets, old);
+  createAccount(db, "新增账户");
+  assert.deepEqual((await view("all")).targets.targets, {});
+  assert.deepEqual((await view(first.selected)).targets, first.targets);
+});
+
 test("an ambiguous import is confirmed for that broker record and account only", async (t) => {
   const { db } = fixture(t);
   const { createAccount, resolveAsset, rememberListing, listingMatch } = require("../out/ledger.cjs");

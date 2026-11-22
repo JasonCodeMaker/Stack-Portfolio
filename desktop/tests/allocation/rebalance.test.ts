@@ -16,6 +16,19 @@ describe("rebalance model", () => {
     expect(model.rows[1].status).toBe("unconfigured");
   });
 
+  it("includes the tolerance boundary and adjusts to the full target outside it", () => {
+    const rows = [{ key: "ivv", label: "IVV", type: "etf" as const, valueAud: 40_000, weight: 0.4 }];
+    const settings = { schemaVersion: 1 as const, tolerance: 0.05, targets: { ivv: 0.45 } };
+    const atLimit = buildRebalanceModel(rows, 100_000, settings).rows[0];
+    expect(atLimit.drift).toBeCloseTo(-0.05);
+    expect(atLimit.status).toBe("on-target");
+    const aboveAtLimit = buildRebalanceModel(rows, 100_000, { ...settings, targets: { ivv: 0.35 } }).rows[0];
+    expect(aboveAtLimit.status).toBe("on-target");
+    const outside = buildRebalanceModel(rows, 100_000, { ...settings, targets: { ivv: 0.46 } }).rows[0];
+    expect(outside.status).toBe("underweight");
+    expect(outside.adjustmentAud).toBeCloseTo(6_000);
+  });
+
   it("flags drift outside the configured tolerance", () => {
     const model = buildRebalanceModel(allocation, 1000, { schemaVersion: 1, tolerance: 0.05, targets: { "stock:a": 0.6, "etf:b": 0.4 } });
     expect(model.configured).toBe(true);
