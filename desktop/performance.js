@@ -34,7 +34,7 @@ function eventRows(context, from, to) {
 
 // A security earns its change in marked value plus its net cash postings, less
 // securities brought in from outside. Start-day trades are in the opening close.
-function periodContributions(context, from, to, gain) {
+export function periodContributions(context, from, to, gain) {
   const groups = new Map(),
     keys = new Map(),
     cash = new Map();

@@ -8,6 +8,7 @@ import { loadAllocationSettings, reconcileAccountSelection } from "./allocation/
 import { loadRebalanceSettings } from "./allocation/storage/rebalance";
 import { closingDay, marketFor, shiftDay } from "./marketDays.js";
 import { closeBook, reviewContext, summarizePeriod } from "./periodSummary.js";
+import { applyTodayChange, todayChange } from "./todayChange.js";
 
 const D = (n) => new Decimal(n ?? 0);
 const iso = (d) => d.toISOString().slice(0, 10);
@@ -841,6 +842,13 @@ export async function dashboard(db, options = {}) {
     totalAud: portfolio.totalAud,
     aliases: settings.aliases,
   });
+  const holdings = summarizeHoldings(current.rows);
+  // 今日变动 on the net-value basis (ADR 0005), for the portfolio, accounts, rows and companies.
+  const today = applyTodayChange(closes && date ? todayChange(closes, ids, date) : null, closes, {
+    accounts: current.accounts,
+    holdings,
+    exposure,
+  });
   const etfData = portfolio.etfs.map((asset) => {
     const record = records.find((r) => r.etfKey === asset.etfKey),
       snapshot = record?.snapshot ?? null;
@@ -881,7 +889,8 @@ export async function dashboard(db, options = {}) {
     ...current,
     accounts: book.accounts,
     byAccount: current.accounts,
-    holdings: summarizeHoldings(current.rows),
+    holdings,
+    today,
     quantityReports: [...book.reported].flatMap(([account, assets]) =>
       [...assets].flatMap(([asset, reports]) =>
         reports
