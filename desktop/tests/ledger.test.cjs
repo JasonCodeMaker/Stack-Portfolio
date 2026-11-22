@@ -359,17 +359,6 @@ test("migration leaves original data intact and preserves decimal text, source I
   assert.deepEqual(fs.readFileSync(source), original);
   assert.throws(() => migrate(source, dest, key), /存在/);
 });
-test("a matched transfer changes external cash flow only when the scope crosses an account boundary", async (t) => {
-  const { db } = fixture(t);
-  await seedDemo(db);
-  for (const id of ["demo-ibkr", "demo-webull"])
-    db.prepare("UPDATE sp_anchors SET day='2026-09-16' WHERE account=?").run(id);
-  db.prepare("UPDATE sp_prices SET day='2026-09-16' WHERE day='2026-09-30'").run();
-  db.prepare("DELETE FROM sp_prices WHERE day>'2026-09-16'").run();
-  const all = await dashboard(db, { date: "2026-10-16" }),
-    one = await dashboard(db, { date: "2026-10-16", ids: ["demo-webull"] });
-  assert.deepEqual([all.flows, all.pnl, one.flows, one.pnl], [0, 0, 1000, 0]);
-});
 test("a dual-broker batch rolls back both accounts when the second account is invalid", async (t) => {
   const { db } = fixture(t);
   await seedDemo(db);

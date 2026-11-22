@@ -72,7 +72,9 @@ test("gross daily cash flows, dividends, fees, AUD FX and interval rebasing", (t
     level("XNDX", date, nd);
   }
   const all = review(monday, wednesday);
-  near(all.points[1].portfolio, 0.01);
+  // The day before the first record carries no valuation, so the curves start on Monday's close.
+  assert.deepEqual([all.base, all.origin], ["2025-02-02", monday]);
+  near(all.points.find((p) => p.date === tuesday).portfolio, 0.01);
   near(all.metrics.portfolio.totalReturn, 1.01 ** 2 - 1);
   near(all.metrics.SP500TR.totalReturn, (101 * 1.4) / 150 - 1);
   near(all.metrics.SP500TR.gap, all.metrics.portfolio.totalReturn - all.metrics.SP500TR.totalReturn);
@@ -81,7 +83,9 @@ test("gross daily cash flows, dividends, fees, AUD FX and interval rebasing", (t
     all.intervals.filter((i) => i.id === "SP500TR").map((i) => [i.baseline, i.from, i.to, i.status]),
     [[monday, tuesday, wednesday, "recovered"]],
   );
-  const sub = review(tuesday, wednesday);
+  // A period starting on Wednesday is measured from Tuesday's close.
+  const sub = review(wednesday, wednesday);
+  assert.deepEqual([sub.from, sub.origin], [wednesday, tuesday]);
   assert.deepEqual([sub.points[0].portfolio, sub.points[0].SP500TR, sub.points[0].XNDX], [0, 0, 0]);
   near(sub.metrics.portfolio.totalReturn, 0.01);
 });
@@ -122,15 +126,18 @@ test("partial index history, interior missing FX and security quotes suppress on
   const report = review(monday, thursday);
   assert.equal(report.commonStart, tuesday);
   assert.equal(report.series[1].first, tuesday);
-  assert.equal(report.points[2].SP500TR, null);
-  assert.equal(report.points[2].portfolio, null);
+  const onWednesday = report.points.find((p) => p.date === wednesday);
+  assert.equal(onWednesday.SP500TR, null);
+  assert.equal(onWednesday.portfolio, null);
   assert.equal(reviewDay(db, { ids, date: wednesday }).rows[0].value, null);
   assert.equal(report.metrics.portfolio.maxDrawdown, null);
   near(report.metrics.portfolio.totalReturn, 0.2);
   assert.equal(report.metrics.SP500TR.maxDrawdown, null);
   assert.equal(report.metrics.SP500TR.totalReturn, 0);
   assert.equal(report.metrics.XNDX.gap, null);
-  assert.equal(review(tuesday, thursday).metrics.XNDX.totalReturn, 0);
+  // A period from Wednesday is measured from Tuesday's close, where Nasdaq's history starts.
+  assert.equal(review(wednesday, thursday).metrics.XNDX.totalReturn, 0);
+  assert.equal(review(tuesday, thursday).metrics.XNDX.totalReturn, null);
   // A deposit on the unvalued day breaks the chain; the result stands as of the close before it.
   event(wednesday, "DEPOSIT", 30);
   const broken = review(monday, thursday).metrics.portfolio;
@@ -157,11 +164,12 @@ test("weekends and US exchange holidays carry closes but use current FX; an open
   level("SP500TR", friday, 100);
   level("XNDX", friday, 110);
   const r = review(friday, open);
-  near(r.points[2].portfolio, 0);
-  near(r.points[3].portfolio, 0.1);
-  near(r.points[3].SP500TR, 0.1);
-  assert.equal(r.points[4].portfolio, null);
-  assert.equal(r.points[4].SP500TR, null);
+  const on = (date) => r.points.find((p) => p.date === date);
+  near(on("2025-02-16").portfolio, 0);
+  near(on(holiday).portfolio, 0.1);
+  near(on(holiday).SP500TR, 0.1);
+  assert.equal(on(open).portfolio, null);
+  assert.equal(on(open).SP500TR, null);
 });
 
 test("review notes preserve displayed metrics across revisions and old database backups remain recognized", (t) => {
@@ -279,7 +287,7 @@ test("historical securities use matching, unadjusted closes for the held listing
   assert.equal(db.prepare("SELECT COUNT(*) n FROM sp_prices").get().n, 1);
 });
 
-test("results are measured from the first valued close and stated as of the latest one", (t) => {
+test("results are measured from the eve of the first record and stated as of the latest valued close", (t) => {
   const { db, account, event, level, review } = fixture(t);
   const stock = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
   event(tuesday, "DEPOSIT", 1000);
@@ -291,15 +299,15 @@ test("results are measured from the first valued close and stated as of the late
     level("SP500TR", date, [100, 100, 105, 110][i]);
     level("XNDX", date, 200);
   });
-  // Monday holds nothing and Thursday's close has not arrived.
+  // The period moves to the first record on Tuesday and is measured from Monday, when nothing
+  // was held yet. Thursday's close has not arrived.
   const r = review(monday, thursday);
-  assert.deepEqual([r.from, r.requested, r.origin], [monday, monday, tuesday]);
+  assert.deepEqual([r.from, r.requested, r.origin], [tuesday, monday, monday]);
   assert.deepEqual(
     r.points.map((p) => p.portfolio == null ? null : Math.round(p.portfolio * 100)),
-    [null, 0, 10, null],
+    [0, 0, 10, null],
   );
-  assert.equal(r.points[0].SP500TR, null);
-  assert.equal(r.points[1].SP500TR, 0);
+  assert.equal(r.points[0].SP500TR, 0);
   near(r.points[3].SP500TR, 0.1);
   assert.equal(r.metrics.portfolio.asOf, wednesday);
   near(r.metrics.portfolio.totalReturn, 0.1);
@@ -309,7 +317,7 @@ test("results are measured from the first valued close and stated as of the late
   near(r.metrics.SP500TR.totalReturn, 0.05);
   near(r.metrics.SP500TR.gap, 0.05);
   near(r.metrics.SP500TR.portfolioReturn, 0.1);
-  assert.deepEqual(r.money, { start: 1000, end: 1100, flows: 0, gain: 100 });
+  assert.deepEqual(r.money, { start: 0, end: 1100, flows: 1000, gain: 100 });
   assert.equal(r.needsData, true);
   savePrice(db, stock, thursday, 11, "close");
   const complete = review(monday, thursday);
@@ -448,25 +456,29 @@ test("the dashboard reports money put in, the gain on it and the cost of each ho
   assert.deepEqual([d.start, d.fromOpening, period.start], [monday, true, 0]);
   near(period.flows, 2800);
   near(period.gain, 774);
-  near(period.rate, 774 / 3000);
-  near(d.points[0].basis, 3000);
+  assert.equal("rate" in period, false);
+  assert.deepEqual([d.points[0].date, d.points[0].value, d.points[0].basis], ["2025-02-02", 0, 0]);
+  near(d.points[1].basis, 3000);
   near(d.points.at(-1).basis, 2800);
   // A year which began before the first record reads the same way instead of going blank.
   const year = await dashboard(db, { ids: [account], date: thursday, period: "ytd" });
   assert.deepEqual([year.start, year.pnl, year.flows], [monday, d.pnl, 2800]);
   assert.deepEqual(year.result, d.result);
   assert.ok(year.points.every((p) => p.value != null && p.basis != null));
-  // A period which opens after the first record still starts from the value held then.
-  const later = await dashboard(db, { ids: [account], date: "2025-03-20", period: "1m" });
-  assert.deepEqual([later.start, later.fromOpening], ["2025-02-20", false]);
-  near(later.result.period.start, 3574);
-  near(later.result.period.gain, 0);
+  // A period which opens after the first record starts from the value held at the close before it:
+  // AUD 750 and USD 290 in cash with 20 shares at USD 70, at 1.6.
+  const later = await dashboard(db, { ids: [account], date: thursday, from: wednesday });
+  assert.deepEqual([later.start, later.fromOpening], [wednesday, false]);
+  near(later.result.period.start, 3454);
+  near(later.result.period.flows, -200);
+  near(later.result.period.gain, 320);
   assert.deepEqual(
     [lifetime.since, lifetime.contributed, lifetime.withdrawn, lifetime.invested],
     [monday, 3000, 200, 2800],
   );
   near(lifetime.gain, 774);
-  near(lifetime.rate, 774 / 3000);
+  assert.equal("rate" in lifetime, false);
+  near(d.summary.cumulativeNetFlow, 2800);
   assert.deepEqual(d.byAccount[0].result, d.result);
   // Twenty shares cost USD 1,210 including the fee; a quarter of that cost left with the sale.
   const row = d.rows.find((r) => r.ticker === "ABC");

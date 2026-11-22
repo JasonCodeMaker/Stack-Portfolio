@@ -268,8 +268,8 @@ const handlers = {
     const result = portfolioReview(requireBook(), args);
     const token = randomUUID();
     // Save the exact values shown even if a quote or ledger entry changes before the note is written.
-    const { ids, from, to, requested, series, metrics, missingAssets } = result;
-    displayedReview = { token, ids, from, to, requested, series, metrics, missingAssets };
+    const { ids, from, to, base, requested, series, metrics, missingAssets } = result;
+    displayedReview = { token, ids, from, to, base, requested, series, metrics, missingAssets };
     return {
       ...result,
       token,
@@ -289,7 +289,7 @@ const handlers = {
     if (mode !== "real" || !displayedReview || token !== displayedReview.token)
       throw Error("请在正式账本打开需要更新的复盘区间。");
     const review = displayedReview,
-      range = { from: review.requested || review.from, to: review.to };
+      range = { from: review.base, to: review.to };
     const find = db.prepare("SELECT * FROM sp_assets WHERE id=?");
     const assets = review.missingAssets.map((id) => find.get(id)).filter(Boolean);
     if (holdings)

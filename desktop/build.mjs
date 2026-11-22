@@ -14,7 +14,7 @@ const shared = {
 await Promise.all([
   build({
     ...shared,
-    entryPoints: ["main.cjs", "ledger.js", "flows.js", "services.js", "demo.js", "performance.js", "reviewMarket.js"].map((x) =>
+    entryPoints: ["main.cjs", "ledger.js", "flows.js", "services.js", "demo.js", "performance.js", "periodSummary.js", "reviewMarket.js"].map((x) =>
       path.join(desktop, x),
     ),
     platform: "node",
