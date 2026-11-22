@@ -65,3 +65,77 @@ test("a share bought at A$40, worth A$100 at the period start and sold at A$110 
   const overview = await dashboard(db, { ids: [a], date: thursday, from: wednesday });
   assert.deepEqual(overview.breakdown, review.breakdown);
 });
+
+function mixedBook(t) {
+  const b = book(t);
+  const { account, event, stock, close } = b;
+  const abc = stock("ABC"),
+    xyz = stock("XYZ", "USD"),
+    def = stock("DEF");
+  // ABC is carried in by the opening balance without a cost.
+  const a = account("A", monday, { AUD: 5000, USD: 1000 }, { [abc]: "10" });
+  const usd = { currency: "USD" };
+  event(a, tuesday, "BUY", null, { ...usd, assetId: xyz, quantity: "5", unitPrice: "105", fee: "1" });
+  event(a, wednesday, "DIVIDEND", 10, { ...usd, assetId: xyz, tax: "1.5" });
+  event(a, wednesday, "INTEREST", 3);
+  event(a, wednesday, "TRANSFER_IN", 0, { assetId: def, quantity: "10", unitPrice: "5" });
+  event(a, thursday, "SELL", null, { ...usd, assetId: xyz, quantity: "2", unitPrice: "108", fee: "1" });
+  event(a, thursday, "FEE", 4, { ...usd, comment: "USD Debit Interest for Jan-2025" });
+  event(a, thursday, "TAX", 0.5, { ...usd, comment: "XYZ(US0000000001) Cash Dividend USD 2 per Share - US Tax" });
+  event(a, thursday, "FEE", 2, { comment: "Account fee" });
+  event(a, thursday, "TAX", 0.3, { comment: "Transaction tax" });
+  event(a, thursday, "DEPOSIT", 1000);
+  event(a, friday, "WITHDRAWAL", 200);
+  const closes = {
+    [abc]: [20, 21, 19, 22, 23],
+    [xyz]: [null, 105, 110, 108, 112],
+    [def]: [null, null, 8, 8.5, 9],
+    "FX:USD/AUD": [1.5, 1.6, 1.55, 1.4, 1.45],
+  };
+  for (const [asset, prices] of Object.entries(closes))
+    prices.forEach((p, i) => p != null && close(asset, [monday, tuesday, wednesday, thursday, friday][i], p));
+  return { ...b, a, abc, xyz, def };
+}
+
+test("dividends net of withholding, cash and borrowing interest, all fees and foreign holdings fill the five parts", (t) => {
+  const { db, a } = mixedBook(t);
+  const { breakdown, money } = portfolioReview(db, { ids: [a], from: wednesday, to: friday });
+  const { parts } = breakdown;
+  near(parts.income, (10 - 1.5) * 1.55 + 3 - 4 * 1.4 - 0.5 * 1.4);
+  near(parts.fees, -1 * 1.4 - 2 - 0.3);
+  // Two XYZ sold at US$108 against an average cost of US$105 before fees, at the sale-day rate.
+  near(parts.realised, 2 * 3 * 1.4);
+  // ABC is costed at its first close; DEF arrives with its own cost and gains only after it arrived.
+  near(parts.unrealised, 10 * (23 - 20) - 10 * (21 - 20) + 3 * (112 - 105) * 1.45 + 10 * (9 - 8));
+  near(sum(parts), money.gain);
+  const income = breakdown.items.find((i) => i.key === "income");
+  near(row(income, "XYZ"), (10 - 1.5) * 1.55 - 0.5 * 1.4);
+  near(row(income, "现金利息"), 3);
+  near(row(income, "借款利息"), -4 * 1.4);
+  const fees = breakdown.items.find((i) => i.key === "fees");
+  assert.deepEqual(fees.rows.map((r) => r.label).sort(), ["XYZ", "交易税", "账户费用"].sort());
+  const fx = breakdown.items.find((i) => i.key === "fx");
+  assert.ok(fx.rows.some((r) => r.label === "外币现金"));
+});
+
+test("the five parts add up to the period investment gain for every period", async (t) => {
+  const { db, a } = mixedBook(t);
+  for (const [from, to] of [
+    [tuesday, friday],
+    [wednesday, thursday],
+    [thursday, friday],
+    [friday, friday],
+    [monday, wednesday],
+  ]) {
+    const review = portfolioReview(db, { ids: [a], from, to });
+    near(sum(review.breakdown.parts), review.money.gain);
+    for (const item of review.breakdown.items) {
+      near(item.value, item.rows.reduce((n, r) => n + r.value, 0), 0.01);
+      near(item.value, review.breakdown.parts[item.key]);
+    }
+  }
+  for (const period of ["mtd", "ytd", "all"]) {
+    const overview = await dashboard(db, { ids: [a], date: friday, period });
+    near(sum(overview.breakdown.parts), overview.pnl);
+  }
+});
