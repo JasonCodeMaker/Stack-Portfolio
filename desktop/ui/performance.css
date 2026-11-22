@@ -20,8 +20,8 @@
   margin: 0;
   padding: 9px 14px;
   border-radius: 9px;
-  background: #eaf3e6;
-  color: #23513c;
+  background: var(--surface2);
+  color: var(--accent);
   font-size: 13px;
 }
 .review-status svg {
@@ -87,7 +87,7 @@
 }
 .review-metric > span {
   font-size: 13px;
-  color: #3f5247;
+  color: var(--l2);
   font-variant-numeric: tabular-nums;
 }
 .review-metric b {
@@ -98,18 +98,18 @@
   margin-top: 4px;
 }
 .review-primary {
-  background: #144b38;
-  color: white;
-  border-color: #144b38;
+  background: var(--hero-bg);
+  color: var(--hero-text);
+  border-color: var(--hero-bg);
 }
 .review-primary > span,
 .review-primary b {
-  color: #f1f7ee;
+  color: var(--hero-text);
 }
-.review-primary .gain { color: #bceccd; }
-.review-primary .loss { color: #ffc7c0; }
+.review-primary .gain { color: var(--hero-text); }
+.review-primary .loss { color: var(--hero-text); }
 .review-primary small {
-  color: #cee0d3;
+  color: var(--hero-text);
 }
 .review-hint {
   margin: 10px 0 0;
@@ -213,8 +213,8 @@
   overflow-wrap: anywhere;
 }
 .review-changed {
-  color: #91521a;
-  background: #fff6e7;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
   font-weight: 650;
 }
 .review-notes {
