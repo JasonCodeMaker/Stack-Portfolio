@@ -1,5 +1,9 @@
 /* Shared chart primitives. Colours come only from the design tokens (spec §1.1, §1.2). */
 
+/* Treemap tokens (prototype allocation page): gain / loss / neutral tile and light-tile text. */
+:root{--tu:#2E7D12;--td:#B42318;--tz:#E4EAE2;--tm-ink:var(--l1)}
+@media (prefers-color-scheme: dark){:root{--tu:#3E9C22;--td:#C9382B;--tz:#222C25;--tm-ink:#fff}}
+
 /* ---------- Line chart ---------- */
 .ch-line{position:relative;width:100%;min-width:0}
 .ch-line svg{display:block;overflow:visible;font-variant-numeric:tabular-nums}
@@ -40,3 +44,15 @@
 .ch-bullet-band{top:0;bottom:0;background:color-mix(in srgb,var(--l3) 30%,transparent)}
 .ch-bullet-act{left:0;top:2px;bottom:2px;border-radius:3px;background:var(--s1)}
 .ch-bullet-tick{top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--l1)}
+
+/* ---------- Treemap ---------- */
+.ch-tmap{position:relative;width:100%;min-width:0;border-radius:6px;overflow:hidden}
+.ch-tm{position:absolute;overflow:hidden;border-radius:2px;display:flex;flex-direction:column;justify-content:center;align-items:center;line-height:1.2;white-space:nowrap;cursor:pointer;transition:filter .12s}
+.ch-tm:hover{filter:brightness(1.1)}
+.ch-tm.on{outline:2px solid var(--l1);outline-offset:-2px;z-index:1}
+.ch-tm b{font-weight:650;letter-spacing:-.01em}
+.ch-tm.rest{align-items:flex-start;justify-content:flex-start;padding:4px 6px;box-sizing:border-box;font-size:11px;color:var(--l2);cursor:default;background:var(--tz)}
+.ch-tm.rest:hover{filter:none}
+.ch-tmh{position:absolute;font-size:11px;line-height:18px;color:var(--l2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ch-tmh b{color:var(--l1);font-weight:600}
+@media (prefers-reduced-motion: reduce){.ch-tm{transition:none}}
