@@ -21,10 +21,10 @@ const withholding = (e) => /withholding|dividend|股息|预扣/i.test(e.comment 
 const borrowing = (e) => /interest|利息/i.test(e.comment || "");
 const conversion = (e) => Boolean(e.metadata?.fx) || /\bFX\b|换汇/i.test(e.comment || "");
 
-// The security a withholding record belongs to: its own, or the single listing in the record's
+// The linked security, or for dividend withholding the single listing in the record's
 // currency whose ticker opens its description, as in "AAPL(US0378331005) Cash Dividend …".
-function taxedAsset(book, e) {
-  if (e.assetId) return e.assetId;
+export function attributedAsset(book, e) {
+  if (e.assetId || e.activityType !== "TAX" || !withholding(e)) return e.assetId;
   const ticker = /^([A-Z0-9.]+)\s*[(\s]/.exec(e.comment || "")?.[1];
   const matches = ticker
     ? [...book.assets.values()].filter((a) => a.symbol?.toUpperCase() === ticker && a.currency === e.currency)
@@ -59,7 +59,7 @@ function shares(book, e) {
         : [{ part: "fees", asset: e.assetId, label: conversion(e) ? "换汇佣金" : "账户费用", amount: charge }];
     case "TAX":
       return withholding(e)
-        ? [{ part: "income", asset: taxedAsset(book, e), label: "股息预扣税", amount: charge }]
+        ? [{ part: "income", asset: attributedAsset(book, e), label: "股息预扣税", amount: charge }]
         : [{ part: "fees", asset: e.assetId, label: conversion(e) ? "换汇佣金" : "交易税", amount: charge }];
     case "CREDIT":
       return [{ part: "fees", label: "其他入账与扣款", amount: amount.minus(fees) }];
@@ -110,7 +110,9 @@ export function gainBreakdown(context, summary) {
     const key =
       keys.get(id) ||
       JSON.stringify([(a && canonicalIdentity(a).key) || "asset:" + id, a?.currency || currency]);
-    return group(key, a?.symbol || symbol, "security", [a?.mic, a?.currency || currency].filter(Boolean).join(" · "));
+    const row = group(key, a?.symbol || symbol, "security", [a?.mic, a?.currency || currency].filter(Boolean).join(" · "));
+    row.assetId ??= id;
+    return row;
   }
   const convert = (amount, currency, date, account) => {
     if (amount.isZero()) return D(0);
@@ -136,6 +138,7 @@ export function gainBreakdown(context, summary) {
       const key = JSON.stringify([h.key, h.currency]);
       keys.set(h.assetId, key);
       const row = security(h.assetId, h.symbol, h.currency);
+      row.assetId = h.assetId;
       const value = D(h.value ?? 0);
       row.price = row.price.plus(value.mul(sign));
       const lot = lots.get(h.accountId)?.lots.get(h.assetId);
@@ -203,7 +206,7 @@ export function gainBreakdown(context, summary) {
       value: totals[part].toNumber(),
       rows: [...groups.values()]
         .filter((r) => r[part].abs().gte("0.005"))
-        .map(({ key, label, kind, listing, ...r }) => ({ key, label, kind, listing, value: r[part].toNumber() }))
+        .map(({ key, label, kind, listing, assetId, ...r }) => ({ key, label, kind, listing, assetId, value: r[part].toNumber() }))
         .sort((a, b) => Math.abs(b.value) - Math.abs(a.value)),
     })),
   };

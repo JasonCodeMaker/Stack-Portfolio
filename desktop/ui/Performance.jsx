@@ -1,247 +1,263 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bookmark, RefreshCw, TriangleAlert } from "lucide-react";
-import { api, aud, fmt, num, types, signedAud, signedPct, tone, Card, Empty, Field, Modal, Table, Tabs } from "./common";
-import { TimeChart, seriesColors } from "./Chart";
+import { Bookmark, RefreshCw } from "lucide-react";
+import { api, aud, fmt, num, types, signedAud, signedPct, tone, Card, Delta, Empty, Field, Table, Tabs } from "./common";
+import { DivergingBar, LineChart, divergingScale, seriesColor } from "./charts";
+import { Detail, Grid, useMainChartHeight } from "./Shell";
+import { resolvePeriod } from "../periods.js";
 import { PeriodControl } from "./FilterControls";
-import { accountScope, choosePreset, chooseRange, periodQuery } from "./filters.js";
+import { accountScope, choosePreset, chooseRange, isCustom, periodLabels, periodQuery } from "./filters.js";
 import "./performance.css";
+
+const reviewLayout = {
+  1: [["verdict", "chart", "breakdown", "contributions", "method"]],
+  2: [["verdict", "chart", "breakdown"], ["contributions", "method"]],
+  3: [["verdict", "chart"], ["contributions"], ["breakdown", "method"]],
+};
 
 const percent = (v) => (v == null ? "—" : signedPct(v));
 const points = (v) => fmt(Math.abs(v) * 100, 2) + " 个百分点";
 const gapText = (v) => (v == null ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + points(v));
-const level = (v) => Math.abs(v) < 1e-9;
+const gapPoints = (v) => percent(v).replace("%", " pp");
 const seriesOf = (review) => [{ id: "portfolio", name: "我的组合" }, ...review.series];
 const errorText = (e) =>
   String(e.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
 const labels = { totalReturn: "区间收益", gap: "组合收益差", maxDrawdown: "最大回撤" };
 
-// The answer the page exists for: the portfolio's return, and whether it is ahead of each index.
-function Verdict({ review }) {
-  const own = review.metrics.portfolio;
+function Metric({ title, name = title, value, format = percent, children }) {
+  const direction = tone(value, 4);
   return (
-    <div className="review-metrics">
-      <section className="review-metric review-primary">
-        <h2>
-          <i style={{ background: "#c5e8a3" }} />
-          我的组合
-        </h2>
-        <strong className={tone(own.totalReturn,4)}>{percent(own.totalReturn)}</strong>
-        <span>
-          期间盈亏 <b className={tone(review.money?.gain)}>{review.money ? signedAud(review.money.gain) : "—"}</b>
-          {review.contributions && review.contributions.to !== own.asOf && " · 截至 " + review.contributions.to}
-        </span>
-        <span>
-          最大回撤 <b>{percent(own.maxDrawdown)}</b>
-        </span>
-        <small>
-          {own.asOf
-            ? "时间加权收益率 · 截至 " + own.asOf + " 收盘"
-            : "这个区间还没有可比较的两个收盘估值"}
-        </small>
-      </section>
-      {review.series.map((b) => {
-        const m = review.metrics[b.id],
-          direction = m.gap == null || level(m.gap) ? "" : m.gap > 0 ? "gain" : "loss";
-        return (
-          <section key={b.id} className="review-metric">
-            <h2>
-              <i style={{ background: seriesColors[b.id] }} />
-              对比{b.name}
-            </h2>
-            <strong className={direction}>
-              {m.gap == null ? (
-                "暂无法比较"
-              ) : level(m.gap) ? (
-                "与指数持平"
-              ) : (
-                <>
-                  <i aria-hidden="true">{m.gap > 0 ? "▲" : "▼"}</i>
-                  {m.gap > 0 ? "跑赢 " : "跑输 "}
-                  {points(m.gap)}
-                </>
-              )}
-            </strong>
-            <span>
-              指数同期 <b>{percent(m.totalReturn)}</b>
-              {m.portfolioReturn != null && m.asOf !== own.asOf && (
-                <>
-                  　组合 <b>{percent(m.portfolioReturn)}</b>
-                </>
-              )}
-            </span>
-            <span>
-              指数最大回撤 <b>{percent(m.maxDrawdown)}</b>
-            </span>
-            <small>
-              {m.gap == null
-                ? b.first
-                  ? "所选区间内缺少可同日比较的指数点位"
-                  : "尚未取得这个指数的总回报数据"
-                : m.asOf === own.asOf
-                  ? "含分红再投资，折算为澳元 · 截至 " + m.asOf
-                  : "指数数据截至 " + m.asOf + "，按该日同期比较"}
-            </small>
-          </section>
-        );
-      })}
+    <section className="card kpi" aria-label={name}>
+      <h2 className="k">{title}</h2>
+      <strong className={"v " + direction}>
+        {direction && <i aria-hidden="true">{direction === "gain" ? "▲" : "▼"}</i>}
+        {format(value)}
+      </strong>
+      <div className="d cap">{children}</div>
+    </section>
+  );
+}
+
+const dateSpan = (from, to) => {
+  const short = from.slice(0, 4) === to.slice(0, 4);
+  return (short ? from.slice(5) : from) + " 至 " + (short ? to.slice(5) : to);
+};
+
+function Verdict({ review, benchmark, period }) {
+  const own = review.metrics.portfolio;
+  const index = review.metrics[benchmark.id];
+  const drawdown = own.drawdown;
+  const longest = index.longestUnderperformance;
+  return (
+    <div className="kpis review-metrics">
+      <Metric name="时间加权收益率" title={"时间加权收益率 · " + period} value={own.totalReturn}>
+        {review.measuredDays < 365
+          ? "不满一年，不显示年化"
+          : "年化 " + percent(own.annualised) +
+            (index.annualised == null ? "" : " · " + benchmark.name + " " + percent(index.annualised))}
+        {own.asOf && review.origin > review.base && <small>收益从 {review.origin} 起算</small>}
+        {own.asOf && own.asOf !== review.to && <small>截至 {own.asOf} 收盘</small>}
+      </Metric>
+      <Metric title={"对" + benchmark.name} value={index.gap} format={gapPoints}>
+        {index.gap == null ? "暂无同期比较" : "指数 " + percent(index.totalReturn)}
+        {index.gap != null && index.asOf !== own.asOf && <small>截至 {index.asOf} 同期比较</small>}
+      </Metric>
+      <Metric title="最大回撤" value={own.maxDrawdown}>
+        {drawdown?.peak ? (
+          <>
+            <span title={drawdown.peak + " 至 " + drawdown.trough}>{dateSpan(drawdown.peak, drawdown.trough)}</span>
+            {drawdown.recovery
+              ? "，" + (drawdown.recovery.slice(0, 4) === drawdown.trough.slice(0, 4)
+                ? drawdown.recovery.slice(5)
+                : drawdown.recovery) + " 收复"
+              : "，尚未收复"}
+          </>
+        ) : drawdown ? "这段时间没有回撤" : "暂无回撤数据"}
+      </Metric>
+      <Metric title={"最长跑输 · 对" + benchmark.name} value={longest?.worst} format={gapPoints}>
+        {longest ? (
+          <>
+            <span title={longest.from + " 至 " + longest.to}>{dateSpan(longest.from, longest.to)}</span>
+            {"，" + longest.days + " 天"}
+          </>
+        ) : index.gap == null ? "暂无同期比较" : "这段时间没有明显跑输"}
+      </Metric>
     </div>
   );
 }
 
-function ReviewChart({ review, selected, select, zoom }) {
-  const [mode, setMode] = useState("returns"),
-    [table, setTable] = useState(30);
-  const returns = mode === "returns";
-  const lines = { portfolio: { emphasis:true }, SP500TR: { dashed:true }, XNDX: { dotted:true } };
-  const series = returns
-    ? seriesOf(review).map((s) => ({ ...s, ...lines[s.id], endName:s.name, color: seriesColors[s.id], value: (p) => p[s.id] }))
-    : review.series.map((s) => ({
-        ...s,
-        ...lines[s.id],
-        endName: s.name,
-        name: "相对" + s.name,
-        color: seriesColors[s.id],
-        value: (p) => p.gaps[s.id],
-      }));
-  const known = review.points.some((p) => series.some((s) => s.value(p) != null));
-  const rows = [...review.points].reverse();
+const chartModes = [
+  ["returns", "累计收益"],
+  ["gap", "收益差"],
+  ["drawdown", "回撤"],
+];
+const benchmarksOf = (review) => review.series.map((b, i) => ({
+  ...b,
+  color: seriesColor(i + 1),
+  dash: i === 0 ? "6 3" : "2 3",
+}));
+const through = (point, date, value) => date && point.date <= date ? value : null;
+
+function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, zoom }) {
+  const [mode, setMode] = useState("returns");
+  const [chartRef, height] = useMainChartHeight();
+  const view = mode === "drawdown" && !review.hasQuarter ? "returns" : mode;
+  const own = review.metrics.portfolio, index = review.metrics[benchmark.id];
+  const to = view === "gap" ? (index.gap == null ? null : index.asOf) :
+    [own.asOf, ...benchmarks.map((b) => review.metrics[b.id].asOf)].filter(Boolean).sort().at(-1);
+  const points = review.points.filter((p) => p.date >= review.origin && p.date <= to);
+  const dates = points.map((p) => p.date);
+  const portfolio = { name: "我的组合", color: seriesColor(0), width: 2.5 };
+  const bands = [], markers = [];
+  let series, label;
+
+  if (view === "gap") {
+    label = "收益差曲线 · 对" + benchmark.name;
+    series = [{
+      name: "对" + benchmark.name,
+      color: "var(--l1)",
+      width: 2,
+      area: "sign",
+      values: points.map((p) => p.gaps[benchmark.id]),
+    }];
+    const longest = index.longestUnderperformance;
+    if (longest) bands.push({
+      from: dates.indexOf(longest.from),
+      to: dates.indexOf(longest.to),
+      label: "最长跑输 " + gapPoints(longest.worst),
+    });
+  } else if (view === "drawdown") {
+    label = "回撤曲线";
+    const drawdowns = (rows) => {
+      const byDate = new Map(rows?.map((p) => [p.date, p.drawdown]));
+      return dates.map((date) => byDate.get(date));
+    };
+    series = [
+      { ...portfolio, color: "var(--down)", area: true, values: drawdowns(review.drawdownSeries) },
+      { ...benchmark, values: drawdowns(review.benchmarkDrawdowns[benchmark.id]) },
+    ];
+    if (own.drawdown?.trough) markers.push({
+      index: dates.indexOf(own.drawdown.trough),
+      value: own.drawdown.depth,
+      label: percent(own.drawdown.depth),
+    });
+  } else {
+    label = "累计收益曲线";
+    series = [
+      { ...portfolio, values: points.map((p) => through(p, own.asOf, p.portfolio)) },
+      ...benchmarks.map((b) => ({
+        ...b,
+        values: points.map((p) => through(p, review.metrics[b.id].asOf, p[b.id])),
+      })),
+    ];
+  }
+
   return (
-    <Card
-      title={returns ? "累计收益走势" : "组合相对指数的收益差"}
-      action={
-        <Tabs
-          items={[
-            ["returns", "累计收益"],
-            ["gap", "收益差"],
-          ]}
-          value={mode}
-          onChange={setMode}
-        />
-      }
-    >
-      {known ? (
-        <>
-          <TimeChart
-            label="每日收益曲线，可悬停读数、点选日期或拖选复盘区间"
-            points={review.points}
+    <section className="card review-chart" aria-label="收益走势">
+      <div className="row">
+        <div className="seg" role="group" aria-label="主图视图">
+          {(review.hasQuarter ? chartModes : chartModes.slice(0, 2)).map(([id, title]) => (
+            <button type="button" key={id} className={view === id ? "on" : ""}
+              aria-pressed={view === id} onClick={() => setMode(id)}>
+              {title}
+            </button>
+          ))}
+        </div>
+        <span className="sp" />
+        <div className="review-benchmarks" role="group" aria-label="对比基准">
+          {benchmarks.map((b) => (
+            <button type="button" className="btn sm" key={b.id} aria-pressed={benchmark.id === b.id}
+              onClick={() => chooseBenchmark(b.id)}>
+              <i aria-hidden="true" style={{ background: b.color }} />
+              {b.name} {gapPoints(review.metrics[b.id].gap)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="chart" ref={chartRef}>
+        {series.some((s) => s.values.some(Number.isFinite)) ? (
+          <LineChart
+            ariaLabel={label}
             series={series}
-            height={300}
-            zero
-            format={returns ? percent : gapText}
-            axisFormat={(v) => fmt(v * 100, 1) + (returns ? "%" : " pp")}
-            zones={returns ? null : ["组合领先", "组合落后"]}
-            band={(shown) =>
-              returns
-                ? shown.length === 2 && shown[0].id === "portfolio"
-                  ? { upper: "portfolio", lower: shown[1].id }
-                  : null
-                : shown.length === 1
-                  ? { upper: shown[0].id, lower: 0 }
-                  : null
-            }
-            selected={selected}
+            dates={dates}
+            height={height}
+            zero={view !== "drawdown"}
+            hi={view === "drawdown" ? 0 : undefined}
+            padRight={104}
+            bands={bands}
+            markers={markers}
+            formatAxis={(v) => signedPct(v, 1).replace("%", view === "gap" ? " pp" : "%")}
+            formatValue={view === "gap" ? gapPoints : percent}
             onSelect={select}
             onZoom={zoom}
-            tooltip={(p) =>
-              returns &&
-              review.series.map(
-                (b) =>
-                  p.gaps[b.id] != null && (
-                    <div key={b.id} className="chart-tip-row total">
-                      <span>相对{b.name}</span>
-                      <b className={tone(p.gaps[b.id], 4)}>{gapText(p.gaps[b.id])}</b>
-                    </div>
-                  ),
-              )
-            }
           />
-          <p className="review-hint">
-            拖选日期可比较该区间。点击曲线上的日期查看当日明细。
-          </p>
-          <details className="review-details">
-            <summary>查看每日数据</summary>
-            <Table
-              head={[
-                "日期",
-                ["我的组合", "num"],
-                ...review.series.flatMap((b) => [
-                  [b.name, "num"],
-                  ["收益差", "num"],
-                ]),
-                ["收盘净值（AUD）", "num"],
-              ]}
-            >
-              {rows.slice(0, table).map((p) => (
-                <tr key={p.date}>
-                  <td>
-                    <button className="text-btn" onClick={() => select(p.date)}>
-                      {p.date}
-                    </button>
-                  </td>
-                  <td className="num">{percent(p.portfolio)}</td>
-                  {review.series.flatMap((b) => [
-                    <td key={b.id} className="num">
-                      {percent(p[b.id])}
-                    </td>,
-                    <td key={b.id + "gap"} className={"num " + tone(p.gaps[b.id], 4)}>
-                      {gapText(p.gaps[b.id])}
-                    </td>,
-                  ])}
-                  <td className="num">{aud(p.value, 2)}</td>
-                </tr>
-              ))}
-            </Table>
-            {rows.length > table && <button onClick={() => setTable(table + 60)}>显示更早的日期</button>}
-          </details>
-        </>
-      ) : (
-        <Empty>当前区间还没有可绘制的收益数据。可更新行情，或把起点调到有持仓的日期。</Empty>
-      )}
-    </Card>
+        ) : <Empty>{label}暂无数据。</Empty>}
+      </div>
+    </section>
   );
 }
 
-// Which data the comparison rests on, what is still missing, and how results are worked out.
-function DataPanel({ review, mode, busy, updating, refresh, results }) {
-  const [expanded, setExpanded] = useState(false);
-  const names = Object.fromEntries(seriesOf(review).map((s) => [s.id, s.name]));
+const methods = [
+  ["时间加权收益率", "每日收盘估值按澳元计。入金计在日初，出金计在日末。逐日收益连乘，剔除出入金影响。"],
+  ["年化收益", "区间满 365 天时，将累计收益按 (1 + R) ^ (365 / 天数) − 1 折成年收益。"],
+  ["收益差", "组合累计收益减所选指数累计收益，以百分点（pp）表示。指数为分红再投资总回报，折算为澳元。按双方都可计量的最近收盘日比较。"],
+  ["最大回撤与最长跑输", "最大回撤是区间内从峰值到随后谷底的最大跌幅。最长跑输从收益差转负的首个收盘日起，至追平或比较结束。"],
+  ["持仓贡献", "区间内证券的澳元价差，加可归属分红并扣交易费用。现金利息等账户收支单列。"],
+];
+
+function Methods() {
+  return (
+    <dl className="review-methods">
+      {methods.map(([title, text]) => (
+        <div key={title}><dt>{title}</dt><dd>{text}</dd></div>
+      ))}
+    </dl>
+  );
+}
+
+function MethodSummary() {
+  return (
+    <details className="card review-method">
+      <summary>口径说明</summary>
+      <Methods />
+    </details>
+  );
+}
+
+const coverage = (first, last) => first && last ? first + " 至 " + last : "—";
+
+function DataPanel({ review, mode, disabled, refresh, results }) {
   const done = results.filter((r) => !r.error),
     failed = results.filter((r) => r.error);
-  // A session still to close leaves only a gap after the latest valued day, which is routine.
-  // The panel opens by itself when data is missing inside the measured period.
-  const through = review.metrics.portfolio.asOf;
-  const open = review.outages.some((g) => g.to >= review.origin && (!through || g.from <= through));
   return (
-    <details className="card review-data" open={open || undefined}>
-      <summary>
-        <h2>行情与计算口径</h2>
-        <span className="muted">
-          {review.series.map((b) => b.name + " " + (b.last ? "至 " + b.last : "未取得")).join(" · ")} · 汇率{" "}
-          {review.fx.last ? "至 " + review.fx.last : "未取得"}
-        </span>
-      </summary>
-      <div className="review-sources">
+    <>
+      <h3>数据来源</h3>
+      <dl className="review-methods">
+        <div>
+          <dt>组合收盘估值</dt>
+          <dd>账本中的历史收盘价、资金流水与汇率</dd>
+          <dd className="cap">{coverage(review.origin, review.metrics.portfolio.asOf)}</dd>
+        </div>
         {review.series.map((b) => (
           <div key={b.id}>
-            <b>{b.name}</b>
-            <span>{b.source}</span>
-            <small>{b.first ? b.first + " 至 " + b.last : "尚未缓存总回报数据"}</small>
+            <dt>{b.name}</dt>
+            <dd>{b.source}</dd>
+            <dd className="cap">{coverage(b.first, b.last)}</dd>
           </div>
         ))}
         <div>
-          <b>美元兑澳元</b>
-          <span>{review.fx.sources.join("、") || "Yahoo Finance · AUDUSD=X"}</span>
-          <small>{review.fx.first ? review.fx.first + " 至 " + review.fx.last : "尚未缓存历史汇率"}</small>
+          <dt>美元兑澳元</dt>
+          <dd>{review.fx.sources.join("、") || "Yahoo Finance · AUDUSD=X"}</dd>
+          <dd className="cap">{coverage(review.fx.first, review.fx.last)}</dd>
         </div>
-      </div>
+      </dl>
       {mode === "real" && (
         <div className="actions">
-          <button disabled={busy || updating} onClick={() => refresh(false)}>
-            <RefreshCw size={14} /> 更新指数、汇率和收盘价
+          <button type="button" className="btn" disabled={disabled} onClick={() => refresh(false)}>
+            <RefreshCw size={14} aria-hidden="true" /> 更新指数、汇率和收盘价
           </button>
           {review.canBackfill && review.missingAssets.length > 0 && (
-            <button disabled={busy || updating} onClick={() => refresh(true)}>
-              用 Twelve Data 补齐 {review.missingAssets.length} 只证券的收盘价
+            <button type="button" className="btn" disabled={disabled} onClick={() => refresh(true)}>
+              用 Twelve Data 补齐收盘价
             </button>
           )}
         </div>
@@ -252,116 +268,173 @@ function DataPanel({ review, mode, busy, updating, refresh, results }) {
           {failed.length > 0 && " 未能更新：" + failed.map((r) => r.name + "（" + r.error + "）").join("、") + "。"}
         </p>
       )}
-      {review.outages.length > 0 && (
-        <>
-          <h3>数据缺口（{review.outages.length} 段）</h3>
-          <ul className="review-outages">
-            {(expanded ? review.outages : review.outages.slice(0, 6)).map((g) => (
-              <li key={g.id + g.from}>
-                <b>{names[g.id]}</b>　{g.from}
-                {g.to !== g.from && " 至 " + g.to}　{g.reason}
-              </li>
-            ))}
-          </ul>
-          {!expanded && review.outages.length > 6 && (
-            <button onClick={() => setExpanded(true)}>显示其余缺口</button>
-          )}
-          {mode === "real" && review.missingAssets.length > 0 && !review.canBackfill && (
-            <p className="muted">
-              自动来源没有的收盘价，可在「设置 → 报价、分类与来源」手工补录。
-            </p>
-          )}
-        </>
-      )}
-      <h3>收益怎么算</h3>
-      <p>
-        以每日收盘估值和同期汇率折算为澳元。组合保留现金、实际分红、费用及税款。入金计在日初，出金计在日末，逐日连乘，得到不受出入金影响的时间加权收益率。所选账户间的配对划转计入内部转账。
-      </p>
-      <p>
-        两条基准使用美元总回报指数（分红再投资），按同期汇率折算为澳元。收益差为组合累计收益率减去同期指数收益率，以百分点表示。最大回撤从区间内的峰值算到后续谷底。
-      </p>
-      <p>
-        休市日沿用上一交易日收盘价。当日收盘价或汇率尚未取得时，结果截至最近一个可估值的收盘日；区间中段有缺口时，最大回撤暂不显示。
-      </p>
-    </details>
+      <h3>计算方法</h3>
+      <Methods />
+    </>
   );
 }
 
-function Contributions({ review }) {
-  const [selected, select] = useState(null);
-  const data = review.contributions;
+function DailyTable({ review, benchmark, select }) {
+  const [limit, setLimit] = useState(40);
+  const own = review.metrics.portfolio;
+  const index = review.metrics[benchmark.id];
+  const end = [own.asOf, index.asOf].filter(Boolean).sort().at(-1);
+  const days = review.points.flatMap((point, i) => {
+    if (!end || point.date < review.from || point.date < review.origin || point.date > end) return [];
+    const cumulative = through(point, own.asOf, point.portfolio);
+    const previous = review.points[i - 1]?.portfolio;
+    return [{
+      date: point.date,
+      daily: cumulative != null && previous != null && previous > -1 ? (1 + cumulative) / (1 + previous) - 1 : null,
+      cumulative,
+      benchmark: through(point, index.asOf, point[benchmark.id]),
+      gap: index.gap != null ? through(point, index.asOf, point.gaps[benchmark.id]) : null,
+    }];
+  }).reverse();
   return (
-    <Card
-      title="这段时间的盈亏来自哪里"
-      action={
-        data && (
-          <span className="muted">
-            {data.from} 至 {data.to} · AUD
-          </span>
-        )
-      }
-    >
-      {!data ? (
-        <Empty>取得区间起止估值和资金流水后，可计算区间贡献。</Empty>
-      ) : !data.rows.length ? (
-        <Empty>区间内没有持仓或收支贡献。</Empty>
-      ) : (
-        <>
-          <Table head={["证券或收支", ["区间贡献（AUD）", "num"], "依据"]}>
-            {data.rows.map((r) => (
-              <tr key={r.key}>
-                <td>
-                  <b>{r.label}</b>
-                  {r.listing && <small>{r.listing}</small>}
-                  {r.closed && <small>期间已卖清</small>}
-                </td>
-                <td className={"num " + tone(r.gain)}>{r.gain == null ? "待核对" : signedAud(r.gain)}</td>
-                <td>
-                  {r.events.length ? (
-                    <button className="text-btn" onClick={() => select(r)}>
-                      {r.events.length} 笔流水
-                    </button>
-                  ) : r.kind === "security" ? (
-                    "期初与期末持仓估值"
-                  ) : r.key.startsWith("fx:") ? (
-                    "期初与期末现金折算"
-                  ) : (
-                    "核对估值和现金记录"
-                  )}
-                </td>
-              </tr>
-            ))}
-            <tr className="sum">
-              <td>组合期间盈亏</td>
-              <td className={"num " + tone(review.money.gain)}>{signedAud(review.money.gain)}</td>
-              <td />
+    <div className="review-daily">
+      {days.length ? (
+        <Table head={["日期", ["当日收益", "num"], ["累计收益", "num"], [benchmark.name, "num"], ["收益差", "num"]]}>
+          {days.slice(0, limit).map((row) => (
+            <tr key={row.date}>
+              <td><button type="button" className="text-btn" onClick={() => select(row.date)}>{row.date}</button></td>
+              <td className="num">{percent(row.daily)}</td>
+              <td className="num">{percent(row.cumulative)}</td>
+              <td className="num">{percent(row.benchmark)}</td>
+              <td className={"num " + tone(row.gap, 4)}>{gapPoints(row.gap)}</td>
             </tr>
-          </Table>
-        </>
+          ))}
+        </Table>
+      ) : <Empty>当前区间暂无逐日收益数据。</Empty>}
+      {days.length > limit && (
+        <button type="button" className="btn sm" onClick={() => setLimit(limit + 40)}>显示更早的日期</button>
       )}
-      {selected && (
-        <Modal wide title={selected.label + " · 区间原始流水"} close={() => select(null)}>
-          <Table head={["日期", "账户", "记录", "金额／成交", "费用及税款", "来源凭据"]}>
-            {selected.events.map((e) => (
-              <tr key={e.id}>
-                <td>{e.date}</td>
-                <td>{review.accountNames[e.account] || e.account}</td>
-                <td>{types[e.type] || e.type}</td>
-                <td>
-                  {e.quantity && Number(e.quantity)
-                    ? num(e.quantity) + " × " + e.currency + " " + num(e.price)
-                    : e.currency + " " + num(e.amount)}
-                </td>
-                <td>
-                  {e.currency} {num(Number(e.fee || 0) + Number(e.tax || 0))}
-                </td>
-                <td>{e.reference}</td>
-              </tr>
-            ))}
-          </Table>
-        </Modal>
+    </div>
+  );
+}
+
+const currency = (value) => signedAud(value, Number.isInteger(value) ? 0 : 2);
+const amount = (value) => <Delta amount={value} digits={Number.isInteger(value) ? 0 : 2} />;
+
+function Breakdown({ data, period, selected, select, openHolding }) {
+  const item = data?.items.find((item) => item.key === selected);
+  return (
+    <section className="card" aria-label="盈亏构成">
+      <div className="row">
+        <h2>盈亏构成</h2>
+        {data && <span className="cap">{period} · 合计 {currency(data.gain)}</span>}
+      </div>
+      {!data ? <Empty>当前区间暂无盈亏构成。</Empty> : (
+        <div className="review-breakdown">
+          {data.items.map(({ key, label, value }) => (
+            <button type="button" key={key} aria-expanded={selected === key}
+              onClick={() => select(selected === key ? null : key)}>
+              <span className="cap">{label}</span>
+              <b>{amount(value)}</b>
+            </button>
+          ))}
+        </div>
       )}
-    </Card>
+      {item && (item.rows.length ? (
+        <div className="tw review-drill">
+          <table>
+            <thead><tr><th scope="col">{item.label} · 按证券</th><th scope="col">金额</th></tr></thead>
+            <tbody>
+              {item.rows.map((row) => (
+                <tr key={row.key} className={row.kind === "security" ? "click" : undefined}
+                  onClick={row.kind === "security" ? () => openHolding(row) : undefined}>
+                  <td>
+                    {row.kind === "security"
+                      ? <button type="button" className="lnk">{row.label}</button>
+                      : <span className="cap">{row.label}</span>}
+                    {row.listing && <i>{row.listing}</i>}
+                  </td>
+                  <td>{amount(row.value)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <p className="cap">这项在当前区间没有金额。</p>)}
+    </section>
+  );
+}
+
+function Contributions({ data, total, period, expanded, setExpanded, openHolding, openEvidence }) {
+  const rows = data?.rows || [];
+  const scale = divergingScale(rows.map((row) => row.gain ?? 0));
+  const middle = rows.length > 15 ? rows.slice(7, -7) : [];
+  const folded = middle.length > 0 && !expanded;
+  const middleTotal = middle.every((row) => row.gain != null) ? middle.reduce((sum, row) => sum + row.gain, 0) : null;
+  const renderRow = (row) => {
+    const security = row.kind === "security";
+    const select = security ? () => openHolding(row) : row.events.length ? () => openEvidence(row) : undefined;
+    const content = (
+      <>
+        <span className={security ? "" : "cap"}>
+          {security ? <b title={row.listing}>{row.label}</b> : row.label}
+          {row.closed && <span className="cap"> · 期间已卖清</span>}
+        </span>
+        <span aria-hidden="true">
+          {row.gain != null && <DivergingBar value={row.gain} scale={scale} />}
+        </span>
+        <span className="review-contribution-amount">{amount(row.gain)}</span>
+      </>
+    );
+    return select ? (
+      <button type="button" key={row.key} className="review-contribution" onClick={select}>
+        {content}
+      </button>
+    ) : (
+      <div key={row.key} className="review-contribution">{content}</div>
+    );
+  };
+  return (
+    <section className="card" aria-label="持仓贡献">
+      <div className="row">
+        <h2>持仓贡献</h2>
+        {data && <span className="cap">{period} · 合计 {currency(total)}</span>}
+      </div>
+      {rows.length ? (
+        <div className="review-contributions">
+          {(folded ? rows.slice(0, 7) : rows).map(renderRow)}
+          {middle.length > 0 && (
+            <button type="button" className="review-fold" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+              {folded ? "中间 " + middle.length + " 项合计 " + currency(middleTotal) + " · 展开" : "只看前 7 和后 7"}
+            </button>
+          )}
+          {folded && rows.slice(-7).map(renderRow)}
+        </div>
+      ) : <Empty>{data ? "区间内没有持仓或收支贡献。" : "当前区间暂无持仓贡献。"}</Empty>}
+    </section>
+  );
+}
+
+function ContributionEvidence({ row, accountName, onPage }) {
+  return (
+    <Table head={["日期", "账户", "记录", ["金额／成交", "num"], ["费用及税款", "num"], "来源凭据"]}>
+      {row.events.map((e) => (
+        <tr key={e.id}>
+          <td>{e.date}</td>
+          <td>{accountName(e.account)}</td>
+          <td>{types[e.type] || e.type}</td>
+          <td className="num">
+            {Number(e.quantity)
+              ? num(e.quantity) + " × " + e.currency + " " + num(e.price)
+              : e.currency + " " + num(e.amount)}
+          </td>
+          <td className="num">
+            {e.currency} {num(Number(e.fee || 0) + Number(e.tax || 0))}
+          </td>
+          <td>
+            {e.reference}
+            <button type="button" className="text-btn" onClick={() => onPage("imports", { tab: "history", account: e.account })}>
+              查看流水
+            </button>
+          </td>
+        </tr>
+      ))}
+    </Table>
   );
 }
 
@@ -396,10 +469,10 @@ function DayDetail({ review, date, select }) {
           <input
             type="date"
             value={date}
-            min={review.from}
+            min={review.base}
             max={review.to}
             onChange={(e) => {
-              if (e.target.value >= review.from && e.target.value <= review.to) select(e.target.value);
+              if (e.target.value >= review.base && e.target.value <= review.to) select(e.target.value);
             }}
           />
         </Field>
@@ -585,13 +658,17 @@ function Notes({ review, notes, opened, reopen, save, busy, accountName }) {
   );
 }
 
-export function Performance({ d, mode, run, reload, filters, onFilters }) {
+export function Performance({ d, mode, run, reload, filters, onFilters, onPage }) {
   // The account scope, valuation date and period are the global filters (spec §2.3).
-  const scope = { ids: d.selected, ...periodQuery(filters, d.date) };
+  const valuationDate = filters.date || d.date;
+  const scope = { ids: d.selected, ...periodQuery(filters, valuationDate) };
   const [version, setVersion] = useState(0),
     [loaded, setLoaded] = useState(null),
     [error, setError] = useState("");
-  const [picked, setPicked] = useState(null),
+  const [benchmarkId, setBenchmarkId] = useState("SP500TR");
+  const [part, setPart] = useState(null);
+  const [expanded, setExpanded] = useState(false);
+  const [detail, setDetail] = useState(null),
     [opened, setOpened] = useState(null);
   const [busy, setBusy] = useState(false),
     [updating, setUpdating] = useState(0),
@@ -603,6 +680,7 @@ export function Performance({ d, mode, run, reload, filters, onFilters }) {
   // The last result stays on screen, dimmed, while a new period is being worked out.
   const review = loaded?.review || null,
     current = loaded?.key === key;
+  const inScope = loaded?.scopeKey === scopeKey;
   const names = new Map(d.accounts.map((a) => [a.id, a.name]));
   const accountName = (id) => names.get(id) || id;
   useEffect(() => {
@@ -639,15 +717,18 @@ export function Performance({ d, mode, run, reload, filters, onFilters }) {
       .finally(() => setUpdating((n) => n - 1));
   }, [current && review.token]);
   function change(next, note = null) {
+    if (next === filters && !note) return;
     setOpened(note);
-    setPicked(null);
+    setDetail(null);
+    setExpanded(false);
     setResults([]);
     onFilters(next);
   }
   function zoom(from, to) {
-    change(chooseRange(filters, from, to, d.date));
+    change(chooseRange(filters, from, to, valuationDate));
   }
-  const selected = review && picked >= review.from && picked <= review.to ? picked : review?.metrics.portfolio.asOf || review?.to;
+  const openDay = (date) => setDetail({ kind: "day", date });
+  const openHolding = (row) => onPage("holdings", { assetId: row.assetId, symbol: row.label });
   async function act(fn) {
     if (lock.current) return;
     lock.current = true;
@@ -682,17 +763,29 @@ export function Performance({ d, mode, run, reload, filters, onFilters }) {
       return true;
     });
   }
-  const late = review && review.origin > review.requested;
+  const benchmarks = review ? benchmarksOf(review) : [];
+  const benchmark = benchmarks.find((b) => b.id === benchmarkId) || benchmarks[0];
+  const period = isCustom(filters) ? "自定义" : periodLabels[filters.period];
   return (
     <>
       <PeriodControl
         filters={filters}
-        range={review && { from: review.from, to: review.to }}
-        valuationDate={d.date}
+        range={current ? review.period : resolvePeriod(scope)}
+        valuationDate={valuationDate}
         custom
         days
         onChange={(next) => change(next)}
-      />
+      >
+        <span className="sp" />
+        <div className="review-tools">
+          <button type="button" className="btn sm" disabled={!current} onClick={() => setDetail({ kind: "daily" })}>
+            逐日数据
+          </button>
+          <button type="button" className="btn sm" disabled={!current} onClick={() => setDetail({ kind: "methods" })}>
+            数据来源与计算方法
+          </button>
+        </div>
+      </PeriodControl>
       {updating > 0 && (
         <p className="review-status" role="status">
           <RefreshCw size={14} /> 正在更新指数、汇率和持仓收盘价…
@@ -712,32 +805,61 @@ export function Performance({ d, mode, run, reload, filters, onFilters }) {
           <p role="status">正在计算每日收益…</p>
         </Card>
       ) : (
-        <div className={"review-body" + (current ? "" : " stale")} aria-busy={!current}>
-          {late && (
-            <div className="notice">
-              <TriangleAlert size={18} />
-              <div>
-                <b>收益从 {review.origin} 起算</b>
-                <small>
-                  {scope.from
-                    ? "所选起点 " + review.requested + " 当日组合还不能完整估值，三条曲线都从首个可估值的收盘日起算。"
-                    : "这是所选账户最早可以完整估值的收盘日。"}
-                </small>
-              </div>
-            </div>
+        <div className={"review-body" + (current ? "" : " stale")} aria-busy={!current} inert={!current}>
+          <Grid layout={reviewLayout} panels={{
+            verdict: <Verdict review={review} benchmark={benchmark} period={period} />,
+            chart: <ReviewChart
+              review={review}
+              benchmarks={benchmarks}
+              benchmark={benchmark}
+              chooseBenchmark={setBenchmarkId}
+              select={openDay}
+              zoom={zoom}
+            />,
+            breakdown: <Breakdown
+              data={review.breakdown}
+              period={period}
+              selected={part}
+              select={setPart}
+              openHolding={openHolding}
+            />,
+            contributions: <Contributions
+              data={review.contributions}
+              total={review.money?.gain}
+              period={period}
+              expanded={expanded}
+              setExpanded={setExpanded}
+              openHolding={openHolding}
+              openEvidence={(row) => setDetail({ kind: "source", row })}
+            />,
+            method: <MethodSummary />,
+          }} />
+          {inScope && detail?.kind === "daily" && (
+            <Detail wide title="逐日数据" onClose={() => setDetail(null)}>
+              <DailyTable review={review} benchmark={benchmark} select={openDay} />
+            </Detail>
           )}
-          <Verdict review={review} />
-          <ReviewChart
-            key={review.token}
-            review={review}
-            selected={selected}
-            select={setPicked}
-            zoom={zoom}
-          />
-          <Contributions key={"contributions" + review.token} review={review}/>
-          {picked && <Modal wide title={picked + " · 当日明细"} close={() => setPicked(null)}>
-            <DayDetail review={review} date={selected} select={setPicked}/>
-          </Modal>}
+          {inScope && detail?.kind === "methods" && (
+            <Detail title="数据来源与计算方法" onClose={() => setDetail(null)}>
+              <DataPanel
+                review={review}
+                mode={mode}
+                disabled={!current || busy || updating > 0}
+                refresh={refresh}
+                results={results}
+              />
+            </Detail>
+          )}
+          {inScope && detail?.kind === "day" && (
+            <Detail wide title={detail.date + " · 当日明细"} onClose={() => setDetail(null)}>
+              <DayDetail review={review} date={detail.date} select={openDay} />
+            </Detail>
+          )}
+          {inScope && detail?.kind === "source" && (
+            <Detail wide title={detail.row.label + " · 区间原始流水"} onClose={() => setDetail(null)}>
+              <ContributionEvidence row={detail.row} accountName={accountName} onPage={onPage} />
+            </Detail>
+          )}
           <Notes
             key={"notes" + review.token}
             review={review}
@@ -746,21 +868,13 @@ export function Performance({ d, mode, run, reload, filters, onFilters }) {
             reopen={(note) => {
               const activeIds = d.accounts.filter((a) => a.active).map((a) => a.id),
                 ids = note.ids.filter((id) => activeIds.includes(id));
-              const range = chooseRange(filters, note.from, note.to, d.date);
+              const range = chooseRange(filters, note.from, note.to, valuationDate);
               change(ids.length ? { ...range, ids: accountScope(ids, activeIds) } : range, note);
               setVersion((v) => v + 1);
             }}
             save={save}
             busy={busy}
             accountName={accountName}
-          />
-          <DataPanel
-            review={review}
-            mode={mode}
-            busy={busy}
-            updating={updating > 0}
-            refresh={refresh}
-            results={results}
           />
         </div>
       )}

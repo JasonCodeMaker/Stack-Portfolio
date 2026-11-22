@@ -176,6 +176,36 @@ test("weekends and US exchange holidays carry closes but use current FX; results
   assert.deepEqual([r.metrics.portfolio.asOf, r.metrics.SP500TR.asOf], [holiday, holiday]);
 });
 
+test("underperformance and benchmark drawdowns end on the latest comparable close", (t) => {
+  const { db, account, anchor, event, level, review } = fixture(t);
+  const yearEnd = "2025-12-31";
+  anchor(account, "2024-12-31", { AUD: 1000 });
+  event(wednesday, "INTEREST", 100);
+  event(yearEnd, "INTEREST", 100);
+  for (const date of ["2024-12-31", tuesday, wednesday, thursday, yearEnd])
+    savePrice(db, "FX:USD/AUD", date, 1.5, "statement");
+  level("SP500TR", "2024-12-31", 100);
+  level("SP500TR", tuesday, 110);
+  level("XNDX", "2024-12-31", 100);
+  level("XNDX", thursday, 135);
+  level("XNDX", yearEnd, 130);
+
+  const r = review("2025-01-01", yearEnd);
+  near(r.metrics.portfolio.totalReturn, 0.2);
+  near(r.metrics.portfolio.annualised, 0.2);
+  const sp = r.metrics.SP500TR;
+  near(sp.gap, -0.1);
+  assert.equal(sp.asOf, tuesday);
+  assert.equal(sp.annualised, null);
+  assert.deepEqual(
+    [sp.longestUnderperformance.from, sp.longestUnderperformance.to, sp.longestUnderperformance.status],
+    [tuesday, tuesday, "open"],
+  );
+  assert.equal(r.metrics.XNDX.longestUnderperformance.to, yearEnd);
+  assert.equal(r.benchmarkDrawdowns.SP500TR.at(-1).date, tuesday);
+  near(r.benchmarkDrawdowns.XNDX.at(-1).drawdown, 130 / 135 - 1);
+});
+
 test("review notes preserve displayed metrics across revisions and old database backups remain recognized", (t) => {
   const { db, account, ids, anchor, event, review } = fixture(t);
   anchor(account, monday, { AUD: 100 });
@@ -531,20 +561,24 @@ test("open positions translate native cost and gain with the valuation FX even w
 
 test("a sold security earns its period change plus linked income less fees, with account income traceable", (t) => {
   const { db, account, event, anchor, review } = fixture(t);
-  const stock = resolveAsset(db, { symbol: "FUND", exchangeMic: "XASX" }, "AUD");
+  const stock = resolveAsset(db, { symbol: "IVV", exchangeMic: "XASX" }, "AUD");
   anchor(account, "2025-01-30", { AUD: 500 });
-  event("2025-01-31", "BUY", 0, { assetId: stock, assetSymbol: "FUND", quantity: 1, unitPrice: 40 });
+  event("2025-01-31", "BUY", 0, { assetId: stock, assetSymbol: "IVV", quantity: 1, unitPrice: 40 });
   for (const date of [monday, tuesday]) savePrice(db, stock, date, 100, "statement");
-  event(tuesday, "DIVIDEND", 8, { assetId: stock, sourceRecordId: "dividend-voucher" });
-  event(wednesday, "SELL", 0, { assetId: stock, quantity: 1, unitPrice: 110, fee: 2 });
+  event(tuesday, "DIVIDEND", 10, { assetId: stock, sourceRecordId: "dividend-voucher" });
+  event(tuesday, "TAX", 2, { comment: "IVV(AU000000IVV8) Dividend Withholding" });
+  event(wednesday, "SELL", 0, { assetId: stock, quantity: 1, unitPrice: 200, fee: 2 });
   event(wednesday, "INTEREST", 3);
   event(wednesday, "FEE", 1, { sourceRecordId: "fee-voucher" });
   const r = review(monday, wednesday);
   const get = (label) => r.contributions.rows.find((v) => v.label === label);
-  near(r.money.gain, 18);
-  near(get("FUND").gain, 16);
-  assert.equal(get("FUND").closed, true);
-  assert.ok(get("FUND").events.some((v) => v.reference === "dividend-voucher"));
+  near(r.money.gain, 108);
+  near(get("IVV").gain, 106);
+  assert.equal(get("IVV").closed, true);
+  assert.equal(get("IVV").assetId, stock);
+  const income = r.breakdown.items.find((item) => item.key === "income");
+  assert.equal(income.rows.find((row) => row.assetId === stock)?.value, 8);
+  assert.ok(get("IVV").events.some((v) => v.reference === "dividend-voucher"));
   near(get("现金利息").gain, 3);
   near(get("待归属").gain, -1);
   assert.equal(get("待归属").events[0].reference, "fee-voucher");

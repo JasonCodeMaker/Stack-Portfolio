@@ -444,26 +444,34 @@ export function summarizePeriod(context, { to, period, from }) {
     return carried > first ? carried : -1;
   };
   // A period is annualised over its calendar days, or from a later first valued close.
-  const measuredDays = daysBetween(origin > range.from ? origin : range.from, range.to) + 1;
+  const measuredFrom = origin > range.from ? origin : range.from;
+  const measuredDays = daysBetween(measuredFrom, range.to) + 1;
   const own = latestIndex((p) => p.portfolio != null, "portfolio");
   const path = own < 0 ? null : drawdown(points, "portfolio", first, own);
   const twrValue = own < 0 ? null : points[own].portfolio;
   const quarter = resolvePeriod({ to: range.to, period: "3m" }).from;
-  const intervals = series.flatMap((b) => underperformance(points.slice(0, own + 1), b.id));
+  const hasQuarter = range.from <= quarter;
+  const intervals = [], benchmarkDrawdowns = {};
   const versus = {};
   for (const { id } of series) {
     // Portfolio and benchmark are compared on the latest close both can be measured at.
     const shared = latestIndex((p) => p.gaps[id] != null, "portfolio", id);
     const i = shared >= 0 ? shared : latestIndex((p) => p[id] != null, id);
     const totalReturn = i < 0 ? null : points[i][id];
+    const asOf = i < 0 ? null : points[i].date;
+    const indexDays = asOf ? daysBetween(measuredFrom, asOf) + 1 : 0;
+    const benchmarkPath = i < 0 ? null : drawdown(points, id, first, i);
+    const covered = shared < 0 ? [] : underperformance(points.slice(0, shared + 1), id);
+    intervals.push(...covered);
+    if (hasQuarter && benchmarkPath) benchmarkDrawdowns[id] = benchmarkPath.series;
     versus[id] = {
       totalReturn,
-      annualised: annualise(totalReturn, measuredDays),
-      maxDrawdown: i < 0 ? null : (drawdown(points, id, first, i)?.depth ?? null),
+      annualised: annualise(totalReturn, indexDays),
+      maxDrawdown: benchmarkPath?.depth ?? null,
       gap: shared >= 0 ? points[shared].gaps[id] : null,
       portfolioReturn: shared >= 0 ? points[shared].portfolio : null,
-      asOf: i < 0 ? null : points[i].date,
-      longestUnderperformance: longest(intervals.filter((r) => r.id === id)),
+      asOf,
+      longestUnderperformance: longest(covered),
     };
   }
   // A break in the return chain can prevent a time-weighted return while both
@@ -495,7 +503,9 @@ export function summarizePeriod(context, { to, period, from }) {
     twr: twrValue,
     annualised: annualise(twrValue, measuredDays),
     drawdown: path && { depth: path.depth, peak: path.peak, trough: path.trough, recovery: path.recovery },
-    drawdownSeries: path && range.from <= quarter ? path.series : null,
+    hasQuarter,
+    drawdownSeries: path && hasQuarter ? path.series : null,
+    benchmarkDrawdowns,
     benchmarks: versus,
     points,
     commonStart,

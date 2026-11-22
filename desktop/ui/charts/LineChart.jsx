@@ -1,4 +1,4 @@
-import React, { useId, useState } from "react";
+import React, { useId, useRef, useState } from "react";
 import { area, curveLinear, curveStepAfter, line } from "d3-shape";
 import { lineLayout } from "./lineLayout.js";
 import { useWidth } from "./useWidth.js";
@@ -18,6 +18,7 @@ const identity = (v) => String(v);
  * markers: [{ index, value, label?, color? }] dots with a label.
  * zero, lo, hi, labels, padRight: see lineLayout.
  * formatAxis(v), formatValue(v, series), formatDate(date): text formatting.
+ * onSelect(date), onZoom(from, to): optional observation and range selection.
  * width / hoverIndex: fixed values for static rendering and tests.
  */
 export function LineChart({
@@ -38,10 +39,15 @@ export function LineChart({
   formatDate = identity,
   hoverIndex,
   ariaLabel,
+  onSelect,
+  onZoom,
 }) {
   const [ref, measured] = useWidth();
   const width = fixedWidth ?? measured;
   const [hover, setHover] = useState(null);
+  const [drag, setDrag] = useState(null);
+  const dragStart = useRef(null);
+  const interactive = Boolean(dates?.length && (onSelect || onZoom));
   const id = useId().replace(/:/g, "");
   const shown = hoverIndex ?? hover;
 
@@ -101,14 +107,63 @@ export function LineChart({
       );
     });
 
-    const onMove = (event) => {
+    const indexAt = (event) => {
       const box = event.currentTarget.getBoundingClientRect();
-      setHover(l.nearestIndex(event.clientX - box.left));
+      return l.nearestIndex(event.clientX - box.left);
+    };
+    const onMove = (event) => {
+      const index = indexAt(event);
+      setHover(index);
+      if (dragStart.current?.pointerId === event.pointerId && onZoom)
+        setDrag([dragStart.current.index, index]);
+    };
+    const startDrag = (event) => {
+      if (!event.isPrimary || event.button !== 0) return;
+      const index = indexAt(event);
+      dragStart.current = { pointerId: event.pointerId, index, x: event.clientX };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    };
+    const finishDrag = (event) => {
+      const start = dragStart.current;
+      if (!start || start.pointerId !== event.pointerId) return;
+      const index = indexAt(event);
+      dragStart.current = null;
+      setDrag(null);
+      if (onZoom && start.index !== index && Math.abs(event.clientX - start.x) >= 4)
+        onZoom(dates[Math.min(index, start.index)], dates[Math.max(index, start.index)]);
+      else onSelect?.(dates[index]);
+    };
+    const onKeyDown = (event) => {
+      const index = shown ?? l.count - 1;
+      if (event.key === "ArrowLeft") setHover(Math.max(0, index - 1));
+      else if (event.key === "ArrowRight") setHover(Math.min(l.count - 1, index + 1));
+      else if (event.key === "Enter" && onSelect) onSelect(dates[index]);
+      else if (event.key === "Escape") setHover(null);
+      else return;
+      event.preventDefault();
     };
 
     const hx = shown != null && shown < l.count ? x(shown) : null;
     svg = (
-      <svg width={width} height={height} role="img" aria-label={ariaLabel} onPointerMove={onMove} onPointerLeave={() => setHover(null)}>
+      <svg
+        width={width}
+        height={height}
+        role="img"
+        aria-label={ariaLabel}
+        tabIndex={interactive ? 0 : undefined}
+        className={interactive ? "ch-selectable" : undefined}
+        onPointerMove={onMove}
+        onPointerLeave={() => { if (!dragStart.current) setHover(null); }}
+        onPointerDown={interactive ? startDrag : undefined}
+        onPointerUp={interactive ? finishDrag : undefined}
+        onPointerCancel={interactive ? () => {
+          dragStart.current = null;
+          setDrag(null);
+          setHover(null);
+        } : undefined}
+        onKeyDown={interactive ? onKeyDown : undefined}
+        onBlur={interactive ? () => setHover(null) : undefined}
+      >
         {defs.length > 0 && <defs>{defs}</defs>}
         {l.ticks.map((t) => (
           <g key={t.value}>
@@ -140,6 +195,15 @@ export function LineChart({
             </g>
           );
         })}
+        {drag && (
+          <rect
+            className="ch-selection"
+            x={x(Math.min(...drag))}
+            y={plot.top}
+            width={Math.abs(x(drag[0]) - x(drag[1]))}
+            height={plot.bottom - plot.top}
+          />
+        )}
         {fills}
         {series.map((s, i) => (
           <path
@@ -182,7 +246,7 @@ export function LineChart({
       </svg>
     );
 
-    if (hx != null) {
+    if (hx != null && !drag) {
       const flip = hx > (plot.left + plot.right) / 2;
       const valueText = formatValue ?? ((v) => formatAxis(v));
       tip = (
