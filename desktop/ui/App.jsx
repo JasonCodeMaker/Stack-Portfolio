@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  ChartNoAxesCombined,
   CheckCircle2,
   ChevronDown,
   Database,
@@ -78,7 +77,11 @@ function Welcome({ home, run, enter, onClose }) {
             )}
           </section>
           <section className="card" aria-label="示例组合">
-            <ChartNoAxesCombined size={24} strokeWidth={1.8} />
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 3v18h18" />
+              <path d="m7 15 4-5 3 3 5-7" />
+            </svg>
             <h2>
               示例组合 <span className="demo">示例</span>
             </h2>

@@ -237,10 +237,8 @@
   align-content: start;
   justify-items: start;
 }
-.wc .card h2 {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.wc .card h2 .demo {
+  vertical-align: 2px;
 }
 .wc p {
   color: var(--l2);
