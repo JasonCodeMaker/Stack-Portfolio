@@ -4,7 +4,9 @@
 //   period: preset, from/to: a custom range (from the review) or null }
 import { day, periodPresets, resolvePeriod } from "../periods.js";
 
-export const defaultFilters = Object.freeze({ ids: null, date: "", period: "ytd", from: null, to: null });
+export const periodLabels = { mtd: "本月", "3m": "近 3 个月", ytd: "今年以来", "1y": "近一年", all: "全部" };
+
+export const defaultFilters =Object.freeze({ ids: null, date: "", period: "ytd", from: null, to: null });
 
 const isDay = (value) => {
   try {

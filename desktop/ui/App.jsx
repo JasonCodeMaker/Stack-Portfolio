@@ -5,11 +5,9 @@ import {
   ArrowUpRight,
   ChartNoAxesCombined,
   CheckCircle2,
-  ChevronDown,
   Database,
   Layers3,
   RefreshCw,
-  Wallet,
   X,
 } from "lucide-react";
 import { api, Modal } from "./common";
@@ -20,6 +18,8 @@ import { Imports } from "./Imports";
 import { Allocation } from "./Allocation";
 import { Settings } from "./Settings";
 import { BookBackups } from "./BookBackups";
+import { AccountScope, AsOf, ValuationDate } from "./FilterControls";
+import { dashboardQuery, defaultFilters, rememberedFilters, restoreFilters } from "./filters.js";
 import "./design.css";
 import "./styles.css";
 function Welcome({ home, run, enter, onClose }) {
@@ -149,6 +149,22 @@ function Welcome({ home, run, enter, onClose }) {
     </div>
   );
 }
+// The account scope and period are remembered across restarts (spec §2.3); storage may be unavailable.
+const filtersKey = "stock-portfolio.filters.v1";
+function savedFilters() {
+  try {
+    return restoreFilters(JSON.parse(localStorage.getItem(filtersKey)));
+  } catch {
+    return defaultFilters;
+  }
+}
+function saveFilters(filters) {
+  try {
+    localStorage.setItem(filtersKey, JSON.stringify(rememberedFilters(filters)));
+  } catch {}
+}
+const analysisPages = ["overview", "performance", "allocation", "holdings"];
+
 function Application() {
   const [home, setHome] = useState(null),
     [welcome, setWelcome] = useState(false),
@@ -156,17 +172,16 @@ function Application() {
     [mode, setMode] = useState(null),
     [page, setPage] = useState("overview"),
     [initial, setInitial] = useState({});
-  const [options, setOptions] = useState({ ids: undefined, period: "1m", date: "" }),
+  const [filters, setFilters] = useState(savedFilters),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
-    [scope, setScope] = useState(null),
     [fatal, setFatal] = useState("");
-  const opts = useRef(options),
+  const opts = useRef(filters),
     seq = useRef(0),
     busyDepth = useRef(0);
-  const refresh = useCallback(async (newOptions = opts.current) => {
+  const refresh = useCallback(async (next = opts.current) => {
     const id = ++seq.current,
-      output = await api.dashboard(newOptions);
+      output = await api.dashboard(dashboardQuery(next));
     if (id === seq.current) setD(output);
   }, []);
   const workspace = useCallback(async () => {
@@ -209,18 +224,20 @@ function Application() {
   async function enter(method) {
     await run(async () => {
       await api[method]();
-      const next = { period: "1m", date: "", ids: undefined };
-      opts.current = next;
-      setOptions(next);
+      // Another book starts on the default filters.
+      opts.current = defaultFilters;
+      setFilters(defaultFilters);
+      saveFilters(defaultFilters);
       setInitial({});
       setPage("overview");
       await workspace();
     }, false);
   }
-  function change(patch) {
-    const next = { ...opts.current, ...patch };
+  function changeFilters(next) {
+    if (JSON.stringify(next) === JSON.stringify(opts.current)) return;
     opts.current = next;
-    setOptions(next);
+    setFilters(next);
+    saveFilters(next);
     run(() => refresh(next), false);
   }
   function onPage(id, init = {}) {
@@ -271,14 +288,8 @@ function Application() {
       .then((changed) => changed && reload())
       .catch(() => {});
   }, [page]);
-  const active = d?.accounts.filter((a) => a.active) || [],
-    accountLabel = !d
-      ? ""
-      : d.selected.length === active.length
-        ? "全部账户"
-        : d.selected.length === 1
-          ? active.find((a) => a.id === d.selected[0])?.name
-          : "自选账户";
+  const active = d?.accounts.filter((a) => a.active) || [];
+  const analysis = analysisPages.includes(page);
   const banners = (
     <>
       {busy && (
@@ -325,31 +336,20 @@ function Application() {
         onPage={onPage}
         ledger={{ demo: mode === "demo", accounts: active.length }}
         onLedger={showHome}
+        titleExtra={analysis && <AsOf filters={filters} onChange={changeFilters} />}
         filters={
-          ["overview", "holdings", "allocation"].includes(page) && (
+          analysis && (
             <>
-              <button className="btn" onClick={() => setScope([...d.selected])}>
-                <Wallet size={15} />
-                {accountLabel}
-                <ChevronDown size={13} />
-              </button>
-              <label className="date-filter">
-                <span>估值日</span>
-                <input
-                  className="btn"
-                  aria-label="估值日期"
-                  type="date"
-                  max={new Date().toLocaleDateString("en-CA")}
-                  value={options.date || d.date}
-                  onChange={(e) => e.target.value && change({ date: e.target.value })}
-                />
-              </label>
+              <AccountScope filters={filters} accounts={active} selected={d.selected} onChange={changeFilters} />
+              <ValuationDate filters={filters} value={d.date} onChange={changeFilters} />
             </>
           )
         }
       >
-        {page === "performance" && <Performance initial={initial} d={d} mode={mode} run={run} reload={reload} />}
-        {page === "overview" && <Overview d={d} run={run} onPage={onPage} onPeriod={(period) => change({ period })} />}
+        {page === "performance" && (
+          <Performance d={d} mode={mode} run={run} reload={reload} filters={filters} onFilters={changeFilters} />
+        )}
+        {page === "overview" && <Overview d={d} run={run} onPage={onPage} filters={filters} onFilters={changeFilters} />}
         {page === "holdings" && (
           <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} onPage={onPage} />
         )}
@@ -379,46 +379,6 @@ function Application() {
           />
         )}
       </Shell>
-      {scope && (
-        <Modal title="账户范围" close={() => setScope(null)}>
-          {active.map((a) => (
-            <label className="check" key={a.id}>
-              <input
-                type="checkbox"
-                checked={scope.includes(a.id)}
-                onChange={(ev) =>
-                  setScope(ev.target.checked ? [...scope, a.id] : scope.filter((id) => id !== a.id))
-                }
-              />
-              {a.name}
-            </label>
-          ))}
-          <div className="actions">
-            <button onClick={() => setScope(active.map((a) => a.id))}>全选</button>
-            <button
-              className="primary"
-              disabled={!scope.length}
-              onClick={() =>
-                run(async () => {
-                  await api.allocationSettings({
-                    ...d.settings,
-                    selectionInitialized: true,
-                    selectedAccountIds: scope,
-                    acknowledgedAccountIds: active.map((a) => a.id),
-                  });
-                  const next = { ...opts.current, ids: scope };
-                  opts.current = next;
-                  setOptions(next);
-                  setScope(null);
-                  await refresh(next);
-                }, false)
-              }
-            >
-              应用到组合
-            </button>
-          </div>
-        </Modal>
-      )}
       {banners}
     </>
   );

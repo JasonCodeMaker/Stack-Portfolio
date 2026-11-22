@@ -20,14 +20,10 @@ import {
 import { HoldingEditor } from "./HoldingEditor";
 import { Detail, useRowKeys } from "./Shell";
 import { TimeChart, seriesColors } from "./Chart";
+import { PeriodControl } from "./FilterControls";
+import { isCustom, periodLabels } from "./filters.js";
 
-export const periods = [
-  ["1m", "近 1 月"],
-  ["3m", "近 3 月"],
-  ["ytd", "今年"],
-  ["all", "全部"],
-];
-const periodName = (id) => periods.find(([k]) => k === id)?.[1] || "期间";
+const periodName = (filters) => (isCustom(filters) ? "期间" : periodLabels[filters.period]);
 // Securities by value, then cash.
 const byValue = (a, b) =>
   (a.type === "cash") - (b.type === "cash") || (b.audValue ?? -Infinity) - (a.audValue ?? -Infinity);
@@ -172,12 +168,12 @@ const lifetimeColumns = [
   { label: "累计盈亏", cell: (r) => <Delta amount={r.lifetime?.gain} /> },
 ];
 
-export function Overview({ d, run, onPage, onPeriod }) {
+export function Overview({ d, run, onPage, filters, onFilters }) {
   const [detail, setDetail] = useState(null);
   const [repair, setRepair] = useState(null);
   const period = d.result.period,
     life = d.result.lifetime,
-    span = periodName(d.period);
+    span = periodName(filters);
   const account = detail?.account && d.byAccount.find((a) => a.id === detail.account);
   const go = (page, init) => {
     setDetail(null);
@@ -187,7 +183,8 @@ export function Overview({ d, run, onPage, onPeriod }) {
   const brokerValued = d.byAccount.some(a => a.valuationSource);
   const pending = securities.filter((g) => g.gain == null);
   const selectedGroup = securities.find((g) => g.key === detail?.key);
-  const openPeriod = () => go("performance", { ids: d.selected, from: d.start, to: d.date });
+  // The review shares the account scope and the period.
+  const openPeriod = () => go("performance");
   const groupRows = (group) => d.rows.filter((r) => group.rowIds.includes(r.id));
   const need = (r) =>
     r.price == null ? ["price", "补报价"] : r.fx == null ? ["fx", "补汇率"] : ["cost", "补成本"];
@@ -200,6 +197,12 @@ export function Overview({ d, run, onPage, onPeriod }) {
   }
   return (
     <>
+      <PeriodControl
+        filters={filters}
+        range={{ from: d.start, to: d.end ?? d.date }}
+        valuationDate={d.date}
+        onChange={onFilters}
+      />
       <section className="overview-totals" aria-label="当前资产与账面盈亏">
         <button
           className="metric hero-metric"
@@ -319,7 +322,7 @@ export function Overview({ d, run, onPage, onPeriod }) {
         </details>
       )}
       <div className="dashboard-grid">
-        <Card title="历史表现" action={<Tabs items={periods} value={d.period} onChange={onPeriod} />}>
+        <Card title="历史表现">
           <div className="history-results">
             <button onClick={openPeriod} aria-label={span + "盈亏 " + signedAud(period?.gain) + "，进入复盘"}>
               <span>
@@ -337,7 +340,7 @@ export function Overview({ d, run, onPage, onPeriod }) {
           <Trend d={d} />
           <div className="actions">
             <span className="muted">
-              {d.start} 至 {d.date}
+              {d.start} 至 {d.end ?? d.date}
             </span>
             <button className="text-btn" onClick={() => setDetail({ kind: "period" })}>
               查看期间计算
@@ -479,7 +482,7 @@ export function Overview({ d, run, onPage, onPeriod }) {
       {detail?.kind === "period" && (
         <Modal wide title={span + "盈亏 · " + signedAud(period?.gain)} close={() => setDetail(null)}>
           <p className="muted">
-            {d.start} 至 {d.date}。盈亏 = 期末资产 − 期初资产 − 期间净入金，按每日收盘估值。
+            {d.start} 至 {d.end ?? d.date}。盈亏 = 期末资产 − 期初资产 − 期间净入金，按每日收盘估值。
             {d.fromOpening &&
               "所选账户自 " + d.start + " 起才有记录，此前资产为零，此后转入的资金都计入期间净入金。"}
           </p>

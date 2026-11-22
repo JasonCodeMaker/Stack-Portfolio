@@ -29,13 +29,14 @@ async function verifyReview(p) {
   await p.getByRole("button", { name: "收益差", exact: true }).click();
   await p.getByRole("heading", { name: "组合相对指数的收益差" }).waitFor();
   await moveTo(.22); await p.mouse.down(); await moveTo(.68); await p.mouse.up();
-  await p.waitForFunction(() => document.querySelector("[aria-label='复盘起点']")?.value > "2026-09-30");
-  await p.getByRole("button", { name: /IBKR、Webull Australia/ }).click();
+  await p.waitForFunction(() => document.querySelector("[aria-label='期间起点']")?.value > "2026-09-30");
+  // The review uses the page head's account scope.
+  await p.locator(".header-tools").getByRole("button", { name: "账户范围 · 全部账户" }).click();
   await p.getByRole("dialog").getByLabel("Webull Australia").uncheck();
-  await p.getByRole("button", { name: "应用账户" }).click();
-  await p.getByLabel("复盘起点").fill("2026-10-16");
-  await p.getByLabel("复盘终点").fill("2026-10-22");
-  await p.getByRole("button", { name: "应用区间" }).click();
+  await p.getByRole("dialog").getByRole("button", { name: "应用", exact: true }).click();
+  await p.getByLabel("期间起点").fill("2026-10-16");
+  await p.getByLabel("期间终点").fill("2026-10-22");
+  await p.waitForFunction(() => document.querySelector("[aria-label='期间终点']")?.value === "2026-10-22");
   await p.getByText("查看每日数据",{exact:true}).click();
   await p.getByRole("button",{name:"2026-10-16",exact:true}).click();
   await p.getByRole("button", { name: "当日流水" }).click();
@@ -50,9 +51,13 @@ async function verifyReview(p) {
   await p.getByRole("button", { name: "全部", exact: true }).click();
   await p.getByRole("button", { name: /重开区间/ }).click();
   await p.locator(".review-changed").first().waitFor();
-  assert.equal(await p.getByLabel("复盘起点").inputValue(), "2026-10-16");
-  assert.equal(await p.getByLabel("复盘终点").inputValue(), "2026-10-22");
-  assert.ok(await p.getByRole("button", { name: "IBKR", exact: true }).isVisible());
+  assert.equal(await p.getByLabel("期间起点").inputValue(), "2026-10-16");
+  assert.equal(await p.getByLabel("期间终点").inputValue(), "2026-10-22");
+  await p.locator(".header-tools").getByRole("button", { name: "账户范围 · IBKR" }).click();
+  // Back to all accounts for the rest of the run.
+  await p.getByRole("dialog").getByRole("button", { name: "全部账户", exact: true }).click();
+  await p.getByRole("dialog").getByRole("button", { name: "应用", exact: true }).click();
+  await p.locator(".header-tools").getByRole("button", { name: "账户范围 · 全部账户" }).waitFor();
 }
 (async () => {
   let app;
@@ -127,15 +132,15 @@ async function verifyReview(p) {
     await p.getByRole("dialog").getByLabel(/目标占总资产/).fill("45");
     await p.getByRole("button", { name: "保存目标" }).click();
     await p.getByRole("button",{name:"IVV · 编辑目标",exact:true}).waitFor();
-    await p.getByRole("button",{name:"全部账户",exact:true}).click();
+    await p.getByRole("button",{name:"账户范围 · 全部账户",exact:true}).click();
     await p.getByRole("dialog").getByLabel("Webull Australia").uncheck();
-    await p.getByRole("button",{name:"应用到组合"}).click();
+    await p.getByRole("button",{name:"应用",exact:true}).click();
     const target = p.locator(".target-row").filter({has:p.getByRole("button",{name:"IVV · 设定目标",exact:true})});
     await target.getByText("全部账户目标 45.0%", {exact:true}).waitFor();
     assert.match(await target.innerText(),/未设当前范围目标/);
-    await p.locator(".header-tools").getByRole("button",{name:"IBKR",exact:true}).click();
+    await p.locator(".header-tools").getByRole("button",{name:"账户范围 · IBKR",exact:true}).click();
     await p.getByRole("dialog").getByLabel("Webull Australia").check();
-    await p.getByRole("button",{name:"应用到组合"}).click();
+    await p.getByRole("button",{name:"应用",exact:true}).click();
     await p.getByRole("button",{name:"IVV · 编辑目标",exact:true}).waitFor();
     await p.getByRole("button", { name: "导入与对账", exact: true }).click();
     assert.equal(await p.getByRole("button",{name:"两家一起",exact:true}).getAttribute("aria-pressed"),"true");
@@ -159,11 +164,12 @@ async function verifyReview(p) {
     await p.getByLabel("已核对期间资金流水及所有币种余额").check();
     await p.getByRole("button", { name: "完成对账并查看总览" }).click();
     await p.getByText("A$128,400.00", { exact: true }).waitFor();
-    await p.getByRole("button", { name: /^近 1 月盈亏 \+A\$3,200\.00/ }).waitFor();
-    await p.getByRole("button", { name: /^近 1 月盈亏/ }).click();
+    await p.getByRole("group",{name:"期间"}).getByRole("button",{name:"本月",exact:true}).click();
+    await p.getByRole("button", { name: /^本月盈亏 \+A\$3,200\.00/ }).waitFor();
+    await p.getByRole("button", { name: /^本月盈亏/ }).click();
     await p.getByRole("heading",{name:"这段时间的盈亏来自哪里"}).waitFor();
-    assert.equal(await p.getByLabel("复盘起点").inputValue(),"2026-10-01");
-    assert.equal(await p.getByLabel("复盘终点").inputValue(),"2026-10-30");
+    // The review shares the period chosen on the overview.
+    await p.getByRole("group",{name:"期间"}).getByText("2026-10-01 至 2026-10-30 · 30 天").waitFor();
     assert.match(await p.getByRole("row").filter({hasText:"组合期间盈亏"}).innerText(),/3,200/);
     await p.getByRole("button",{name:"总览",exact:true}).click();
     await p.getByRole("button",{name:"查看期间计算",exact:true}).click();

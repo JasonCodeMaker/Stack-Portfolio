@@ -242,6 +242,54 @@ a.lnk {
   padding: 0;
 }
 
+/* ---------- Global filters (FilterControls.jsx) ---------- */
+.date-pick {
+  position: relative;
+  cursor: pointer;
+}
+.date-pick input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.period-row .period-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.period-row input[type="date"].btn {
+  width: 136px;
+}
+.range-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 2px 0 10px;
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--l1);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.range-chip button {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--l2);
+  font: inherit;
+  cursor: pointer;
+}
+.range-chip button:hover {
+  background: var(--surface);
+  color: var(--l1);
+}
+
 /* ---------- Panels ---------- */
 .card {
   background: var(--surface);

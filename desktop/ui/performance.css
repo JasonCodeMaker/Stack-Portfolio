@@ -1,17 +1,9 @@
-.review-filters,
-.review-filters form,
 .review-readout,
 .review-readout span {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-.review-filters .tabs {
-  margin-left: auto;
-}
-.review-filters input {
-  font-variant-numeric: tabular-nums;
 }
 .review-status {
   display: flex;
@@ -242,9 +234,6 @@
   font-size: 13px;
 }
 @media (max-width: 1080px) {
-  .review-filters .tabs {
-    margin-left: 0;
-  }
   .review-metric {
     padding: 14px;
   }
