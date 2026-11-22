@@ -1,13 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  ArrowRight,
-  ArrowUpRight,
   ChartNoAxesCombined,
   CheckCircle2,
   ChevronDown,
   Database,
-  Layers3,
   RefreshCw,
   Wallet,
   X,
@@ -22,6 +19,7 @@ import { Settings } from "./Settings";
 import { BookBackups } from "./BookBackups";
 import "./design.css";
 import "./styles.css";
+import "./settings.css";
 function Welcome({ home, run, enter, onClose }) {
   const [preview, setPreview] = useState(null),
     [source, setSource] = useState(home.sources[0]?.id ?? "file");
@@ -31,35 +29,34 @@ function Welcome({ home, run, enter, onClose }) {
       if (s) setPreview(s);
     }, false);
   }
+  // Spec §4.7: no app shell and no filters; the two cards sit side by side, stacked below 900.
   return (
     <div className="welcome">
+      <div className="wel">
       <header>
         <Mark />
-        <strong>Stock Portfolio</strong>
+        Stock Portfolio
       </header>
       <main>
         <div className="intro">
-          <div className="intro-icon">
-            <Layers3 size={35} />
-          </div>
           <h1>打开投资账本</h1>
           <p>在本机管理持仓、资金流水和资产配置。</p>
         </div>
-        <div className="welcome-cards">
-          <section className="welcome-main">
-            <Database size={24} />
+        <div className="wc">
+          <section className="card hero" aria-label={home.hasReal ? "正式账本" : "迁入 Wealthfolio 账本"}>
+            <Database size={24} strokeWidth={1.8} />
             <h2>{home.hasReal ? "正式账本" : "迁入 Wealthfolio 账本"}</h2>
             {home.hasReal ? (
               <>
                 <p>继续查看已保存的投资记录、配置目标和对账结果。</p>
-                <button className="primary" onClick={() => enter("openReal")}>
-                  打开正式账本 <ArrowRight size={16} />
+                <button className="btn" onClick={() => enter("openReal")}>
+                  打开正式账本 →
                 </button>
               </>
             ) : (
               <>
                 <p>带入账户、交易历史、手工更正、ETF 数据及配置设置。可在迁入前核对记录数。</p>
-                <label className="field">
+                <label className="f">
                   <span>数据来源</span>
                   <select
                     aria-label="迁移数据来源"
@@ -74,30 +71,32 @@ function Welcome({ home, run, enter, onClose }) {
                     <option value="file">选择其他账本或 .db 备份…</option>
                   </select>
                 </label>
-                <button className="primary" onClick={migrate}>
-                  预览迁移 <ArrowRight size={16} />
+                <button className="btn" onClick={migrate}>
+                  预览迁移 →
                 </button>
               </>
             )}
           </section>
-          <section>
-            <ChartNoAxesCombined size={24} />
-            <h2>示例组合</h2>
+          <section className="card" aria-label="示例组合">
+            <ChartNoAxesCombined size={24} strokeWidth={1.8} />
+            <h2>
+              示例组合 <span className="demo">示例</span>
+            </h2>
             <p>用 IBKR 和 Webull 的虚构记录试用总览、持仓、ETF 穿透和月结对账。</p>
-            <button onClick={() => enter("openDemo")}>
-              打开示例账本 <ArrowUpRight size={15} />
+            <button className="btn" onClick={() => enter("openDemo")}>
+              打开示例账本 ↗
             </button>
           </section>
         </div>
-        <div className="welcome-foot">
+        <div className="wf">
           {!home.hasReal && (
-            <button className="text-btn" onClick={() => enter("newBook")}>
+            <button className="lnk" onClick={() => enter("newBook")}>
               建立空白账本
             </button>
           )}
           <BookBackups welcome run={run} restored={(m) => enter(m === "demo" ? "openDemo" : "openReal")} />
           {onClose && (
-            <button className="text-btn" onClick={onClose}>
+            <button className="lnk" onClick={onClose}>
               返回当前账本
             </button>
           )}
@@ -132,7 +131,7 @@ function Welcome({ home, run, enter, onClose }) {
             )}
             <p className="muted">迁入完成后，请在「设置」中重新连接券商。</p>
             <button
-              className="primary"
+              className="btn pri"
               onClick={() =>
                 run(async () => {
                   await api.migrationCommit({ token: preview.token });
@@ -146,6 +145,7 @@ function Welcome({ home, run, enter, onClose }) {
           </Modal>
         )}
       </main>
+      </div>
     </div>
   );
 }
