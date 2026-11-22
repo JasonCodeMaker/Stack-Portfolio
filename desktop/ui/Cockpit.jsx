@@ -18,6 +18,7 @@ import {
   Empty,
 } from "./common";
 import { HoldingEditor } from "./HoldingEditor";
+import { Detail, useRowKeys } from "./Shell";
 import { TimeChart, seriesColors } from "./Chart";
 
 export const periods = [
@@ -495,7 +496,7 @@ export function Overview({ d, run, onPage, onPeriod }) {
             ]}
           />
           <p className="muted">
-            「策略复盘」使用剔除出入金影响的时间加权收益率，便于和指数比较，数值会与这里不同。
+            「收益复盘」使用剔除出入金影响的时间加权收益率，便于和指数比较，数值会与这里不同。
           </p>
           <div className="actions">
             <button className="primary" onClick={() => go("performance")}>
@@ -568,6 +569,14 @@ export function Holdings({ d, initial = {}, onPage, run }) {
       if (x == null || y == null) return (x == null) - (y == null);
       return (typeof x === "string" ? x.localeCompare(y) : x - y) * (sort.down ? -1 : 1);
     });
+  const listed = d.byAccount
+    .filter((a) => !account || a.id === account)
+    .flatMap((a) => [
+      ...rows.filter((r) => r.accountId === a.id && r.type !== "cash"),
+      ...rows.filter((r) => r.accountId === a.id && r.type === "cash"),
+    ])
+    .map((r) => r.id);
+  const rowKeys = useRowKeys(listed, selectedId, select);
   const securities = scoped.filter((r) => r.type !== "cash");
   const cash = account ? d.byAccount.find((a) => a.id === account)?.itemizedCash : d.itemizedCash;
   const cost = securities.length ? holdingTotal(securities, "costAud") : null;
@@ -656,7 +665,8 @@ export function Holdings({ d, initial = {}, onPage, run }) {
         {!rows.length ? (
           <Empty>没有符合条件的持仓或现金。</Empty>
         ) : (
-          d.byAccount
+          <div onKeyDown={rowKeys}>
+          {d.byAccount
             .filter((a) => !account || a.id === account)
             .map((a) => {
               const holdings = rows.filter((r) => r.accountId === a.id && r.type !== "cash");
@@ -681,7 +691,12 @@ export function Holdings({ d, initial = {}, onPage, run }) {
                       ]}
                     >
                       {holdings.map((r) => (
-                        <tr key={r.id} data-holding-row={r.id}>
+                        <tr
+                          key={r.id}
+                          data-holding-row={r.id}
+                          data-row={r.id}
+                          className={selectedId === r.id ? "sel" : undefined}
+                        >
                           <td>
                             <button className="ticker" onClick={() => select(r.id)}>
                               {r.ticker}
@@ -736,7 +751,7 @@ export function Holdings({ d, initial = {}, onPage, run }) {
                     <div className="cash-balances">
                       <b>{a.cash == null ? "现金余额 · 待核对" : "现金余额"}</b>
                       {balances.map((r) => (
-                        <button key={r.id} className="text-btn" onClick={() => select(r.id)}>
+                        <button key={r.id} data-row={r.id} className="text-btn" onClick={() => select(r.id)}>
                           {r.localCurrency} {fmt(r.quantity, 2)}
                           {r.localCurrency !== "AUD" && "（" + aud(r.audValue, 2) + "）"}
                         </button>
@@ -745,14 +760,15 @@ export function Holdings({ d, initial = {}, onPage, run }) {
                   )}
                 </section>
               );
-            })
+            })}
+          </div>
         )}
       </Card>
       {row && (
-        <Modal
+        <Detail
           wide
           title={row.ticker + " · " + row.accountName}
-          close={() => {
+          onClose={() => {
             select(null);
             setEvents(null);
           }}
@@ -865,7 +881,7 @@ export function Holdings({ d, initial = {}, onPage, run }) {
           ) : (
             <p className="muted">当前持仓来自期初余额或历史持仓快照，没有逐笔流水。</p>
           )}
-        </Modal>
+        </Detail>
       )}
       {repair && (
         <HoldingEditor

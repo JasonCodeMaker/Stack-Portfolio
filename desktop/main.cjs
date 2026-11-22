@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net, screen, nativeTheme } = require("electron");
 const path = require("node:path"),
   fs = require("node:fs"),
   { pathToFileURL } = require("node:url");
@@ -790,7 +790,8 @@ function createWindow() {
     ...bounds,
     minWidth: minimumSize.width,
     minHeight: minimumSize.height,
-    backgroundColor: "#f4f5ee",
+    // Page background of the design tokens, light or dark with the system.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0E1410" : "#ECF1EA",
     show: false,
     webPreferences: {
       ...(process.env.STACK_PORTFOLIO_HEADLESS ? {offscreen:true, backgroundThrottling:false} : {}),
