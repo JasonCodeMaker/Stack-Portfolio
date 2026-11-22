@@ -1,8 +1,9 @@
 /* 导入与对账 (spec §4.5, prototype maintenance/index.html variant A). Scoped to .imp, which also wraps the
    inspector and dialog contents of the page. */
+/* The tab row keeps 12 below it, as a .row does. */
 .imp-page {
   display: grid;
-  gap: var(--gap);
+  gap: 12px;
   min-width: 0;
 }
 .imp .stack {
@@ -87,7 +88,7 @@
   margin-top: 14px;
   padding-top: 12px;
 }
-.imp details > summary {
+.imp .card details > summary {
   cursor: pointer;
   color: var(--accent);
   font-size: 13px;
@@ -146,6 +147,7 @@
   display: grid;
   gap: 2px;
   justify-items: start;
+  justify-content: stretch;
   align-content: start;
   text-align: left;
   padding: 14px;
@@ -167,7 +169,6 @@
 .imp .opts small {
   color: var(--l2);
   font-size: 12px;
-  line-height: 16px;
 }
 .imp .opts svg {
   color: var(--accent);

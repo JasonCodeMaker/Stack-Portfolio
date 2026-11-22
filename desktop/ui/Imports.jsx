@@ -726,7 +726,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     <td>{num(r.expected)}</td>
                     <td>{num(r.actual)}</td>
                     <td className={r.delta == null || Number(r.delta) !== 0 ? "warn" : "up"}>
-                      {r.delta == null ? "待核对" : num(r.delta)}
+                      {r.delta == null ? "待核对" : num(r.delta).replace(/^-/, "−")}
                     </td>
                     <td>
                       <button
