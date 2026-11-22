@@ -1,0 +1,22 @@
+/* Shared chart primitives. Colours come only from the design tokens (spec §1.1, §1.2). */
+
+/* ---------- Line chart ---------- */
+.ch-line{position:relative;width:100%;min-width:0}
+.ch-line svg{display:block;overflow:visible;font-variant-numeric:tabular-nums}
+.ch-grid{stroke:var(--sep)}
+.ch-zero{stroke:var(--l3)}
+.ch-axis{font-size:11px;fill:var(--l3)}
+.ch-series{fill:none;stroke-linejoin:round}
+.ch-end{font-size:12px;fill:var(--l2)}
+.ch-end.strong{font-weight:600;fill:var(--l1)}
+.ch-note{font-size:11px}
+.ch-note.strong{font-weight:600}
+.ch-cross{stroke:var(--l3);stroke-dasharray:3 3}
+.ch-dot{stroke:var(--surface);stroke-width:1.5}
+.ch-tip{position:absolute;z-index:2;pointer-events:none;min-width:140px;padding:8px 10px;border:1px solid var(--sep);border-radius:6px;background:var(--surface);color:var(--l1);font-size:12px;line-height:16px;white-space:nowrap}
+.ch-tip-date{color:var(--l2);margin-bottom:4px}
+.ch-tip-row{display:flex;align-items:center;gap:6px}
+.ch-tip-row+.ch-tip-row{margin-top:2px}
+.ch-tip-row i{width:10px;height:3px;border-radius:2px;flex:none}
+.ch-tip-row span{color:var(--l2)}
+.ch-tip-row b{margin-left:auto;padding-left:12px;font-weight:600}
