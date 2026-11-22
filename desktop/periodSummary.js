@@ -172,6 +172,7 @@ export function valuation(context, date, detail = false) {
       if (detail)
         rows.push({
           account: account.name,
+          accountId: account.id,
           assetId: r.assetId,
           key: r.identityKey || r.assetId,
           symbol: r.ticker,
@@ -242,7 +243,7 @@ export function dayFlows(context, date) {
 // its end. A chain may open on an empty portfolio, the eve of its first record.
 // With no external flows, endpoint NAVs suffice to link across a missing close.
 // The intervening point and any drawdown which depends on it remain unavailable.
-function timeWeightedSeries() {
+export function timeWeightedSeries() {
   let wealth = null,
     previous = null,
     gap = false;
