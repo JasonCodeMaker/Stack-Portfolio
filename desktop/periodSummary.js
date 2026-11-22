@@ -73,7 +73,7 @@ export function annualise(totalReturn, days) {
   return totalReturn == null || !(days >= 365) ? null : (1 + totalReturn) ** (365 / days) - 1;
 }
 
-// The ledger with daily closes only, plus the benchmark index levels.
+// The ledger with daily closes only, plus the benchmark index levels, without open checks.
 export function closeBook(db) {
   const book = loadBook(db);
   // Live broker observations and intraday quotes cannot supply a daily close.
@@ -87,6 +87,8 @@ export function closeBook(db) {
       id,
       values.filter((v) => !["Webull AU", "券商账户页面（手工核对）"].includes(v.source)),
     );
+  // An open reconciliation check stays on the imports page; analysis values the local ledger.
+  book.issues = [];
   const levels = db.prepare("SELECT day,level,source FROM sp_benchmark_levels WHERE series=? ORDER BY day");
   book.benchmarks = benchmarks.map((b) => {
     const rows = levels.all(b.id);
@@ -191,13 +193,11 @@ export function valuation(context, date, detail = false) {
     flowsKnown = false;
   }
   function include(account, pos) {
+    // An open reconciliation check, or a broker snapshot that disagrees with the ledger, is a
+    // defect to fix on the imports page; the day is still valued from the local ledger (spec §5.1).
     const s = accountSnapshot(book, account, date, {}, pos);
-    const unresolved = book.issues.find((i) => i.account === account.id && i.day <= date);
-    if (unresolved) ledgerGap(account.name + " · " + unresolved.reason);
     for (const warning of pos.warnings) ledgerGap(warning);
     if (s.total == null) for (const warning of s.warnings) problems.add(warning);
-    if (s.warnings.includes("券商快照与本地现金或持仓数量有差异"))
-      ledgerGap(account.name + " · 券商估值待对账");
     let cashKnownHere = true;
     for (const r of s.rows) {
       const asset = book.assets.get(r.assetId);
@@ -233,7 +233,7 @@ export function valuation(context, date, detail = false) {
     }
     if (s.total == null) problems.add(account.name + " · 估值不完整");
     else total = total.plus(s.total);
-    if (s.cash == null || unresolved || (!cashKnownHere && !s.valuationSource)) cashKnown = false;
+    if (s.cash == null || (!cashKnownHere && !s.valuationSource)) cashKnown = false;
     else cash = cash.plus(s.cash);
   }
   for (const { account, first, needsOpening, archivedBalance, history } of accounts) {

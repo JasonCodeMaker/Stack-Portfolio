@@ -128,6 +128,24 @@ test("on a valuation date after the latest close, both pages measure through the
   }
 });
 
+test("an open reconciliation check leaves the period valued from the local ledger on both pages", async (t) => {
+  const { db } = book(t);
+  await seedDemo(db);
+  const ids = ["demo-ibkr", "demo-webull"];
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM sp_checks").get().n, 1);
+  const date = new Date().toISOString().slice(0, 10);
+  const overview = await dashboard(db, { ids, date, period: "mtd" });
+  const review = portfolioReview(db, { ids, to: date, period: "mtd" });
+  for (const value of [overview.pnl, overview.flows, overview.summary.twr, overview.summary.drawdown?.depth])
+    assert.equal(typeof value, "number");
+  assert.deepEqual(
+    [overview.pnl, overview.flows, overview.summary.twr],
+    [review.money.gain, review.money.flows, review.metrics.portfolio.totalReturn],
+  );
+  // The check itself remains for the imports page.
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM sp_checks").get().n, 1);
+});
+
 test("a security that has never had a quote leaves the period unmeasured", (t) => {
   const { db, account } = book(t);
   const a = account("A", "2025-02-03", 100);

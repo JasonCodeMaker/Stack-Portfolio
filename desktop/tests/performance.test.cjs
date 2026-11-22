@@ -144,8 +144,9 @@ test("a missing close or FX rate mid-period carries the latest known one forward
   // A deposit on a day with a carried close keeps the chain: 140 on 140, then 150 on 140.
   event(wednesday, "DEPOSIT", 30);
   near(review(monday, thursday).metrics.portfolio.totalReturn, 1.1 * (150 / 140) - 1);
+  // An open reconciliation check is left to the imports page; the review values the ledger.
   db.prepare("INSERT INTO sp_checks VALUES(?,?,?)").run(account, tuesday, "待核对");
-  assert.equal(review(monday, tuesday).metrics.portfolio.totalReturn, null);
+  near(review(monday, tuesday).metrics.portfolio.totalReturn, 0.1);
 });
 
 test("weekends and US exchange holidays carry closes but use current FX; results stand as of the last session with its own close", (t) => {
