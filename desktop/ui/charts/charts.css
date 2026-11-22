@@ -48,6 +48,8 @@
 /* ---------- Treemap ---------- */
 .ch-tmap{position:relative;width:100%;min-width:0;border-radius:6px;overflow:hidden}
 .ch-tm{position:absolute;overflow:hidden;border-radius:2px;display:flex;flex-direction:column;justify-content:center;align-items:center;line-height:1.2;white-space:nowrap;cursor:pointer;transition:filter .12s}
+.ch-tm:is(button){border:0;padding:0;gap:0}
+.ch-tm:focus-visible{outline-offset:-2px;z-index:1}
 .ch-tm:hover{filter:brightness(1.1)}
 .ch-tm.on{outline:2px solid var(--l1);outline-offset:-2px;z-index:1}
 .ch-tm b{font-weight:650;letter-spacing:-.01em}

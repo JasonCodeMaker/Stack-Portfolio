@@ -21,14 +21,17 @@ function sanitize(value: unknown): RebalanceSettings {
   return { schemaVersion: 1, tolerance, targets };
 }
 
-export async function loadRebalanceSettings(ctx: StorageContext): Promise<RebalanceSettings> {
-  const raw = await ctx.api.storage.get(REBALANCE_STORAGE_KEY);
+export function parseRebalanceSettings(raw: string | null): RebalanceSettings {
   if (!raw) return { ...DEFAULT_REBALANCE_SETTINGS };
   try {
     return sanitize(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_REBALANCE_SETTINGS };
   }
+}
+
+export async function loadRebalanceSettings(ctx: StorageContext): Promise<RebalanceSettings> {
+  return parseRebalanceSettings(await ctx.api.storage.get(REBALANCE_STORAGE_KEY));
 }
 
 export async function saveRebalanceSettings(ctx: StorageContext, settings: RebalanceSettings): Promise<void> {

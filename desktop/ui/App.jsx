@@ -357,7 +357,7 @@ function Application() {
           <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} onPage={onPage} />
         )}
         {page === "allocation" && (
-          <Allocation key={JSON.stringify(initial)} d={d} run={run} initial={initial} />
+          <Allocation d={d} run={run} onPage={onPage} />
         )}
         {page === "imports" && (
           <Imports

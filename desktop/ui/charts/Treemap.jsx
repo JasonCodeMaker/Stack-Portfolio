@@ -26,6 +26,7 @@ export function Treemap({ groups, height, width: fixedWidth, color, title, selec
   const width = fixedWidth ?? measured;
   const layout = width > 0 ? treemapLayout(groups, width, height) : { groups: [], tiles: [] };
   const box = (t) => ({ left: t.x, top: t.y, width: t.w, height: t.h });
+  const Tile = onSelect ? "button" : "div";
 
   return (
     <div ref={ref} className="ch-tmap" style={{ height }}>
@@ -43,8 +44,11 @@ export function Treemap({ groups, height, width: fixedWidth, color, title, selec
             {t.text}
           </div>
         ) : (
-          <div
+          <Tile
             key={t.item.id}
+            type={onSelect ? "button" : undefined}
+            aria-label={onSelect ? title?.(t.item) || t.item.label : undefined}
+            aria-pressed={onSelect ? t.item.id === selected : undefined}
             className={t.item.id === selected ? "ch-tm on" : "ch-tm"}
             style={{ ...box(t), ...color(t.item) }}
             title={title?.(t.item)}
@@ -56,7 +60,7 @@ export function Treemap({ groups, height, width: fixedWidth, color, title, selec
                 {line}
               </span>
             ))}
-          </div>
+          </Tile>
         ),
       )}
     </div>

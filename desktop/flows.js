@@ -1,11 +1,13 @@
 import Decimal from "decimal.js";
-import { ALLOCATION, BROKER, day, dayOf, hasTable, json, preference } from "./ledger.js";
-import { normalizeHolding, buildPortfolioModel } from "./allocation/domain/portfolio";
+import { ALLOCATION, BROKER, day, dayOf, hasTable, json, preference, putPref } from "./ledger.js";
+import { normalizeHolding, buildPortfolioModel, securityType } from "./allocation/domain/portfolio";
+import { canonicalIdentity } from "./allocation/domain/identifiers";
+import { CASH_TARGET, STOCKS_TARGET, fullTargetTotal } from "./allocation/domain/rebalance";
 import { buildExposureModel } from "./allocation/domain/exposure";
 import { EtfCache } from "./allocation/storage/etfCache";
 import { getSnapshotStatus } from "./allocation/domain/etf";
 import { loadAllocationSettings, reconcileAccountSelection } from "./allocation/storage/settings";
-import { loadRebalanceSettings } from "./allocation/storage/rebalance";
+import { parseRebalanceSettings, REBALANCE_STORAGE_KEY } from "./allocation/storage/rebalance";
 import { closingDay, marketFor, shiftDay } from "./marketDays.js";
 import { closeBook, reviewContext, summarizePeriod } from "./periodSummary.js";
 import { cumulativeIncome, gainBreakdown } from "./gainBreakdown.js";
@@ -319,6 +321,18 @@ export function positionHistory(book, acc, reported = true) {
     return reported ? includeReported(book, acc.id, date, result) : result;
   };
 }
+function securityProfile(asset) {
+  return {
+    id: asset.id,
+    symbol: asset.symbol,
+    name: asset.name,
+    mic: asset.mic,
+    instrumentKey: asset.instrument_key,
+    instrumentType: asset.kind,
+    currency: asset.currency,
+    metadata: json(asset.metadata, {}),
+  };
+}
 function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, date)) {
   const rows = [],
     warnings = [...new Set(pos.warnings)];
@@ -365,18 +379,7 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
       complete[kind] = false;
       warnings.push((asset?.symbol || ccy) + (q ? " 缺少汇率" : " 缺少报价"));
     }
-    const profile = asset
-      ? {
-          id: asset.id,
-          symbol: asset.symbol,
-          name: asset.name,
-          mic: asset.mic,
-          instrumentKey: asset.instrument_key,
-          instrumentType: asset.kind,
-          currency: ccy,
-          metadata: json(asset.metadata, {}),
-        }
-      : null;
+    const profile = asset ? securityProfile(asset) : null;
     const item = normalizeHolding(
       {
         id: acc.id + ":" + assetId,
@@ -755,11 +758,83 @@ export function storageContext(db, scope) {
     },
   };
 }
+const GROUPED_TARGETS = "targets.grouped.v1";
+const INSTRUMENT_TARGETS = "targets.instruments.v1";
+const LEGACY_TARGET_SCOPE = "targets.legacy-account-scope";
+const selectedTargetScope = (ids) => ALLOCATION + ".targets." + JSON.stringify([...new Set(ids)].sort());
+
 export function targetScope(db, ids) {
   const active = db.prepare("SELECT id FROM sp_accounts WHERE active=1").all().map((a) => a.id);
-  const selected = [...new Set(ids ?? active)].sort();
+  const selected = [...new Set(ids ?? active)];
   if (!selected.every((id) => active.includes(id))) throw Error("配置目标的账户范围已改变。");
-  return selected.length === active.length ? ALLOCATION : ALLOCATION + ".targets." + JSON.stringify(selected);
+  return selected.length === active.length ? ALLOCATION : selectedTargetScope(selected);
+}
+
+function targetListings(assets, overrides) {
+  return new Map(assets.map((asset) => {
+    const profile = securityProfile(asset);
+    const key = canonicalIdentity(profile).key ?? "asset:" + asset.id;
+    const type = overrides[asset.id] || overrides[asset.instrument_key] || securityType(profile);
+    return [key, { key, type, label: asset.symbol, name: asset.name, assetId: asset.id }];
+  }));
+}
+
+function isGroupedTarget(key, listings) {
+  return key === CASH_TARGET || key === STOCKS_TARGET || listings.get(key)?.type === "etf";
+}
+
+export async function saveGroupedTargets(db, { ids, tolerance, targets }) {
+  if (!Array.isArray(ids) || !ids.length) throw Error("请选择设置目标的账户。");
+  const values = targets && typeof targets === "object" && !Array.isArray(targets) ? Object.values(targets) : [];
+  if (!Number.isFinite(tolerance) || tolerance < 0.005 || tolerance > 0.25)
+    throw Error("允许偏离须为 0.5 至 25 个百分点。");
+  if (values.some((v) => !Number.isFinite(v) || v < 0 || v > 1) || !fullTargetTotal(values))
+    throw Error("各项目的目标须介于 0% 和 100%，且合计必须等于 100%。");
+
+  const { typeOverrides } = await loadAllocationSettings(storageContext(db, ALLOCATION));
+  targetScope(db, ids);
+  const listings = targetListings(db.prepare("SELECT * FROM sp_assets").all(), typeOverrides);
+  if (Object.keys(targets).some((key) => !isGroupedTarget(key, listings)))
+    throw Error("只能为每只 ETF、个股合计及现金设置目标。");
+
+  putPref(db, selectedTargetScope(ids), GROUPED_TARGETS, JSON.stringify({ schemaVersion: 1, tolerance, targets }));
+  return true;
+}
+
+function readTargets(db, ids, activeIds, listings) {
+  const scope = selectedTargetScope(ids);
+  const all = selectedTargetScope(activeIds);
+  let legacyScope = preference(db, ALLOCATION, LEGACY_TARGET_SCOPE);
+  if (!legacyScope && activeIds.length && (preference(db, ALLOCATION, REBALANCE_STORAGE_KEY) || preference(db, ALLOCATION, INSTRUMENT_TARGETS))) {
+    // The old all-accounts record has no account list, so bind it to the set at first read.
+    putPref(db, ALLOCATION, LEGACY_TARGET_SCOPE, all);
+    legacyScope = all;
+  }
+  const legacy = (at) => ({
+    strategy: parseRebalanceSettings(preference(db, at, REBALANCE_STORAGE_KEY)),
+    instruments: parseRebalanceSettings(preference(db, at, INSTRUMENT_TARGETS)),
+  });
+  const globalTargets = legacy(ALLOCATION);
+  const local = legacy(scope);
+  const hasLocal = Object.keys(local.strategy.targets).length || Object.keys(local.instruments.targets).length;
+  const { strategy, instruments } = !hasLocal && scope === legacyScope ? globalTargets : local;
+  const stored = preference(db, scope, GROUPED_TARGETS);
+  const current = stored ? parseRebalanceSettings(stored) : strategy;
+  const grouped = Object.fromEntries(Object.entries(current.targets).filter(([key]) => isGroupedTarget(key, listings)));
+  const targets = { ...current, targets: grouped };
+  if (!stored && !Object.keys(grouped).length && Object.keys(instruments.targets).length) {
+    targets.tolerance = instruments.tolerance;
+    for (const [key, value] of Object.entries(instruments.targets)) {
+      const type = listings.get(key)?.type;
+      const group = key.startsWith("cash:") ? CASH_TARGET : type === "stock" ? STOCKS_TARGET : key;
+      if (isGroupedTarget(group, listings)) grouped[group] = (grouped[group] ?? 0) + value;
+    }
+  }
+  const targetEtfs = Object.keys(grouped).flatMap((key) => {
+    const listing = listings.get(key);
+    return listing?.type === "etf" ? [listing] : [];
+  });
+  return { targets, targetEtfs, instrumentTargets: instruments, globalTargets: scope === all ? null : globalTargets };
 }
 function asStored(book, accounts, date) {
   let total = D(0);
@@ -887,12 +962,8 @@ export async function dashboard(db, options = {}) {
   portfolio.incomplete ||= portfolio.totalAud == null;
   for (const row of portfolio.instrumentAllocation)
     row.weight = portfolio.totalAud > 0 && !unpriced.has(row.key) ? row.valueAud / portfolio.totalAud : null;
-  const scope = targetScope(db, ids);
-  const readTargets = async (scope) => ({
-    strategy: await loadRebalanceSettings(storageContext(db, scope)),
-    instruments: json(preference(db, scope, "targets.instruments.v1"), { schemaVersion: 1, tolerance: 0.05, targets: {} }),
-  });
-  const targets = await readTargets(scope);
+  const listings = targetListings([...book.assets.values()], settings.typeOverrides);
+  const targetSettings = readTargets(db, ids, active.map((a) => a.id), listings);
   const records = await new EtfCache(ctx).list(),
     snapshots = new Map(records.filter((r) => r.snapshot).map((r) => [r.etfKey, r.snapshot]));
   const exposure = buildExposureModel({
@@ -977,9 +1048,7 @@ export async function dashboard(db, options = {}) {
     exposure,
     settings,
     etfData,
-    targets: targets.strategy,
-    instrumentTargets: targets.instruments,
-    globalTargets: scope === ALLOCATION ? null : await readTargets(ALLOCATION),
+    ...targetSettings,
     listings: [...book.assets.values()].map(({ id, symbol, name, currency, mic, kind }) => ({
       id,
       symbol,

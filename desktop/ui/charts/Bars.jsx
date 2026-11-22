@@ -71,9 +71,9 @@ export function BulletBar({ actual, target, tolerance, max, title }) {
     at = (v) => (v / max) * 100;
   return (
     <span className="ch-bullet" title={title}>
-      <i className="ch-bullet-band" style={{ left: p(at(from)), width: p(at(to - from)) }} />
-      <i className="ch-bullet-act" style={{ width: p(Math.min(100, at(actual))) }} />
-      <i className="ch-bullet-tick" style={{ left: p(at(target)) }} />
+      {target != null && <i className="ch-bullet-band" style={{ left: p(at(from)), width: p(at(to - from)) }} />}
+      {actual != null && <i className="ch-bullet-act" style={{ width: p(Math.max(0, Math.min(100, at(actual)))) }} />}
+      {target != null && <i className="ch-bullet-tick" style={{ left: p(at(target)) }} />}
     </span>
   );
 }
