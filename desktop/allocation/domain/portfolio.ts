@@ -42,7 +42,7 @@ function profileMetadata(metadata: Record<string, unknown> | undefined): Record<
   return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : metadata ?? {};
 }
 
-function normalizeSectorName(value: string | undefined): string | undefined {
+export function normalizeSectorName(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const aliases: Record<string, string> = {
     technology: "Information Technology",
@@ -57,13 +57,7 @@ function normalizeSectorName(value: string | undefined): string | undefined {
   return aliases[value.trim().toLowerCase()] ?? value.trim();
 }
 
-function classifyAsset(
-  holding: HoldingInput,
-  profile: AssetProfile | null,
-  override?: AssetType,
-): AssetType {
-  if (override) return override;
-  if (holding.holdingType === "cash") return "cash";
+export function securityType(profile: AssetProfile | null): AssetType {
 
   const instrumentType = profile?.instrumentType?.toUpperCase() ?? "";
   const metadataType = ["quoteType", "instrumentType", "assetType", "type"]
@@ -93,7 +87,7 @@ export function normalizeHolding(
   const nativeValue = asFiniteNumber(holding.marketValue?.local);
   const hostBaseValue = asFiniteNumber(holding.marketValue?.base);
   const quantity = holding.quantity;
-  const type = classifyAsset(holding, profile, typeOverride);
+  const type = typeOverride ?? (holding.holdingType === "cash" ? "cash" : securityType(profile));
   const conversion = convertToAud(nativeValue, localCurrency, fxQuote);
   const audValue = conversion.audValue ?? hostBaseValue;
   const ticker = profile?.symbol || holding.instrument?.symbol || (type === "cash" ? localCurrency : "Unmapped");

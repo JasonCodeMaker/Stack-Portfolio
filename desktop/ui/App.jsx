@@ -350,14 +350,14 @@ function Application() {
         }
       >
         {page === "performance" && (
-          <Performance d={d} mode={mode} run={run} reload={reload} filters={filters} onFilters={changeFilters} />
+          <Performance d={d} mode={mode} run={run} reload={reload} filters={filters} onFilters={changeFilters} onPage={onPage} />
         )}
         {page === "overview" && <Overview d={d} run={run} onPage={onPage} filters={filters} onFilters={changeFilters} />}
         {page === "holdings" && (
           <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} historical={Boolean(filters.date)} />
         )}
         {page === "allocation" && (
-          <Allocation key={JSON.stringify(initial)} d={d} run={run} initial={initial} />
+          <Allocation d={d} run={run} onPage={onPage} />
         )}
         {page === "imports" && (
           <Imports

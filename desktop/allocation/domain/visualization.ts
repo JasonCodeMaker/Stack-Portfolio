@@ -1,4 +1,5 @@
 import type { AllocationRow, AssetType, ExposureModel, ExposureRow, NormalizedHolding } from "./types";
+import { CASH_TARGET, OTHER_INVESTMENTS, STOCKS_TARGET } from "./rebalance";
 
 /** Value held in funds whose holdings could not be loaded, so it cannot be classified. */
 export const NOT_LOOKED_THROUGH = "Not looked through";
@@ -47,9 +48,9 @@ function aggregate(
 export function buildCoreSatelliteAllocation(allocation: AllocationRow[], totalAud: number | null): AllocationRow[] {
   const etfs = allocation.filter((row) => row.type === "etf").map((row) => ({ ...row, weight: toWeight(row.valueAud, totalAud) }));
   const groups: Array<{ key: string; label: string; type: AssetType; types: AssetType[] }> = [
-    { key: "strategy:individual-stocks", label: "Individual stocks", type: "stock", types: ["stock"] },
-    { key: "strategy:cash", label: "Cash", type: "cash", types: ["cash"] },
-    { key: "strategy:other", label: "Other investments", type: "other", types: ["fixed-income", "derivative", "other", "unknown"] },
+    { key: STOCKS_TARGET, label: "Individual stocks", type: "stock", types: ["stock"] },
+    { key: CASH_TARGET, label: "Cash", type: "cash", types: ["cash"] },
+    { key: OTHER_INVESTMENTS, label: "Other investments", type: "other", types: ["fixed-income", "derivative", "other", "unknown"] },
   ];
   const grouped = groups.flatMap((group): AllocationRow[] => {
     const valueAud = allocation.filter((row) => group.types.includes(row.type)).reduce((sum, row) => sum + row.valueAud, 0);

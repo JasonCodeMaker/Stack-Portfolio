@@ -34,15 +34,16 @@ function snapshot(etfKey: string, holdings: EtfHoldingsSnapshot["holdings"]): Et
 describe("exposure engine", () => {
   it("merges direct NVDA with ETF-derived NVDA and conserves value", () => {
     const model = buildExposureModel({
-      holdings: [direct("nvda-direct", "NVDA", 1500), etf("ivv", "IVV", "XNAS:IVV", 3000), etf("ndq", "NDQ", "XASX:NDQ", 1000)],
+      holdings: [{ ...direct("nvda-direct", "NVDA", 1500), sector: "Information Technology" }, etf("ivv", "IVV", "XNAS:IVV", 3000), etf("ndq", "NDQ", "XASX:NDQ", 1000)],
       snapshots: new Map([
-        ["XNAS:IVV", snapshot("XNAS:IVV", [{ symbol: "NVDA", name: "NVIDIA", mic: "XNAS", weight: 0.08, underlyingType: "stock" }])],
+        ["XNAS:IVV", snapshot("XNAS:IVV", [{ symbol: "NVDA", name: "NVIDIA", mic: "XNAS", weight: 0.08, sector: "Technology", underlyingType: "stock" }])],
         ["XASX:NDQ", snapshot("XASX:NDQ", [{ symbol: "NVDA", name: "NVIDIA", mic: "XNAS", weight: 0.084, underlyingType: "stock" }])],
       ]),
       totalAud: 5500,
     });
     const nvda = model.rows.find((row) => row.key === "listing:US:NVDA");
     expect(nvda?.totalAud).toBeCloseTo(1500 + 240 + 84);
+    expect(nvda?.sector).toBe("Information Technology");
     expect(model.valueConservationDelta).toBeCloseTo(0);
     expect(model.coverage).toBeCloseTo((1500 + 240 + 84) / 5500);
   });
@@ -111,7 +112,7 @@ describe("exposure engine", () => {
       { symbol: "GOOGL", name: "ALPHABET CLASS A", mic: "XNAS", weight: 0.06, underlyingType: "stock" },
       { symbol: "GOOG", name: "ALPHABET CLASS C", mic: "XNAS", weight: 0.05, underlyingType: "stock" },
       ...Array.from({ length: 9 }, (_, index) => ({ symbol: `S${index + 1}`, name: `Stock ${index + 1}`, mic: "XNAS", weight: 0.09, underlyingType: "stock" as const })),
-      { symbol: "S10", name: "Stock 10", mic: "XNAS", weight: 0.08, underlyingType: "stock" },
+      { symbol: "S10", name: "Stock 10", mic: "XNAS", weight: 0.08, sector: "Technology", underlyingType: "stock" },
     ]);
     const model = buildExposureModel({
       holdings: [direct("googl-direct", "GOOGL", 50), etf("ivv", "IVV", "XNAS:IVV", 1000)],
