@@ -37,6 +37,11 @@ async function seedFullYear(app, root) {
         for (const id of ["SP500TR", "XNDX"])
           db.prepare("INSERT INTO sp_benchmark_levels VALUES(?,?,?,?)").run(id, day, day === start ? 100 : 103, "test level");
       }
+      const archived = createAccount(db, "Archived fixture");
+      const { portfolioReview, saveReviewNote } = require("./out/performance.cjs");
+      const archivedReview = portfolioReview(db, { ids: [account, archived], from: "2025-01-01", to: end });
+      saveReviewNote(db, archivedReview, "Archived account review");
+      db.prepare("UPDATE sp_accounts SET active=0 WHERE id=?").run(archived);
       for (const flag of ["demo", "demo-costs-v1", "demo-review-v1"]) putPref(db, "app", flag, "1");
     } finally {
       db.close();
@@ -91,15 +96,33 @@ async function seedFullYear(app, root) {
     const daily = page.getByRole("dialog", { name: "逐日数据", exact: true });
     await daily.getByRole("columnheader", { name: "当日收益" }).waitFor();
     await daily.getByRole("columnheader", { name: "纳斯达克 100" }).waitFor();
-    await daily.getByRole("button", { name: "2026-10-30", exact: true }).click();
+    const lastDay = daily.getByRole("row", { name: /^2026-10-30/ });
+    assert.match(await lastDay.innerText(), /▲\s*\+\d+[.]\d+%/);
+    await lastDay.getByRole("button").focus();
+    await page.keyboard.press("ArrowDown");
+    const previousDay = daily.getByRole("button", { name: "2026-10-29", exact: true });
+    assert.ok(await previousDay.evaluate((button) => button === document.activeElement));
+    await lastDay.getByRole("cell").nth(1).click();
     await page.getByRole("dialog", { name: "2026-10-30 · 当日明细", exact: true }).waitFor();
     await page.keyboard.press("Escape");
 
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1920, 1080));
     await page.waitForFunction(() => document.querySelector(".pane").dataset.cols === "2");
+    await page.getByRole("button", { name: "逐日数据", exact: true }).click();
+    const dockedDaily = page.getByRole("complementary", { name: "逐日数据", exact: true });
+    await dockedDaily.getByRole("row", { name: /^2026-10-30/ }).getByRole("cell").nth(1).click();
+    await page.getByRole("complementary", { name: "2026-10-30 · 当日明细" }).getByLabel("观察日").waitFor();
+    await page.keyboard.press("ArrowDown");
+    const dockedDay = page.getByRole("complementary", { name: "2026-10-29 · 当日明细" });
+    assert.equal(await dockedDay.getByLabel("观察日").inputValue(), "2026-10-29");
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "数据来源与计算方法", exact: true }).click();
     const sources = page.getByRole("complementary", { name: "数据来源与计算方法", exact: true });
     await sources.getByText(/NASDAQXNDX|模拟总回报/).first().waitFor();
+    const sp500 = sources.getByText("标普 500", { exact: true }).locator("..");
+    const nasdaq = sources.getByText("纳斯达克 100", { exact: true }).locator("..");
+    assert.match(await sp500.innerText(), /区间最大回撤\s*▼\s*−0\.71%/);
+    assert.match(await nasdaq.innerText(), /区间最大回撤\s*▼\s*−1\.55%/);
     await page.waitForFunction(() => document.querySelector(".pane").dataset.cols === "1");
     await sources.getByRole("button", { name: "关闭" }).click();
     await page.waitForFunction(() => document.querySelector(".pane").dataset.cols === "2");
@@ -129,7 +152,8 @@ async function seedFullYear(app, root) {
     await annualNav.getByRole("button", { name: "收益复盘", exact: true }).click();
     await annual.getByRole("group", { name: "期间" }).getByRole("button", { name: "近一年" }).click();
     const summary = annual.getByRole("region", { name: "时间加权收益率", exact: true });
-    await summary.getByText(/年化 \+4\.55%/).waitFor();
+    await summary.getByText("+4.55%", { exact: true }).first().waitFor();
+    assert.match(await summary.innerText(), /年化\s*▲\s*\+4\.55%/);
     await annual.getByRole("group", { name: "主图视图" }).getByRole("button", { name: "回撤", exact: true }).click();
     await annual.getByRole("img", { name: "回撤曲线" }).getByText("标普 500").waitFor();
 
@@ -156,6 +180,27 @@ async function seedFullYear(app, root) {
     const customEnd = annual.getByLabel("期间终点");
     await customEnd.fill("2026-01-01");
     assert.equal(await customEnd.inputValue(), "2025-12-31");
+    await annual.getByRole("button", { name: "写笔记" }).click();
+    await annual.getByRole("textbox", { name: "这段时间做了什么，下次想验证什么？" }).fill("Saved range review");
+    await annual.getByRole("button", { name: "保存笔记与当前指标" }).click();
+
+    const valuationDate = annual.getByLabel("估值日");
+    await valuationDate.fill("2025-12-30");
+    await annual.getByText("正在查看 2025-12-30").waitFor();
+    await annual.getByRole("button", { name: /Saved range review/ }).click();
+    await annual.getByText("正在查看 2025-12-31").waitFor();
+    assert.equal(await valuationDate.inputValue(), "2025-12-31");
+    assert.equal(await annual.getByLabel("期间起点").inputValue(), "2025-01-01");
+    assert.equal(await customEnd.inputValue(), "2025-12-31");
+    const comparison = annual.getByRole("heading", { name: "记录时与当前重算" }).locator("..");
+    const ownReturn = comparison.getByRole("row", { name: /^我的组合 区间收益/ });
+    assert.match(await ownReturn.getByRole("cell").last().innerText(), /\+4\.55%/);
+
+    await annual.getByRole("button", { name: /Archived account review/ }).click();
+    await comparison.getByText("当前无法按此笔记原有的账户范围与期间重算。").waitFor();
+    assert.match(await ownReturn.getByRole("cell").nth(2).innerText(), /\+4\.55%/);
+    assert.equal(await ownReturn.getByRole("cell").last().innerText(), "—");
+    assert.equal(await valuationDate.inputValue(), "2025-12-31");
     console.log("Performance review verified: drawdown eligibility, benchmark selection, inspectors, contributions and Overview parity.");
   } finally {
     if (app) await app.close().catch(() => {});

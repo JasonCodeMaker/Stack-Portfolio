@@ -191,22 +191,6 @@ function selectedSecurity(d, selection) {
 }
 
 const historyLimit = 60;
-async function securityHistory(account, assetId, through, active) {
-  const limit = 200;
-  const matches = [];
-  for (let offset = 0; active() && matches.length < historyLimit; offset += limit) {
-    const events = await api.history({ account, text: assetId, limit, offset });
-    matches.push(...events.filter((e) =>
-      e.assetId === assetId &&
-      e.date?.slice(0, 10) <= through &&
-      !e.metadata?.supersededBy &&
-      !["DRAFT", "CANCELLED", "CANCELED", "VOID"].includes(String(e.status).toUpperCase()),
-    ));
-    if (events.length < limit) break;
-  }
-  return matches.slice(0, historyLimit);
-}
-
 function DetailHistory({ events, error, accounts }) {
   if (error) return <p className="cap warn" role="status">{error}</p>;
   if (events == null) return <p className="cap" role="status">正在读取流水…</p>;
@@ -253,10 +237,8 @@ function SecurityDetail({ d, security, day, onClose, openRepair }) {
   const { events, error } = history?.request === request ? history : {};
   useEffect(() => {
     let active = true;
-    const queries = d.selected.flatMap((account) => security.ids.map((id) => securityHistory(account, id, d.date, () => active)));
-    Promise.all(queries)
-      .then((results) => {
-        const events = results.flat().sort((a, b) => b.date.localeCompare(a.date)).slice(0, historyLimit);
+    api.history({ accountIds: d.selected, assetIds: security.ids, through: d.date, limit: historyLimit })
+      .then((events) => {
         if (active) setHistory({ request, events });
       })
       .catch((e) => { if (active) setHistory({ request, error: e.message }); });

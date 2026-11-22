@@ -85,6 +85,22 @@ test("sample reconciliation updates holdings, external cashflow and P&L exactly 
     restored.close();
   }
 });
+test("historical allocation keeps a fund pending until the date of its cached constituents", async (t) => {
+  const { db } = fixture(t);
+  await seedDemo(db);
+  const ids = ["demo-ibkr"];
+  const historical = await dashboard(db, { ids, date: "2026-10-16" });
+  const pending = historical.exposure.rows.find((row) => row.ticker === "IVV");
+
+  assert.equal(pending?.sources[0].kind, "opaque");
+  assert.equal(pending?.totalAud, 45_600);
+  assert.equal(historical.exposure.rows.find((row) => row.ticker === "AAPL").viaEtfsAud, 0);
+  assert.equal(historical.etfData[0].snapshot.asOfDate, "2026-10-30");
+
+  const dated = await dashboard(db, { ids, date: "2026-10-30" });
+  assert.equal(dated.exposure.rows.find((row) => row.ticker === "AAPL").viaEtfsAud.toFixed(2), "3255.00");
+});
+
 test("holdings, allocation and gains use the latest eligible quote, including in pre-fix books", async (t) => {
   const { db } = fixture(t);
   const { createAccount, resolveAsset, savePrice } = require("../out/ledger.cjs");
@@ -175,6 +191,8 @@ test("IBKR enriches a booked fill without changing its cash, uses separate execu
     positions:[{symbol:"XYZ",mic:"XNYS",currency:"USD",quantity:"2"}], source:"券商账户页面（手工核对）" });
   const reconciled = await view(ib);
   assert.deepEqual([reconciled.total, reconciled.securities, reconciled.itemizedTotal, reconciled.valuationDifference], [44,36.48,41.48,2.52]);
+  assert.deepEqual(reconciled.valuation, { cash: 5, total: 41.48 });
+  assert.equal(reconciled.portfolio.totalAud, 41.48);
   // A narrower export in a different base must preserve the verified historical AUD receipt.
   await run(xml(true).replace('baseCurrency="AUD"', 'baseCurrency="EUR"').replaceAll('fxRateToBase="1.5"', 'fxRateToBase="0.82"'), true);
   assert.equal(event().metadata.ibkrExecution.fxRateToBase, "1.5");

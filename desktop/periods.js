@@ -40,7 +40,7 @@ export function resolvePeriod({ to, period = "ytd", from, earliest }) {
   if (from) start = day(from);
   else if (period === "mtd") start = to.slice(0, 8) + "01";
   else if (period === "ytd") start = to.slice(0, 5) + "01-01";
-  else if (period === "all") start = earliest || to;
+  else if (period === "all") start = earliest && earliest <= to ? earliest : to;
   else if (monthPresets[period]) start = shiftDay(monthsBefore(to, monthPresets[period]), 1);
   else throw Error("无法识别的期间：" + period);
   if (start > to) throw Error("期间起点须早于或等于终点。");

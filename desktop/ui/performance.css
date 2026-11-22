@@ -1,5 +1,5 @@
 .review-readout,
-.review-readout span {
+.review-readout > span {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -63,17 +63,11 @@
   gap: 8px 20px;
   font-variant-numeric: tabular-nums;
 }
-.review-readout span {
+.review-readout > span {
   gap: 6px;
 }
 .review-readout b {
   color: var(--deep);
-}
-.review-readout b.gain {
-  color: var(--gain);
-}
-.review-readout b.loss {
-  color: var(--loss);
 }
 .review-method > summary {
   cursor: pointer;
@@ -100,6 +94,10 @@
 .review-feedback {
   font-size: 13px;
   margin: 8px 0;
+}
+.insp .review-daily .table-scroll {
+  max-height: 245px;
+  margin-bottom: 12px;
 }
 .review-daily th {
   white-space: normal;
@@ -170,7 +168,7 @@
   border-color: var(--l3);
   font-weight: 600;
 }
-.review-benchmarks i {
+.review-benchmarks button > i {
   width: 10px;
   height: 3px;
   border-radius: 2px;
