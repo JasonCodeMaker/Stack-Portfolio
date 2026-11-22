@@ -20,3 +20,23 @@
 .ch-tip-row i{width:10px;height:3px;border-radius:2px;flex:none}
 .ch-tip-row span{color:var(--l2)}
 .ch-tip-row b{margin-left:auto;padding-left:12px;font-weight:600}
+
+/* ---------- Inline bars ---------- */
+.ch-bar{position:relative;display:block;height:12px;min-width:0}
+.ch-bar i{position:absolute;top:0;left:0;height:100%;border-radius:2px}
+.ch-stack i:first-child{border-radius:2px 0 0 2px}
+.ch-stack i+i{border-radius:0 2px 2px 0}
+.ch-diverge{position:relative;display:block;height:28px;min-width:0}
+.ch-diverge u{position:absolute;top:0;bottom:0;width:1px;background:var(--l3)}
+.ch-diverge i{position:absolute;top:8px;height:12px;border-radius:2px}
+.ch-rank-row{display:grid;grid-template-columns:minmax(72px,120px) minmax(60px,1fr) 52px;gap:0 12px;align-items:center;min-height:34px;border-top:1px solid var(--sep);font-size:13px}
+.ch-rank-row.muted{color:var(--l2)}
+.ch-rank-row.click{cursor:pointer}
+.ch-rank-row.click:hover{background:var(--surface2)}
+.ch-rank-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ch-rank-value{text-align:right;white-space:nowrap}
+.ch-bullet{position:relative;display:block;height:10px;border-radius:5px;background:var(--surface2);margin:9px 0 7px}
+.ch-bullet i{position:absolute;display:block}
+.ch-bullet-band{top:0;bottom:0;background:color-mix(in srgb,var(--l3) 30%,transparent)}
+.ch-bullet-act{left:0;top:2px;bottom:2px;border-radius:3px;background:var(--s1)}
+.ch-bullet-tick{top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--l1)}
