@@ -51,6 +51,13 @@ describe("line chart layout", () => {
     expect(long.xLabels.map((t) => t.text)).toEqual(["24-03", "26-11"]);
   });
 
+  it("does not repeat a month name when two date labels fall in the same month", () => {
+    const l = lineLayout({ width: 900, height: 260, series: [{ name: "a", values: Array(120).fill(1) }], dates: days("2026-07-01", 120) });
+    const texts = l.xLabels.map((t) => t.text);
+    expect(texts[0]).toBe("7月");
+    expect(new Set(texts).size).toBe(texts.length);
+  });
+
   it("labels each line at its end and pushes overlapping labels 14px apart", () => {
     const l = lineLayout({
       width: 600,

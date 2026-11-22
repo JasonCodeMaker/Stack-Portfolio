@@ -70,7 +70,7 @@ export function lineLayout({ width, height, series, dates, zero = false, lo, hi,
         : Array.from({ length: count + 1 }, (_, k) => {
             const i = Math.round((k * (n - 1)) / count);
             return { x: x(i), text: label(dates[i]), anchor: k === 0 ? "start" : k === count ? "end" : "middle" };
-          });
+          }).filter((t, k, all) => k === 0 || t.text !== all[k - 1].text);
   }
 
   let endLabels = [];
