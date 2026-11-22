@@ -85,6 +85,80 @@ test("sample reconciliation updates holdings, external cashflow and P&L exactly 
     restored.close();
   }
 });
+test("holdings, allocation and gains use the latest eligible quote, including in pre-fix books", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, resolveAsset, savePrice } = require("../out/ledger.cjs");
+  const account = createAccount(db, "IBKR", "USD");
+  const asset = resolveAsset(db, { symbol: "ORCL", exchangeMic: "XNYS" }, "USD");
+  const trade = { account, type: "BUY", currency: "USD", symbol: "ORCL", mic: "XNYS" };
+  const friday = "2026-11-20", saturday = "2026-11-21";
+  addManual(db, { account, date: friday, type: "DEPOSIT", currency: "USD", amount: 2000, reference: "deposit" });
+  addManual(db, { ...trade, date: friday, price: 120, quantity: 8, reference: "first" });
+  const fill = { broker: "ibkr", brokerRecordId: "fill-2", date: saturday, activityType: "BUY",
+    currency: "USD", symbol: "ORCL", exchangeMic: "XNYS", unitPrice: 107, quantity: 2 };
+  await batch(db, account, "ibkr", { activities: [fill] }, "Flex", true);
+  savePrice(db, "FX:USD/AUD", friday, "1.5", "结单汇率");
+  savePrice(db, asset, friday, "101.19", "Yahoo Finance 日收盘", 12);
+  savePrice(db, asset, friday, "105", "Twelve Data", 25);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM sp_prices WHERE source='成交价'").get().n, 0);
+  // Earlier versions persisted every execution as a quote, even on non-market days.
+  savePrice(db, asset, saturday, "107", "成交价", 1);
+  savePrice(db, asset, "2026-11-23", "110", "手工报价", 40);
+  const view = (date) => dashboard(db, { ids: [account], date });
+  const d = await view(saturday);
+  const row = d.rows.find((r) => r.assetId === asset);
+  assert.deepEqual([row.price, row.quoteSource, row.priceUpdatedAt, row.rawQuantity],
+    ["101.19", "Yahoo Finance 日收盘", friday, "10"]);
+  assert.deepEqual([row.nativeValue, row.costLocal, row.gainLocal, row.gainAud], [1011.9, 1174, -162.1, -243.15]);
+  assert.equal(d.securities, 1517.85);
+  assert.equal(d.portfolio.instrumentAllocation.find((r) => r.label === "ORCL").valueAud, d.securities);
+  assert.equal((await view("2026-11-23")).rows.find((r) => r.assetId === asset).price, "110");
+
+  db.prepare("DELETE FROM sp_prices WHERE asset=? AND day=? AND source=?").run(asset, friday, "Yahoo Finance 日收盘");
+  assert.equal((await view(saturday)).rows.find((r) => r.assetId === asset).price, "105");
+  db.prepare("DELETE FROM sp_prices WHERE asset=? AND source=?").run(asset, "Twelve Data");
+  const missing = await view(saturday);
+  const unquoted = missing.rows.find((r) => r.assetId === asset);
+  assert.deepEqual([unquoted.price, unquoted.priceUpdatedAt, unquoted.nativeValue, unquoted.gainAud, missing.securities],
+    [null, null, null, undefined, null]);
+  assert.equal(unquoted.costLocal, 1174);
+});
+
+test("Flex repairs a verified cross-midnight date once without changing the fill or overwriting edits", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount } = require("../out/ledger.cjs");
+  const account = createAccount(db, "IBKR", "USD");
+  const xml = `<FlexStatement><Trades><Trade symbol="ORCL" currency="USD" assetCategory="STK"
+    listingExchange="NYSE" ibExecID="E1" tradeID="T1" buySell="BUY" quantity="2" tradePrice="107"
+    dateTime="20261121;021639" tradeDate="20261120" /></Trades></FlexStatement>`;
+  const report = detailedIbkr(xml);
+  const old = detailedIbkr(xml.replace('tradeDate="20261120"', ""));
+  const apply = (r, commit) => batch(db, account, "ibkr", r, "Flex", commit);
+  await apply(old, true);
+  const event = () => db.prepare("SELECT id,day,data FROM sp_events WHERE account=?").get(account);
+  const before = event();
+  const preview = await apply(report, false);
+  assert.deepEqual(preview.rows.map((r) => [r.status, r.edits?.map((e) => e.label)]), [["update", ["日期"]]]);
+  assert.equal(event().day, "2026-11-21");
+  const conflict = await apply(detailedIbkr(xml.replace('tradePrice="107"', 'tradePrice="207"')), false);
+  assert.equal(conflict.rows[0].status, "review");
+  assert.equal((await apply(report, true)).updated, 1);
+  assert.equal((await apply(report, true)).duplicate, 1);
+  assert.deepEqual([event().day, event().id], ["2026-11-20", before.id]);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM sp_corrections WHERE event=?").get(before.id).n, 1);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM sp_events").get().n, 1);
+  const corrected = JSON.parse(event().data);
+  assert.deepEqual([corrected.quantity, corrected.unitPrice], ["2", "107"]);
+  const other = createAccount(db, "Edited", "USD");
+  await batch(db, other, "ibkr", old, "Flex", true);
+  const edited = db.prepare("SELECT * FROM sp_events WHERE account=?").get(other);
+  amendEvent(db, { account: other, id: edited.id, prior: edited.data, date: edited.day,
+    reason: "Broker confirmation", quantity: "2", price: "108", fee: "0" });
+  await batch(db, other, "ibkr", report, "Flex", true);
+  const kept = db.prepare("SELECT day,data FROM sp_events WHERE id=?").get(edited.id);
+  assert.deepEqual([kept.day, JSON.parse(kept.data).unitPrice], ["2026-11-21", "108"]);
+});
+
 test("IBKR Flex preview, import and repeat preserve broker identity", async (t) => {
   const { db } = fixture(t);
   await seedDemo(db);
@@ -96,6 +170,19 @@ test("IBKR Flex preview, import and repeat preserve broker identity", async (t) 
   const d = await dashboard(db, { ids: ["demo-ibkr"] });
   assert.equal(d.total, 83700);
   assert.equal(compareStatement(db, { account: "demo-ibkr", ...r.statement }).ok, true);
+});
+
+test("average cost preserves reported fill order across midnight within a Flex trading day", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount } = require("../out/ledger.cjs");
+  const account = createAccount(db, "IBKR", "USD");
+  const trades = [
+    ["20261120;235500", "BUY", 2, 107], ["20261121;021639", "SELL", 1, 110], ["20261121;031500", "BUY", 1, 99],
+  ].map(([time, side, qty, price], i) => `<Trade symbol="ORCL" tradeID="T${i}" currency="USD" assetCategory="STK"
+    listingExchange="NYSE" dateTime="${time}" tradeDate="20261120" buySell="${side}" quantity="${qty}" tradePrice="${price}" />`);
+  await batch(db, account, "ibkr", detailedIbkr("<FlexStatement>" + trades.join("") + "</FlexStatement>"), "Flex", true);
+  const row = (await dashboard(db, { ids: [account], date: "2026-11-20" })).rows.find((r) => r.ticker === "ORCL");
+  assert.deepEqual([row.rawQuantity, row.averageCost, row.price], ["2", 103, null]);
 });
 test("an unknown CSV row and changed broker amount remain pending", async (t) => {
   const { db } = fixture(t);

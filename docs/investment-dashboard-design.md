@@ -1,6 +1,6 @@
-# Stack Portfolio 独立投资管理应用设计
+# Stock Portfolio 独立投资管理应用设计
 
-Stack Portfolio 是一款独立运行的个人投资看板。首版按单用户 Windows 桌面应用设计，使用本机 SQLite 账本，以 AUD 汇总 IBKR 和 Webull Australia 账户。导入、估值和看板都由应用自行处理，离线可查看已保存的数据和估值日期。
+Stock Portfolio 是一款独立运行的个人投资看板。首版按单用户 Windows 桌面应用设计，使用本机 SQLite 账本，以 AUD 汇总 IBKR 和 Webull Australia 账户。导入、估值和看板都由应用自行处理，离线可查看已保存的数据和估值日期。
 
 打开首页后，30 秒内看懂选中账户一共有多少钱、资金分布在哪里、最近赚亏多少，以及哪些数据需要核对。
 
@@ -37,7 +37,7 @@ Stack Portfolio 是一款独立运行的个人投资看板。首版按单用户 
 
 先打通股票、ETF 和 AUD／USD 现金的历史导入、估值、对账与看板。账本保存账户、期初余额、交易和资金流水，行情和汇率单独保存并按估值日期读取。应用提供本地备份及恢复。可复用现有 IBKR 文件解析和与宿主无关的配置、穿透计算，桌面应用直接读取自己的账本。
 
-正式 Windows 版包含原 Allocation 和 Broker Sync 的功能。配置分析支持公司及多层 ETF 穿透、贡献来源、行业和国家分布、目标权重与允许偏离，以及 ETF 成分维护。券商同步保留按需连接、预览、去重、更正和结单核对。数据迁移承接旧账本及设置，迁入后由 Stack Portfolio 独立维护。[账本归属决定](adr/0001-independent-portfolio-ledger.md)
+正式 Windows 版包含原 Allocation 和 Broker Sync 的功能。配置分析支持公司及多层 ETF 穿透、贡献来源、行业和国家分布、目标权重与允许偏离，以及 ETF 成分维护。券商同步保留按需连接、预览、去重、更正和结单核对。数据迁移承接旧账本及设置，迁入后由 Stock Portfolio 独立维护。[账本归属决定](adr/0001-independent-portfolio-ledger.md)
 
 ## 验收场景
 

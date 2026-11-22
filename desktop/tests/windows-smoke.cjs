@@ -13,6 +13,44 @@ const env = {
 };
 delete env.ELECTRON_RUN_AS_NODE;
 const packaged = process.argv[2];
+async function verifyReview(p) {
+  await p.getByRole("button", { name: "策略复盘", exact: true }).click();
+  const chart = p.getByRole("img", { name: /每日收益曲线/ });
+  await chart.waitFor();
+  assert.equal(await p.locator(".review-metric").count(), 3);
+  assert.match(await p.locator(".review-primary strong").innerText(), /%/);
+  // Each benchmark states whether the portfolio is ahead, and one tooltip reads every curve.
+  assert.match(await p.locator(".review-metric").nth(1).innerText(), /跑赢|跑输|持平/);
+  const box = await chart.boundingBox();
+  const moveTo = (fraction) => p.mouse.move(box.x + box.width * fraction, box.y + box.height / 2);
+  await moveTo(.5);
+  assert.match(await p.locator(".chart-tip").innerText(), /实盘组合[\s\S]*标普 500[\s\S]*相对纳斯达克 100/);
+  await p.getByRole("button", { name: "收益差", exact: true }).click();
+  await p.getByRole("heading", { name: "组合相对指数的收益差" }).waitFor();
+  await moveTo(.22); await p.mouse.down(); await moveTo(.68); await p.mouse.up();
+  await p.waitForFunction(() => document.querySelector("[aria-label='复盘起点']")?.value > "2026-09-30");
+  await p.getByRole("button", { name: /IBKR、Webull Australia/ }).click();
+  await p.getByRole("dialog").getByLabel("Webull Australia").uncheck();
+  await p.getByRole("button", { name: "应用账户" }).click();
+  await p.getByLabel("复盘起点").fill("2026-10-16");
+  await p.getByLabel("复盘终点").fill("2026-10-22");
+  await p.getByRole("button", { name: "应用区间" }).click();
+  await p.getByLabel("观察日").fill("2026-10-16");
+  await p.getByRole("button", { name: "当日流水" }).click();
+  await p.getByRole("row").filter({ hasText: "账户之间划转" }).waitFor();
+  await p.getByRole("button", { name: "写笔记" }).click();
+  await p.getByLabel("这段时间做了什么，下次想验证什么？").fill("观察留现金的影响");
+  await p.getByRole("button", { name: "保存笔记与当前指标" }).click();
+  await p.getByRole("heading", { name: "记录时与当前重算" }).waitFor();
+  // Revise only this isolated example ledger, then reopen the original view.
+  await p.evaluate(() => window.portfolio.savePrice({ assetId: "aapl", date: "2026-10-22", price: "212" }));
+  await p.getByRole("button", { name: "全部", exact: true }).click();
+  await p.getByRole("button", { name: /重开区间/ }).click();
+  await p.locator(".review-changed").first().waitFor();
+  assert.equal(await p.getByLabel("复盘起点").inputValue(), "2026-10-16");
+  assert.equal(await p.getByLabel("复盘终点").inputValue(), "2026-10-22");
+  assert.ok(await p.getByRole("button", { name: "IBKR", exact: true }).isVisible());
+}
 (async () => {
   let app;
   try {
@@ -29,9 +67,19 @@ const packaged = process.argv[2];
     p.on("pageerror", (e) => errors.push(e.message));
     await p.getByRole("button", { name: "打开示例账本" }).click();
     await p.getByRole("heading", { name: "总览", exact: true }).waitFor();
+    // Total assets opens onto what each account holds.
+    await p.getByRole("button", { name: /^总资产 A\$/ }).click();
+    const assets = p.getByRole("dialog");
+    await assets.getByRole("heading", { name: "Webull Australia" }).waitFor();
+    assert.match(await assets.innerText(), /IBKR[\s\S]*AAPL[\s\S]*USD 现金[\s\S]*A200/);
+    await p.getByRole("button", { name: "关闭", exact: true }).click();
+    const trend = await p.getByRole("img", { name: /每日走势/ }).boundingBox();
+    await p.mouse.move(trend.x + trend.width / 2, trend.y + trend.height / 2);
+    assert.match(await p.locator(".chart-tip").innerText(), /总资产/);
+    await p.mouse.move(2, 2);
     await p.getByRole("button", { name: "持仓", exact: true }).click();
     await p.getByRole("button", { name: "AAPL", exact: true }).click();
-    await p.getByRole("dialog").waitFor();
+    assert.match(await p.getByRole("dialog").innerText(), /成本均价/);
     await p.getByRole("button", { name: "关闭", exact: true }).click();
     await p.getByRole("button", { name: "配置分析", exact: true }).first().click();
     await p.getByRole("button", { name: "ETF 成分", exact: true }).click();
@@ -58,7 +106,17 @@ const packaged = process.argv[2];
     await p.getByLabel("已核对期间资金流水及所有币种余额").check();
     await p.getByRole("button", { name: "完成对账并查看总览" }).click();
     await p.getByText("A$128,400.00", { exact: true }).waitFor();
-    await p.getByText("+A$3,200.00", { exact: true }).waitFor();
+    await p.getByRole("button", { name: /^近 1 月盈亏 \+A\$3,200\.00/ }).waitFor();
+    // The period result is broken down by account, with money in and the gain on it.
+    await p.getByRole("button", { name: /^近 1 月盈亏/ }).click();
+    assert.match(await p.getByRole("dialog").innerText(), /期初资产[\s\S]*Webull Australia[\s\S]*合计[\s\S]*\+A\$3,200\.00/);
+    await p.getByRole("button", { name: "关闭", exact: true }).click();
+    await p.locator(".account-list > button").first().click();
+    await p.getByRole("button", { name: "查看该账户持仓" }).click();
+    assert.equal(await p.getByLabel("按账户筛选").inputValue(), "demo-ibkr");
+    await verifyReview(p);
+    await p.getByRole("button", { name: "总览", exact: true }).click();
+    await p.getByText("A$128,400.00", { exact: true }).waitFor();
     if (process.env.STACK_PORTFOLIO_SCREENSHOT) {
       const image = await app.evaluate(async ({ BrowserWindow }) =>
         (
@@ -147,9 +205,12 @@ const packaged = process.argv[2];
     await clean.getByLabel("备份密码", { exact: true }).fill(password);
     await clean.getByRole("button", { name: "解锁并恢复" }).click();
     await clean.getByText("A$128,400.00", { exact: true }).waitFor();
+    await clean.getByRole("button", { name: "策略复盘", exact: true }).click();
+    await clean.getByRole("button", { name: /重开区间/ }).click();
+    await clean.locator(".review-changed").first().waitFor();
     assert.notDeepEqual(fs.readFileSync(path.join(directory, "ledger-key.v1")), fs.readFileSync(path.join(fresh, "ledger-key.v1")));
     console.log(
-      "Windows UI verified: onboarding, holdings, allocation, target saving, import, reconciliation, duplicate detection, reload, backup and restore.",
+      "Windows UI verified: onboarding, holdings, allocation, import, reconciliation, benchmark chart selection, historical review notes, backup and restore.",
     );
   } catch (e) {
     if (app) {

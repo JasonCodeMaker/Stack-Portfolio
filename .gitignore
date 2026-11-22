@@ -13,3 +13,6 @@ release/desktop/
 *.db
 *.db-*
 *.wfbackup
+*.spbackup
+ledger-key.v1
+*.sqlite.*.tmp

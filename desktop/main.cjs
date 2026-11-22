@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net } = require("electron");
 const path = require("node:path"),
   fs = require("node:fs"),
   { pathToFileURL } = require("node:url");
@@ -29,7 +29,10 @@ const {
   transaction,
   json,
 } = require("./ledger.js");
-const { dashboard, storageContext, loadBook } = require("./flows.js");
+const { dashboard, storageContext, loadBook, positions } = require("./flows.js");
+const { portfolioReview, reviewDay, saveReviewNote, reviewNotes } = require("./performance.js");
+const { refreshBenchmarks, refreshCloses, refreshReviewPrices } = require("./reviewMarket.js");
+const { shiftDay } = require("./marketDays.js");
 const {
   batch,
   combinedBatch,
@@ -46,6 +49,7 @@ const {
   network,
 } = require("./services.js");
 const { seedDemo, demoCsv, demoXml } = require("./demo.js");
+network.browserFetch = (url, init) => net.fetch(url, init);
 const { EtfCache } = require("../src/storage/etfCache.ts");
 const { parseManualCsv, snapshotToCsv } = require("../src/domain/etf.ts");
 const { saveAddonSettings } = require("../src/storage/settings.ts");
@@ -59,9 +63,12 @@ let db,
   win,
   stagedSource,
   selectedBackup,
+  displayedReview,
   bookKey,
   previews = new Map(),
-  lastFxCheck = 0;
+  lastFxCheck = 0,
+  lastMarketCheck = 0;
+const reviewChecks = new Map();
 const fundChecks = new Map();
 const dataDir = () => app.getPath("userData"),
   fileFor = (m) => path.join(dataDir(), m === "demo" ? "sample.sqlite" : "portfolio.sqlite");
@@ -134,13 +141,42 @@ async function activate(m) {
   db = next;
   mode = m;
   previews.clear();
+  displayedReview = null;
   fundChecks.clear();
+  reviewChecks.clear();
   lastFxCheck = 0;
+  lastMarketCheck = 0;
   return mode;
 }
 function requireBook() {
   if (!db) throw Error("请先选择账本。");
   return db;
+}
+// Public closes, FX and index levels arrive without a key unless the investor turns this off.
+const marketAutoUpdate = () => preference(db, "app", "market.autoUpdate") !== "0";
+// Closes of the listings held today, with the AUD rate and index levels for the same days,
+// so that valuations do not rest on stale quotes.
+async function updateMarket() {
+  const book = loadBook(db);
+  const today = new Date().toISOString().slice(0, 10);
+  const held = new Map();
+  for (const account of book.accounts.filter((a) => a.isActive))
+    for (const [id, quantity] of positions(book, account, today).holdings)
+      if (!quantity.isZero() && book.assets.has(id)) held.set(id, book.assets.get(id));
+  const observed = ["Webull AU", "Twelve Data"];
+  const oldest = [...held.keys()]
+    .map((id) => book.prices.get(id)?.findLast((q) => !observed.includes(q.source))?.day || "")
+    .sort()[0];
+  // Reach back to the oldest stored close, at most a quarter, to fill the days in between.
+  const floor = shiftDay(today, -92);
+  const range = { from: oldest > floor ? oldest : floor, to: today };
+  const [indices, closes] = await Promise.all([
+    refreshBenchmarks(db, range, network.request),
+    refreshCloses(db, [...held.values()], range, network.request),
+  ]);
+  const results = [...indices, ...closes];
+  if (results.some((r) => r.count)) putPref(db, "app", "market.updated", new Date().toISOString());
+  return results;
 }
 const secretNames = new Set([
   "ibkr.flex-token",
@@ -224,6 +260,56 @@ const handlers = {
     return summary;
   },
   dashboard: (args) => dashboard(requireBook(), args),
+  portfolioReview(args) {
+    const result = portfolioReview(requireBook(), args);
+    const token = randomUUID();
+    // Save the exact values shown even if a quote or ledger entry changes before the note is written.
+    const { ids, from, to, requested, series, metrics, missingAssets } = result;
+    displayedReview = { token, ids, from, to, requested, series, metrics, missingAssets };
+    return {
+      ...result,
+      token,
+      notes: reviewNotes(db),
+      autoUpdate: mode === "real" && marketAutoUpdate(),
+      canBackfill: Boolean(preference(db, "credentials", "twelvedata.apiKey")),
+    };
+  },
+  reviewDay: (args) => reviewDay(requireBook(), args),
+  saveReviewNote({ token, text, id }) {
+    if (!displayedReview || token !== displayedReview.token) throw Error("复盘区间已改变，请重新打开当前区间。");
+    return saveReviewNote(requireBook(), displayedReview, text, id);
+  },
+  // Index levels, the AUD rate and the closes of held listings for the displayed period.
+  // An automatic update repeats for the same period only after a pause.
+  async refreshReview({ token, holdings, auto }) {
+    if (mode !== "real" || !displayedReview || token !== displayedReview.token)
+      throw Error("请在正式账本打开需要更新的复盘区间。");
+    const review = displayedReview,
+      range = { from: review.requested || review.from, to: review.to };
+    const find = db.prepare("SELECT * FROM sp_assets WHERE id=?");
+    const assets = review.missingAssets.map((id) => find.get(id)).filter(Boolean);
+    if (holdings)
+      return refreshReviewPrices(requireBook(), assets, range, await secrets.get("twelvedata.apiKey"), network.request);
+    const key = review.ids.join() + range.from + range.to;
+    if (auto && (!marketAutoUpdate() || Date.now() - (reviewChecks.get(key) || 0) < 900000)) return null;
+    reviewChecks.set(key, Date.now());
+    const [indices, closes] = await Promise.all([
+      refreshBenchmarks(requireBook(), range, network.request),
+      refreshCloses(requireBook(), assets, range, network.request),
+    ]);
+    return [...indices, ...closes];
+  },
+  async updateMarket() {
+    requireBook();
+    if (mode !== "real") throw Error("示例账本使用随附的模拟行情。");
+    lastMarketCheck = Date.now();
+    return updateMarket();
+  },
+  marketSettings(args) {
+    requireBook();
+    if (typeof args?.autoUpdate === "boolean") putPref(db, "app", "market.autoUpdate", args.autoUpdate ? "1" : "0");
+    return { autoUpdate: marketAutoUpdate(), last: preference(db, "app", "market.updated") };
+  },
   account: (args) => createAccount(requireBook(), args.name, args.currency),
   history({ account: id, limit = 200, offset = 0, text = "" }) {
     const rows = requireBook()
@@ -465,6 +551,10 @@ const handlers = {
         }
       }
     }
+    if (args?.market && marketAutoUpdate() && now - lastMarketCheck >= 1800000) {
+      lastMarketCheck = now;
+      if ((await updateMarket()).some((r) => r.count)) changed = true;
+    }
     if (args?.funds) {
       for (const f of (await dashboard(db)).etfData) {
         if (
@@ -519,7 +609,7 @@ const handlers = {
           out.currency?.toUpperCase() !== asset.currency
         )
           throw Error("报价缺失或币种不一致");
-        savePrice(db, id, day(out.datetime), out.close, "Twelve Data", 25);
+        savePrice(db, id, day(out.datetime), out.close, "Twelve Data", 11);
         updated++;
       } catch {
         failed.push(asset.symbol);

@@ -6,6 +6,7 @@ const FLEX_BASE = {
   australia: "https://www.interactivebrokers.com.au/AccountManagement/FlexWebService",
 } as const;
 const LOOKBACK_DAYS = 365;
+export const IBKR_TRADE_DATE_REVISION = "ibkr-trade-date-v1";
 const IBKR_HEADERS = {
   Accept: "application/xml,text/xml",
   "User-Agent": "Wealthfolio-Broker-Sync/0.3.3",
@@ -110,7 +111,9 @@ function fxConversion(row: Record<string, string>): BrokerActivity[] | undefined
   const feeCurrency = (row.ibCommissionCurrency || row.currency)?.toUpperCase();
   const tax = numberValue(row.taxes);
   const taxCurrency = (row.taxCurrency || row.currency)?.toUpperCase();
+  const timing = executionTiming(row);
   const metadata = {
+    ...timing.metadata,
     flow: { is_external: false },
     fx: {
       sourceCurrency,
@@ -123,7 +126,7 @@ function fxConversion(row: Record<string, string>): BrokerActivity[] | undefined
   };
   const common = {
     broker: "ibkr" as const,
-    date: flexDate(row.dateTime || row.tradeDate),
+    ...timing,
     symbol: "",
     sourceGroupId,
     metadata,
@@ -154,7 +157,7 @@ function fxConversion(row: Record<string, string>): BrokerActivity[] | undefined
       broker: "ibkr",
       brokerRecordId: `${recordId}:fee`,
       activityType: "FEE",
-      date: common.date,
+      ...timing,
       symbol: "",
       amount: fee,
       currency: feeCurrency,
@@ -166,7 +169,7 @@ function fxConversion(row: Record<string, string>): BrokerActivity[] | undefined
       broker: "ibkr",
       brokerRecordId: `${recordId}:tax`,
       activityType: "TAX",
-      date: common.date,
+      ...timing,
       symbol: "",
       amount: tax,
       currency: taxCurrency,
@@ -181,6 +184,18 @@ function flexDate(value?: string): string {
   if (digits.length < 8) throw new Error("IBKR record is missing a valid date.");
   const date = `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
   return digits.length >= 14 ? `${date}T${digits.slice(8, 10)}:${digits.slice(10, 12)}:${digits.slice(12, 14)}Z` : `${date}T12:00:00Z`;
+}
+
+function executionTiming(row: Record<string, string>): Pick<BrokerActivity, "date" | "metadata" | "importRevision"> {
+  const date = flexDate(row.dateTime || row.tradeDate);
+  const tradeDay = flexDay(row.tradeDate);
+  if (!tradeDay || date.startsWith(tradeDay)) return { date };
+  // Flex dateTime is a report-local clock. The broker supplies the trading day separately.
+  return {
+    date: flexDate(tradeDay),
+    metadata: { ibkrReportedDateTime: date.slice(0, -1) },
+    importRevision: IBKR_TRADE_DATE_REVISION,
+  };
 }
 
 function stableFallback(parts: Array<string | undefined>): string {
@@ -273,7 +288,7 @@ function parseIbkrActivities(xml: string): BrokerActivity[] {
       broker: "ibkr",
       brokerRecordId: row.ibExecID || row.tradeID || row.transactionID || stableFallback([row.accountId, row.dateTime, symbol, row.buySell, row.quantity, row.tradePrice]),
       activityType: row.buySell.toUpperCase().startsWith("B") ? "BUY" : "SELL",
-      date: flexDate(row.dateTime || row.tradeDate),
+      ...executionTiming(row),
       symbol,
       symbolName: row.description,
       exchangeMic: mic(row.listingExchange || row.exchange),
@@ -446,7 +461,7 @@ export async function fetchIbkrFlexReport(
   }, "report request");
   assertSuccess(requested, "report request");
   if (elementText(requested.body, "Status")?.toLowerCase() !== "success") {
-    const code = elementText(requested.body, "ErrorCode") ?? "unknown";
+    const code = elementText(requested.body, "ErrorCode")?.match(/^\d{3,5}$/)?.[0] ?? "unknown";
     throw new Error(`IBKR rejected the Flex request (code ${code}). Check the Query ID and token.`);
   }
   const reference = elementText(requested.body, "ReferenceCode");
@@ -461,7 +476,7 @@ export async function fetchIbkrFlexReport(
     }, "statement download");
     assertSuccess(statement, "statement download");
     if (/<FlexStatement\b/i.test(statement.body)) return parseIbkrFlexReport(statement.body);
-    const code = elementText(statement.body, "ErrorCode");
+    const code = elementText(statement.body, "ErrorCode")?.match(/^\d{3,5}$/)?.[0];
     if (code !== "1019" && code !== "1003") throw new Error(`IBKR could not generate the statement (code ${code ?? "unknown"}).`);
   }
   throw new Error("IBKR statement is still being generated. Wait a minute and try again.");

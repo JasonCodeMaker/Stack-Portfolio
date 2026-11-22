@@ -14,4 +14,4 @@ Read `docs/agents/triage-labels.md` when assigning or interpreting triage labels
 
 ### Domain docs
 
-Read `docs/agents/domain.md` before exploring the codebase. Stack Portfolio uses a single domain context.
+Read `docs/agents/domain.md` before exploring the codebase. Stock Portfolio uses a single domain context.

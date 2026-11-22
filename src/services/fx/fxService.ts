@@ -56,9 +56,9 @@ async function fetchTwelveData(ctx: AddonContext, apiKey: string): Promise<FxQuo
   const url = `https://api.twelvedata.com/exchange_rate?symbol=${encodeURIComponent("USD/AUD")}&apikey=${encodeURIComponent(apiKey)}`;
   const response = await ctx.api.network.request({ method: "GET", url });
   if (response.status < 200 || response.status >= 300) throw new Error(`Twelve Data returned ${response.status}`);
-  const body = JSON.parse(response.body) as { rate?: string | number; status?: string; message?: string };
+  const body = JSON.parse(response.body) as { rate?: string | number };
   const rate = typeof body.rate === "string" ? Number(body.rate) : body.rate;
-  if (!validRate(rate)) throw new Error(body.message || "Twelve Data returned an invalid USD/AUD rate");
+  if (!validRate(rate)) throw new Error("Twelve Data returned an invalid USD/AUD rate");
   return { pair: "USD/AUD", rate, fetchedAt: new Date().toISOString(), provider: "twelvedata" };
 }
 
@@ -80,8 +80,8 @@ export class FxService {
         const live = await fetchTwelveData(this.ctx, apiKey);
         await this.ctx.api.storage.set(FX_STORAGE_KEY, JSON.stringify(live));
         return live;
-      } catch (error) {
-        this.ctx.api.logger.warn(`USD/AUD provider failed: ${error instanceof Error ? error.message : "unknown error"}`);
+      } catch {
+        this.ctx.api.logger.warn("Twelve Data USD/AUD request failed");
       }
     }
 

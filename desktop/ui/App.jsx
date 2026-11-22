@@ -21,7 +21,8 @@ import {
   X,
 } from "lucide-react";
 import { api, Card, Modal, Tabs, Field } from "./common";
-import { Overview, Holdings } from "./Cockpit";
+import { Overview, Holdings, periods } from "./Cockpit";
+import { Performance } from "./Performance";
 import { Imports } from "./Imports";
 import { Allocation } from "./Allocation";
 import { Settings } from "./Settings";
@@ -29,6 +30,7 @@ import { BookBackups } from "./BookBackups";
 import "./styles.css";
 const pages = {
   overview: ["总览", LayoutDashboard],
+  performance: ["策略复盘", ChartNoAxesCombined],
   holdings: ["持仓", BriefcaseBusiness],
   allocation: ["配置分析", ChartPie],
   imports: ["导入与对账", FolderInput],
@@ -253,27 +255,45 @@ function Application() {
     setHome(await api.home());
     setWelcome(true);
   }
+  const shown = useRef(page);
+  shown.current = page;
+  const reload = useCallback(() => refresh().catch(() => {}), [refresh]);
+  // Closes, FX and index levels are fetched in the background; the page keeps what it shows meanwhile.
+  // The check belongs to the open book, so moving between pages never drops a result on its way.
   useEffect(() => {
-    if (mode !== "real" || welcome || !d || (!d.settings.liveFxPolling && page !== "allocation")) return;
-    let active = true;
+    if (mode !== "real" || welcome || !d) return;
+    let active = true,
+      retry;
     const check = () => {
-      if (document.visibilityState === "visible" && !busyDepth.current)
-        api
-          .autoRefresh({ fx: d.settings.liveFxPolling, funds: page === "allocation" })
-          .then((changed) => {
-            if (active && changed) refresh().catch(() => {});
-          })
-          .catch(() => {});
+      clearTimeout(retry);
+      if (document.visibilityState !== "visible") return;
+      // Wait out an operation in progress instead of skipping until the next interval.
+      if (busyDepth.current) return void (retry = setTimeout(check, 2000));
+      api
+        .autoRefresh({ market: true, fx: d.settings.liveFxPolling, funds: shown.current === "allocation" })
+        .then((changed) => {
+          if (active && changed) reload();
+        })
+        .catch(() => {});
     };
     const timer = setInterval(check, 300000);
     document.addEventListener("visibilitychange", check);
     check();
     return () => {
       active = false;
+      clearTimeout(retry);
       clearInterval(timer);
       document.removeEventListener("visibilitychange", check);
     };
-  }, [mode, welcome, page, !!d?.settings.liveFxPolling, refresh]);
+  }, [mode, welcome, !!d, !!d?.settings.liveFxPolling, reload]);
+  // Fund holdings are checked when the allocation page opens.
+  useEffect(() => {
+    if (mode !== "real" || welcome || !d || page !== "allocation") return;
+    api
+      .autoRefresh({ funds: true })
+      .then((changed) => changed && reload())
+      .catch(() => {});
+  }, [page]);
   const active = d?.accounts.filter((a) => a.active) || [],
     accountLabel = !d
       ? ""
@@ -358,31 +378,31 @@ function Application() {
               </p>
               <h1>{pages[page][0]}</h1>
             </div>
-            <div className="header-tools">
-              <button onClick={() => setScope([...d.selected])}>
-                <Wallet size={15} />
-                {accountLabel}
-                <ChevronDown size={13} />
-              </button>
-              <label className="date-filter">
-                <input
-                  aria-label="估值日期"
-                  type="date"
-                  value={options.date || d.date}
-                  onChange={(e) => change({ date: e.target.value })}
-                />
-              </label>
-            </div>
+            {["overview", "holdings", "allocation"].includes(page) && (
+              <div className="header-tools">
+                {page === "overview" && (
+                  <Tabs items={periods} value={options.period} onChange={(period) => change({ period })} />
+                )}
+                <button onClick={() => setScope([...d.selected])}>
+                  <Wallet size={15} />
+                  {accountLabel}
+                  <ChevronDown size={13} />
+                </button>
+                <label className="date-filter">
+                  <span>估值日</span>
+                  <input
+                    aria-label="估值日期"
+                    type="date"
+                    max={new Date().toLocaleDateString("en-CA")}
+                    value={options.date || d.date}
+                    onChange={(e) => e.target.value && change({ date: e.target.value })}
+                  />
+                </label>
+              </div>
+            )}
           </header>
-          {page === "overview" && (
-            <Overview
-              d={d}
-              options={options}
-              change={change}
-              onPage={onPage}
-              setScope={(ids) => change({ ids })}
-            />
-          )}
+          {page === "performance" && <Performance d={d} mode={mode} run={run} reload={reload} />}
+          {page === "overview" && <Overview d={d} onPage={onPage} />}
           {page === "holdings" && (
             <Holdings key={JSON.stringify(initial)} d={d} initial={initial} onPage={onPage} />
           )}

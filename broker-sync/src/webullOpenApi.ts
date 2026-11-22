@@ -171,14 +171,7 @@ async function sendSignedRequest(
   });
 }
 
-function errorMessage(response: NetworkResponse): string {
-  try {
-    const parsed = JSON.parse(response.body) as JsonObject;
-    return String(parsed.message ?? parsed.error_code ?? `HTTP ${response.status}`);
-  } catch {
-    return `HTTP ${response.status}`;
-  }
-}
+
 
 async function requestWithLegacyFallback(
   network: WebullNetwork,
@@ -196,7 +189,7 @@ function requireSuccess(response: NetworkResponse, operation: string): void {
   if (isRateLimited(response)) {
     throw new Error(`Webull kept rate-limiting the ${operation}. Wait a minute, then sync again.`);
   }
-  throw new Error(`Webull ${operation} failed: ${errorMessage(response)}.`);
+  throw new Error(`Webull ${operation} failed with HTTP ${response.status}.`);
 }
 
 function parseJson(response: NetworkResponse): unknown {

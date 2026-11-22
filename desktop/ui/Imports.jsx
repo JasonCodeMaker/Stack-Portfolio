@@ -4,6 +4,7 @@ import { ImportPreview } from "./ImportPreview";
 import {
   api,
   num,
+  fmt,
   aud,
   types,
   Table,
@@ -68,7 +69,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   });
   const [nav, setNav] = useState("");
   const [amend, setAmend] = useState(null),
-    [revisions, setRevisions] = useState([]);
+    [revisions, setRevisions] = useState([]),
+    [voided, setVoided] = useState(false);
   const demo = mode === "demo",
     webullSample = demo && account === "demo-webull";
   function selectAccount(next, keepImport = false) {
@@ -182,6 +184,13 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     });
     setModal("amend");
   }
+  const batches = d.batches.filter((b) =>
+    broker === "both" ? Object.values(mapping).includes(b.account) : b.account === account,
+  );
+  // A booked record replaced by its broker original stays in the book but out of the default list.
+  const superseded = (v) => v.metadata?.supersededBy || String(v.status).toUpperCase() === "VOID";
+  const entries = ledger.filter((v) => voided || !superseded(v));
+  const sources = { MANUAL: "手工录入", WEBULL: "Webull", IBKR: "IBKR" };
   if (!d.accounts.some((a) => a.active))
     return (
       <Card title="导入与对账">
@@ -296,21 +305,18 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               }}
             />
           )}
-          {!preview && !last && d.batches.length > 0 && (
+          {!preview && !last && batches.length > 0 && (
             <Card title="最近导入批次">
-              <Table head={["文件或连接", "时间", "新增", "重复", "更正"]}>
-                {d.batches
-                  .filter((b) => broker === "both" ? Object.values(mapping).includes(b.account) : b.account === account)
-                  .slice(0, 8)
-                  .map((b) => (
-                    <tr key={b.id}>
-                      <td>{b.source}</td>
-                      <td>{new Date(b.created).toLocaleString("zh-CN")}</td>
-                      <td>{b.data.imported}</td>
-                      <td>{b.data.duplicate}</td>
-                      <td>{(b.data.updated || 0) + (b.data.repaired || 0)}</td>
-                    </tr>
-                  ))}
+              <Table head={["文件或连接", "时间", ["新增", "num"], ["重复", "num"], ["更正", "num"]]}>
+                {batches.slice(0, 8).map((b) => (
+                  <tr key={b.id}>
+                    <td>{b.source}</td>
+                    <td>{new Date(b.created).toLocaleString("zh-CN")}</td>
+                    <td className="num">{b.data.imported}</td>
+                    <td className="num">{b.data.duplicate}</td>
+                    <td className="num">{(b.data.updated || 0) + (b.data.repaired || 0)}</td>
+                  </tr>
+                ))}
               </Table>
             </Card>
           )}
@@ -465,28 +471,46 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                 setOffset(0);
               }}
             />
+            <label className="check">
+              <input type="checkbox" checked={voided} onChange={(e) => setVoided(e.target.checked)} />
+              显示已冲销的重复记录
+            </label>
           </div>
-          {ledger.length ? (
-            <Table head={["日期", "活动", "证券", "数量 / 金额", "币种", "来源 / 凭证", ""]}>
-              {ledger.map((v) => (
-                <tr key={v.id}>
-                  <td>{String(v.date).slice(0, 10)}</td>
-                  <td>{types[v.activityType] || v.activityType}{v.metadata?.supersededBy && <small>已冲销重复流水</small>}</td>
-                  <td>{v.assetSymbol || "—"}</td>
-                  <td>{num(v.quantity ?? v.amount)}</td>
-                  <td>{v.currency}</td>
-                  <td>
-                    {v.sourceSystem || "原账本"}
-                    <small>{v.sourceRecordId || v.comment}</small>
-                  </td>
-                  <td>
-                    <button onClick={() => run(() => edit(v), false)}>核对 / 更正</button>
-                  </td>
-                </tr>
-              ))}
+          {entries.length ? (
+            <Table
+              head={["日期", "类型", "证券", ["数量 × 单价", "num"], ["金额", "num"], ["费用", "num"], "来源 / 凭证", ""]}
+            >
+              {entries.map((v) => {
+                const traded = Number(v.quantity) && v.unitPrice != null;
+                const amount = v.amount ?? (traded ? Number(v.quantity) * Number(v.unitPrice) : null);
+                return (
+                  <tr key={v.id}>
+                    <td>{String(v.date).slice(0, 10)}</td>
+                    <td>
+                      {v.metadata?.fx
+                        ? "换汇" + (v.activityType === "TRANSFER_OUT" ? "卖出" : "买入")
+                        : types[v.activityType] || v.activityType}
+                      {superseded(v) && <small>已冲销重复流水</small>}
+                    </td>
+                    <td>{v.assetSymbol || "—"}</td>
+                    <td className="num">
+                      {Number(v.quantity) ? num(v.quantity) + (v.unitPrice != null ? " × " + num(v.unitPrice) : "") : "—"}
+                    </td>
+                    <td className="num">{amount == null ? "—" : v.currency + " " + fmt(amount, 2)}</td>
+                    <td className="num">{Number(v.fee) ? fmt(v.fee, 2) : "—"}</td>
+                    <td>
+                      {sources[v.sourceSystem] || v.sourceSystem || "原账本"}
+                      <small>{v.sourceRecordId || v.comment}</small>
+                    </td>
+                    <td>
+                      <button onClick={() => run(() => edit(v), false)}>核对 / 更正</button>
+                    </td>
+                  </tr>
+                );
+              })}
             </Table>
           ) : (
-            <Empty>没有找到流水。</Empty>
+            <Empty>{ledger.length ? "这一页只有已冲销的重复记录。" : "没有找到流水。"}</Empty>
           )}
           <div className="actions">
             <button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 100))}>

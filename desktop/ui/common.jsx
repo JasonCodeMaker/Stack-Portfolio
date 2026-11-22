@@ -7,8 +7,37 @@ export const fmt = (n, digits = 0) =>
     : new Intl.NumberFormat("en-AU", { minimumFractionDigits: digits, maximumFractionDigits: digits }).format(
         n,
       );
-export const aud = (n, digits = 0) => (n == null ? "—" : "A$" + fmt(n, digits));
+// The sign leads the currency symbol, and an amount which rounds to zero carries none.
+const signOf = (n, digits, plus) => {
+  const rounded = Math.abs(n) < 0.5 * 10 ** -digits ? 0 : n;
+  return rounded < 0 ? "−" : rounded > 0 && plus ? "+" : "";
+};
+export const aud = (n, digits = 0) =>
+  n == null || !Number.isFinite(Number(n)) ? "—" : signOf(n, digits) + "A$" + fmt(Math.abs(n), digits);
 export const pct = (n) => (n == null ? "—" : fmt(n * 100, 1) + "%");
+export const signedAud = (n, digits = 2) =>
+  n == null || !Number.isFinite(Number(n)) ? "—" : signOf(n, digits, true) + "A$" + fmt(Math.abs(n), digits);
+export const signedPct = (n, digits = 2) =>
+  n == null || !Number.isFinite(Number(n))
+    ? "—"
+    : signOf(n * 100, digits, true) + fmt(Math.abs(n) * 100, digits) + "%";
+// Gains and losses carry a direction mark and a sign as well as a colour.
+export const tone = (n, digits = 2) => {
+  const sign = n == null || !Number.isFinite(Number(n)) ? "" : signOf(n, digits, true);
+  return sign === "+" ? "gain" : sign === "−" ? "loss" : "";
+};
+export function Delta({ amount, rate, digits = 2 }) {
+  const basis = amount ?? rate,
+    direction = tone(basis, amount == null ? 4 : digits);
+  if (basis == null) return <span className="delta">—</span>;
+  return (
+    <span className={"delta " + direction}>
+      {direction && <i aria-hidden="true">{direction === "gain" ? "▲" : "▼"}</i>}
+      {amount != null && signedAud(amount, digits)}
+      {rate != null && <em>{amount != null ? "（" + signedPct(rate) + "）" : signedPct(rate)}</em>}
+    </span>
+  );
+}
 export const num = (n) =>
   n == null ? "—" : new Intl.NumberFormat("en-AU", { maximumFractionDigits: 8 }).format(n);
 export const kind = {
@@ -32,7 +61,7 @@ export const types = {
   TRANSFER_IN: "转入",
   TRANSFER_OUT: "转出",
 };
-export function Modal({ title, children, close }) {
+export function Modal({ title, children, close, wide = false }) {
   const ref = useRef(null);
   useEffect(() => {
     ref.current.showModal();
@@ -41,6 +70,7 @@ export function Modal({ title, children, close }) {
   return (
     <dialog
       ref={ref}
+      className={wide ? "wide" : ""}
       aria-label={title}
       onCancel={(e) => {
         e.preventDefault();
@@ -95,6 +125,7 @@ export function Empty({ children }) {
     </div>
   );
 }
+// A heading written as [label, "num"] aligns right, over a column of figures.
 export function Table({ head, children }) {
   return (
     <div className="table-scroll">
@@ -102,7 +133,9 @@ export function Table({ head, children }) {
         <thead>
           <tr>
             {head.map((h, i) => (
-              <th key={i}>{h}</th>
+              <th key={i} className={Array.isArray(h) ? h[1] : undefined}>
+                {Array.isArray(h) ? h[0] : h}
+              </th>
             ))}
           </tr>
         </thead>

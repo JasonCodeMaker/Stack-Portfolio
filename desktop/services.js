@@ -39,12 +39,17 @@ const networkHosts = new Set([
   "api.webull.com.au",
   "www.interactivebrokers.com.au",
   "api.twelvedata.com",
+  "query1.finance.yahoo.com",
+  "fred.stlouisfed.org",
   "www.alphavantage.co",
   "www.ishares.com",
   "dng-api.invesco.com",
   "www.betashares.com.au",
 ]);
 export const network = {
+  // The desktop shell supplies Chromium's network stack. It follows the system proxy and
+  // reaches public data hosts on which Node's own fetch stalls inside Electron.
+  browserFetch: null,
   async request(request) {
     const url = new URL(request.url);
     if (
@@ -55,8 +60,22 @@ export const network = {
       url.port
     )
       throw Error("数据源地址不受支持。");
-    const res = await fetch(url, {
-      method: request.method || "GET",
+    const method = request.method || "GET";
+    let res = null;
+    // Only anonymous public downloads take this path; signed broker calls keep their exact headers.
+    if (network.browserFetch && method === "GET" && !request.headers && request.body == null) {
+      try {
+        res = await network.browserFetch(url.toString(), {
+          redirect: "error",
+          credentials: "omit",
+          signal: AbortSignal.timeout(20000),
+        });
+      } catch {
+        res = null;
+      }
+    }
+    res ??= await fetch(url, {
+      method,
       headers: request.headers,
       body: request.body ?? undefined,
       redirect: "error",
@@ -263,6 +282,28 @@ function nativeEvent(db, v, id) {
     status: "POSTED",
   };
 }
+// A verified Flex date repair moves the original posting with its quantities, fees and edits intact.
+export function correctIbkrTradeDate(db, id, date, reportedDateTime) {
+  const apply = () => {
+    const prior = db.prepare("SELECT data FROM sp_events WHERE id=?").get(id)?.data;
+    if (!prior) throw Error("找不到对应的 IBKR 流水。");
+    const before = JSON.parse(prior);
+    const oldDay = day(before.date), tradeDay = day(date);
+    if (oldDay === tradeDay) return before;
+    if (oldDay !== day(reportedDateTime)) throw Error("流水日期与原始报表时间不符，请核对结单。");
+    const after = { ...before, date, metadata: { ...before.metadata, ibkrReportedDateTime: reportedDateTime } };
+    saveEvent(db, after);
+    db.prepare("INSERT INTO sp_corrections VALUES(?,?,?,?,?,?)").run(
+      randomUUID(), id, new Date().toISOString(), "按 IBKR Flex 原始成交编号核实交易日", prior, JSON.stringify(after),
+    );
+    const [from, to] = [oldDay, tradeDay].sort();
+    db.prepare(`INSERT OR IGNORE INTO sp_checks(account,day,reason)
+      SELECT account,day,'成交交易日已更正，请复核该日结单' FROM sp_statements
+      WHERE account=? AND day>=? AND day<?`).run(after.accountId, from, to);
+    return after;
+  };
+  return db.inTransaction ? apply() : transaction(db, apply);
+}
 export function syncHost(db, history) {
   const key = importedKeysStorageKey();
   return {
@@ -298,21 +339,15 @@ export function syncHost(db, history) {
         saveEvent(db, e);
         created.push(e);
         createdMappings.push({ tempId: v.id, activityId: id });
-        tradePrice(db, e);
       }
       for (const v of updates) {
-        const e = nativeEvent(db, v, v.id);
-        saveEvent(db, e);
-        updated.push(e);
-        tradePrice(db, e);
+        updated.push(v.metadata?.ibkrReportedDateTime
+          ? correctIbkrTradeDate(db, v.id, v.activityDate, v.metadata.ibkrReportedDateTime)
+          : saveEvent(db, nativeEvent(db, v, v.id)));
       }
       return { created, updated, createdMappings, deleted: [], errors: [] };
     },
   };
-}
-function tradePrice(db, e) {
-  if (e.assetId && ["BUY", "SELL"].includes(e.activityType) && D(e.unitPrice).gt(0))
-    savePrice(db, e.assetId, dayOf(e.date), e.unitPrice, "成交价", 1);
 }
 export function amendEvent(db, args) {
   const row = db.prepare("SELECT data FROM sp_events WHERE id=? AND account=?").get(args.id, args.account);
@@ -363,20 +398,6 @@ export function amendEvent(db, args) {
       row.data,
       JSON.stringify(after),
     );
-    if (before.assetId && ["BUY", "SELL"].includes(before.activityType)) {
-      const oldDay = dayOf(before.date);
-      db.prepare("DELETE FROM sp_prices WHERE asset=? AND day=? AND source='成交价'").run(
-        before.assetId,
-        oldDay,
-      );
-      for (const v of db
-        .prepare("SELECT data FROM sp_events WHERE day=? ORDER BY json_extract(data,'$.date'),id")
-        .all(oldDay)) {
-        const e = json(v.data, {});
-        if (e.assetId === before.assetId) tradePrice(db, e);
-      }
-    }
-    tradePrice(db, after);
     db.prepare("INSERT OR REPLACE INTO sp_checks VALUES(?,?,?)").run(
       after.accountId,
       [dayOf(after.date), dayOf(before.date)].sort()[0],
@@ -455,6 +476,7 @@ function splitConflicts(db, acc, report, history) {
 function checkReason(errors) {
   if (!errors?.migration) return Object.values(errors || {}).flat().join(" ");
   const reason = errors.migration.join(" ");
+  if (reason.includes("trade date correction")) return "无法凭原始成交编号和明细核实交易日，请核对券商结单。";
   if (reason.includes("edited by the user")) return "本地已手工修改，请对照券商记录核实。";
   if (reason.includes("no longer exists")) return "找不到原来关联的流水，请核对交易记录。";
   if (reason.includes("different broker record")) return "原关联指向另一笔券商流水，请核对来源。";
@@ -691,7 +713,6 @@ export function addManual(db, args) {
     }
     if (type.startsWith("TRANSFER_")) e.group = String(args.group || "").trim() || null;
     saveEvent(db, e);
-    tradePrice(db, e);
     db.prepare(
       "INSERT OR REPLACE INTO sp_checks(account,day,reason) SELECT account,day,'结单期间新增了流水，请重新核对' FROM sp_statements WHERE account=? AND day>=?",
     ).run(a.id, date);

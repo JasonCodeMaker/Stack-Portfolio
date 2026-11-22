@@ -1,13 +1,14 @@
 import { EtfCache } from "../src/storage/etfCache";
 import { storageContext } from "./flows.js";
-import { ALLOCATION, putPref, saveEvent, savePrice, transaction } from "./ledger.js";
+import { ALLOCATION, preference, putPref, saveEvent, savePrice, transaction } from "./ledger.js";
+import { closingDay, shiftDay } from "./marketDays.js";
 
 export const demoDay = "2026-10-30";
 export const demoCsv =
   "Order ID,Symbol,Name,Side,Status,Filled Quantity,Average Price,Filled Time,Currency,Commission,Exchange\nWB-DEMO-173,BHP,BHP Group,BUY,Filled,10,44.00,2026-10-27,AUD,0,ASX";
 export const demoXml = `<FlexQueryResponse><FlexStatements><FlexStatement accountId="DEMO-IBKR" fromDate="20261027" toDate="20261030"><AccountInformation currency="AUD"/><Trades><Trade accountId="DEMO-IBKR" assetCategory="STK" symbol="AAPL" description="Apple" listingExchange="NASDAQ" dateTime="20261030;100000" buySell="BUY" quantity="1" tradePrice="208" currency="USD" ibCommission="0" ibExecID="DEMO-AAPL-1"/></Trades><CashReport><CashReportCurrency currency="AUD" endingCash="3000"/><CashReportCurrency currency="USD" endingCash="1792"/></CashReport><OpenPositions><OpenPosition symbol="AAPL" position="101" currency="USD" markPrice="208" positionValue="21008" levelOfDetail="SUMMARY"/><OpenPosition symbol="IVV" position="100" currency="USD" markPrice="310" positionValue="31000" levelOfDetail="SUMMARY"/></OpenPositions><ChangeInNAV currency="AUD" endingValue="83700"/></FlexStatement></FlexStatements></FlexQueryResponse>`;
 export async function seedDemo(db) {
-  if (db.prepare("SELECT COUNT(*) n FROM sp_accounts").get().n) return;
+  if (db.prepare("SELECT COUNT(*) n FROM sp_accounts").get().n) return seedDemoReview(db);
   const start = "2026-09-30";
   transaction(db, () => {
     const add = db.prepare("INSERT INTO sp_accounts VALUES(?,?,?,?,?)");
@@ -109,4 +110,34 @@ export async function seedDemo(db) {
           },
         ]),
     });
+  seedDemoReview(db);
+}
+
+function seedDemoReview(db) {
+  if (preference(db, "app", "demo") !== "1" || preference(db, "app", "demo-review-v1")) return;
+  transaction(db, () => {
+    const first = "2026-09-30";
+    const insert = db.prepare("INSERT OR IGNORE INTO sp_benchmark_levels VALUES(?,?,?,?)");
+    const prices = db.prepare("SELECT day,price FROM sp_prices WHERE asset=? AND source='示例结单' ORDER BY day");
+    // Interpolation is confined to this explicitly fictional demonstration book.
+    for (const [asset, market] of [["aapl", "US"], ["ivv", "US"], ["a200", "ASX"], ["bhp", "ASX"], ["FX:USD/AUD", "FX"]]) {
+      const marks = prices.all(asset);
+      for (let i = 1; i < marks.length; i++) {
+        const a = marks[i - 1], b = marks[i];
+        for (let date = shiftDay(a.day, 1); date < b.day; date = shiftDay(date, 1)) {
+          if (closingDay(date, market) !== date) continue;
+          const t = (Date.parse(date) - Date.parse(a.day)) / (Date.parse(b.day) - Date.parse(a.day));
+          savePrice(db, asset, date, Number(a.price) + (b.price - a.price) * t, "模拟收盘价", 5);
+        }
+      }
+    }
+    let i = 0;
+    for (let date = first; date <= demoDay; date = shiftDay(date, 1)) {
+      if (closingDay(date, "US") !== date) continue;
+      insert.run("SP500TR", date, 1000 + i * 1.2 + Math.sin(i / 2) * 7, "示例账本 · 模拟总回报");
+      insert.run("XNDX", date, 2000 + i * 3.1 - Math.sin(i / 2) * 25, "示例账本 · 模拟总回报");
+      i++;
+    }
+    putPref(db, "app", "demo-review-v1", "1");
+  });
 }

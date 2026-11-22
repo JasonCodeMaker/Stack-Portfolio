@@ -14,6 +14,7 @@ import type {
   SyncPreview,
   SyncRunResult,
 } from "@/types";
+import { IBKR_TRADE_DATE_REVISION } from "@/ibkrFlex";
 
 const IMPORTED_KEYS_STORAGE = "sync.imported-record-keys.v3";
 const SOURCE_LINK_PREFIX = "sync.source-link.v1:";
@@ -379,6 +380,17 @@ export async function previewSync(
       if (!activity.isValid || !candidate?.importRevision) return activity;
       if (candidate.preserveExisting) return activity;
       const existing = existingByAccount.get(activity.accountId) ?? [];
+
+      if (candidate.importRevision === IBKR_TRADE_DATE_REVISION) {
+        const match = existing.find((item) => item.id === activity.duplicateOfId);
+        if (!match && !candidate.legacyImported && !activity.duplicateOfId) return activity;
+        const reported = candidate.metadata?.ibkrReportedDateTime;
+        if (match && sameBrokerRecord(candidate, match) && typeof reported === "string" &&
+            (sameExactRecord(activity, match) || sameExactRecord({ ...activity, date: reported + "Z" }, match))) {
+          return activity;
+        }
+        return migrationError(activity, "The original IBKR execution could not be verified for a trade date correction.");
+      }
 
       if (activity.duplicateOfId) {
         const duplicate = existing.find((item) => item.id === activity.duplicateOfId);

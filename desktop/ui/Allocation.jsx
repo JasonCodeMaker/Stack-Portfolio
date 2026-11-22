@@ -4,7 +4,7 @@ import { buildCoreSatelliteAllocation, buildBreakdownNodes } from "../../src/dom
 import { buildRebalanceModel } from "../../src/domain/rebalance";
 import { buildComposition, buildPlanRows } from "../../src/domain/composition";
 import { squarify } from "../../src/domain/compositionLayout";
-import { api, aud, fmt, pct, num, kind, Card, Field, Modal, Tabs, Table, Empty } from "./common";
+import { api, aud, fmt, pct, num, kind, signedPct, Card, Field, Modal, Tabs, Table, Empty } from "./common";
 const labels = {
   "Individual stocks": "个股合计",
   Cash: "现金",
@@ -18,7 +18,7 @@ const labels = {
   Stock: "股票",
   ETF: "ETF",
 };
-const lab = (s) => labels[s] || s;
+const lab = (s) => labels[s] || String(s ?? "").replace(/^([A-Z]{3}) cash$/, "$1 现金");
 const status = {
   Fresh: "最新",
   Stale: "已过期",
@@ -209,7 +209,8 @@ export function Allocation({ d, run, initial = {} }) {
     [chosen, setChosen] = useState(null),
     [target, setTarget] = useState(null),
     [tol, setTol] = useState("5"),
-    [q, setQ] = useState("");
+    [q, setQ] = useState(""),
+    [limit, setLimit] = useState(15);
   const [targetScope, setTargetScope] = useState("strategy");
   const targetSettings = targetScope === "strategy" ? d.targets : d.instrumentTargets || d.targets;
   const p = d.portfolio,
@@ -227,6 +228,10 @@ export function Allocation({ d, run, initial = {} }) {
       ? e.rows.map((r) => ({ ...r, valueAud: r.totalAud, weight: r.portfolioWeight }))
       : buildBreakdownNodes(lens, p.instrumentAllocation, p.holdings, e, p.totalAud);
   const weights = nodes.filter((r) => r.type === "stock").sort((a, b) => b.valueAud - a.valueAud);
+  const listed = nodes.filter(
+    (n) =>
+      lens !== "companies" || ((n.label || "") + " " + (n.ticker || "")).toLowerCase().includes(q.toLowerCase()),
+  );
   function startTargets() {
     setTarget(
       Object.fromEntries(units.map((r) => [r.key, String((targetSettings.targets[r.key] || 0) * 100)])),
@@ -284,7 +289,14 @@ export function Allocation({ d, run, initial = {} }) {
           <Card
             title="配置明细"
             action={
-              <select aria-label="分析维度" value={lens} onChange={(ev) => setLens(ev.target.value)}>
+              <select
+                aria-label="分析维度"
+                value={lens}
+                onChange={(ev) => {
+                  setLens(ev.target.value);
+                  setLimit(15);
+                }}
+              >
                 {Object.entries({
                   companies: "公司",
                   holdings: "买入的证券",
@@ -317,31 +329,31 @@ export function Allocation({ d, run, initial = {} }) {
                 </span>
               </div>
             )}
-            <Table head={["名称", "直接持有", "通过 ETF", "合计（AUD）", "组合占比"]}>
-              {nodes
-                .filter(
-                  (n) =>
-                    lens !== "companies" ||
-                    ((n.label || "") + " " + (n.ticker || "")).toLowerCase().includes(q.toLowerCase()),
-                )
-                .map((r) => (
-                  <tr key={r.key}>
-                    <td>
-                      {r.sources ? (
-                        <button className="text-btn" onClick={() => setChosen(r)}>
-                          {lab(r.label)} <ArrowUpRight size={13} />
-                        </button>
-                      ) : (
-                        lab(r.label)
-                      )}
-                    </td>
-                    <td>{aud(r.directAud)}</td>
-                    <td>{aud(r.viaEtfsAud)}</td>
-                    <td>{aud(r.valueAud, 2)}</td>
-                    <td>{pct(p.totalAud == null ? null : r.weight)}</td>
-                  </tr>
-                ))}
+            <Table head={["名称", ["直接持有", "num"], ["通过 ETF", "num"], ["合计（AUD）", "num"], ["组合占比", "num"]]}>
+              {listed.slice(0, q ? listed.length : limit).map((r) => (
+                <tr key={r.key}>
+                  <td>
+                    {r.sources ? (
+                      <button className="text-btn" onClick={() => setChosen(r)}>
+                        {lab(r.label)} <ArrowUpRight size={13} />
+                      </button>
+                    ) : (
+                      lab(r.label)
+                    )}
+                  </td>
+                  <td className="num">{aud(r.directAud)}</td>
+                  <td className="num">{aud(r.viaEtfsAud)}</td>
+                  <td className="num">{aud(r.valueAud, 2)}</td>
+                  <td className="num">{pct(p.totalAud == null ? null : r.weight)}</td>
+                </tr>
+              ))}
             </Table>
+            {!q && listed.length > limit && (
+              <div className="actions">
+                <button onClick={() => setLimit(listed.length)}>显示全部 {listed.length} 项</button>
+                <span className="muted">已列出占比最高的 {limit} 项</span>
+              </div>
+            )}
           </Card>
         </>
       )}
@@ -366,29 +378,36 @@ export function Allocation({ d, run, initial = {} }) {
             />
             <span className="muted">允许偏离 ±{pct(targetSettings.tolerance)}</span>
           </div>
-          <Table head={["配置项", "实际", "目标", "偏离", "距目标金额", "状态"]}>
-            {plan.map((r) => (
-              <tr key={r.key}>
-                <td>
-                  {lab(r.label)}
-                  <small>{r.children.map((x) => x.label).join(" · ")}</small>
-                </td>
-                <td>{pct(r.weight)}</td>
-                <td>{pct(r.targetWeight)}</td>
-                <td>{pct(r.drift)}</td>
-                <td>{aud(r.adjustmentAud, 2)}</td>
-                <td>
-                  {
+          <Table head={["配置项", ["实际", "num"], ["目标", "num"], ["偏离", "num"], "状态", ["回到目标需要", "num"]]}>
+            {plan.map((r) => {
+              const off = ["underweight", "overweight"].includes(r.status);
+              return (
+                <tr key={r.key}>
+                  <td>
+                    {lab(r.label)}
+                    <small>{r.children.map((x) => lab(x.label)).join(" · ")}</small>
+                  </td>
+                  <td className="num">{pct(r.weight)}</td>
+                  <td className="num">{pct(r.targetWeight)}</td>
+                  <td className={"num " + (off ? "warning" : "")}>{r.drift == null ? "—" : signedPct(r.drift, 1)}</td>
+                  <td>
                     {
-                      underweight: "低于目标",
-                      overweight: "高于目标",
-                      "on-target": "范围内",
-                      unconfigured: "待设置",
-                    }[r.status]
-                  }
-                </td>
-              </tr>
-            ))}
+                      {
+                        underweight: "低于目标",
+                        overweight: "高于目标",
+                        "on-target": "范围内",
+                        unconfigured: "待设置",
+                      }[r.status]
+                    }
+                  </td>
+                  <td className="num">
+                    {r.adjustmentAud == null || !off
+                      ? "—"
+                      : (r.adjustmentAud > 0 ? "买入 " : "卖出 ") + aud(Math.abs(r.adjustmentAud), 2)}
+                  </td>
+                </tr>
+              );
+            })}
           </Table>
         </Card>
       )}

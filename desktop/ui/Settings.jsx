@@ -10,6 +10,7 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
     [conn, setConn] = useState({ present: {} }),
     [draft, setDraft] = useState({}),
     [web, setWeb] = useState(null),
+    [market, setMarket] = useState(null),
     [dialog, setDialog] = useState("");
   const [asset, setAsset] = useState("fx"),
     [price, setPrice] = useState(""),
@@ -28,6 +29,12 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
       .connections()
       .then((c) => {
         if (active) setConn(c);
+      })
+      .catch(() => {});
+    api
+      .marketSettings()
+      .then((m) => {
+        if (active) setMarket(m);
       })
       .catch(() => {});
     return () => {
@@ -63,15 +70,17 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
   );
   return (
     <>
-      <Tabs
-        items={[
-          ["book", "账本与备份"],
-          ["connections", "券商与行情连接"],
-          ["data", "报价、分类与来源"],
-        ]}
-        value={tab}
-        onChange={setTab}
-      />
+      <div className="page-controls">
+        <Tabs
+          items={[
+            ["book", "账本与备份"],
+            ["connections", "券商与行情连接"],
+            ["data", "报价、分类与来源"],
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
+      </div>
       {tab === "book" && (
         <>
           <Card title="当前账本">
@@ -239,7 +248,50 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
               </Field>
             )}
           </Card>
-          <Card title="行情与 ETF 数据源">
+          <Card title="行情自动更新">
+            <p className="muted">
+              持仓的每日收盘价、美元兑澳元汇率和标普 500、纳斯达克 100 总回报指数来自 Yahoo Finance 与 FRED 的公开数据，无需 API
+              Key。请求只包含证券代码和日期。
+            </p>
+            <label className="check">
+              <input
+                type="checkbox"
+                disabled={mode === "demo" || !market}
+                checked={market?.autoUpdate ?? true}
+                onChange={(e) =>
+                  run(async () => setMarket(await api.marketSettings({ autoUpdate: e.target.checked })), "行情更新设置已保存")
+                }
+              />
+              打开软件和进入策略复盘时自动更新
+            </label>
+            <div className="actions">
+              <button
+                disabled={mode === "demo"}
+                onClick={() =>
+                  run(async () => {
+                    const results = await api.updateMarket();
+                    setMarket(await api.marketSettings());
+                    const failed = results.filter((r) => r.error);
+                    return (
+                      "已更新 " +
+                      results.filter((r) => !r.error).length +
+                      " 项行情" +
+                      (failed.length ? "；未能更新 " + failed.map((r) => r.name + "（" + r.error + "）").join("、") : "")
+                    );
+                  }, true)
+                }
+              >
+                立即更新行情
+              </button>
+              <span className="muted">
+                {market?.last ? "上次更新 " + new Date(market.last).toLocaleString("zh-CN") : "尚未自动更新过"}
+              </span>
+            </div>
+          </Card>
+          <Card title="可选数据源">
+            <p className="muted">
+              Twelve Data 用于盘中报价，以及补齐公开来源没有的历史收盘价；Alpha Vantage 用于部分 ETF 的成分数据。不填也可以正常使用。
+            </p>
             <div className="form-grid">
               {secretField("Twelve Data API Key", "twelvedata.apiKey")}
               {secretField("Alpha Vantage API Key", "alphaVantage.apiKey")}
@@ -268,7 +320,7 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
                   }, true)
                 }
               >
-                刷新报价与汇率
+                用 Twelve Data 刷新盘中报价
               </button>
             </div>
             <label className="check">
@@ -279,7 +331,7 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
                   run(() => saveSettings({ liveFxPolling: e.target.checked }), "汇率刷新设置已保存")
                 }
               />
-              打开软件时定期检查 USD/AUD 汇率
+              有 Twelve Data Key 时，每 5 分钟检查一次 USD/AUD 实时汇率
             </label>
           </Card>
           <details className="card">

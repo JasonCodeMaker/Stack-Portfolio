@@ -65,6 +65,8 @@ CREATE TABLE IF NOT EXISTS sp_broker_values(account TEXT NOT NULL REFERENCES sp_
 CREATE TABLE IF NOT EXISTS sp_checks(account TEXT NOT NULL, day TEXT NOT NULL, reason TEXT NOT NULL, PRIMARY KEY(account,day));
 CREATE TABLE IF NOT EXISTS sp_batches(id TEXT PRIMARY KEY, account TEXT NOT NULL, created TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sp_corrections(id TEXT PRIMARY KEY, event TEXT NOT NULL, created TEXT NOT NULL, reason TEXT NOT NULL, prior TEXT NOT NULL, amended TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sp_benchmark_levels(series TEXT NOT NULL, day TEXT NOT NULL, level REAL NOT NULL CHECK(level > 0), source TEXT NOT NULL, PRIMARY KEY(series,day));
+CREATE TABLE IF NOT EXISTS sp_review_notes(id TEXT PRIMARY KEY, created TEXT NOT NULL, data TEXT NOT NULL);
 `;
 export function createBook(filename, key) {
   mkdirSync(path.dirname(filename), { recursive: true });
@@ -364,9 +366,10 @@ function loadLegacy(db, source) {
       putPref(db, "legacy", r.setting_key, r.setting_value);
 }
 export function backupMode(db) {
-  // sp_broker_values was added after version 1.0.0 and is created on restore.
+  // Additive tables are created when an older backup is opened.
+  const addedTables = new Set(["sp_broker_values", "sp_benchmark_levels", "sp_review_notes"]);
   const requiredTables = [...schema.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)]
-    .map((match) => match[1]).filter((name) => name !== "sp_broker_values");
+    .map((match) => match[1]).filter((name) => !addedTables.has(name));
   if (!requiredTables.every((t) => hasTable(db, t)) ||
       db.prepare("SELECT value FROM sp_meta WHERE key='version'").get()?.value !== "1")
     throw Error("请选择支持的投资账本备份。");

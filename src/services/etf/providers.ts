@@ -106,14 +106,16 @@ export class AlphaVantageProvider implements EtfHoldingsProvider {
   public async fetchHoldings(etf: EtfAsset): Promise<EtfHoldingsSnapshot> {
     if (!this.apiKey) throw new Error("Alpha Vantage API key is not configured");
     const url = `https://www.alphavantage.co/query?function=ETF_PROFILE&symbol=${encodeURIComponent(etf.symbol)}&apikey=${encodeURIComponent(this.apiKey)}`;
-    const body = JSON.parse(await fetchText(this.ctx, url)) as {
+    let body: {
       holdings?: Array<Record<string, unknown>>;
       last_updated?: string;
-      Information?: string;
-      Note?: string;
-      message?: string;
     };
-    if (!body.holdings?.length) throw new Error(body.Information || body.Note || body.message || "Alpha Vantage returned no holdings");
+    try {
+      body = JSON.parse(await fetchText(this.ctx, url));
+    } catch {
+      throw new Error("Alpha Vantage ETF request failed");
+    }
+    if (!body?.holdings?.length) throw new Error("Alpha Vantage returned no holdings");
     const holdings: UnderlyingHolding[] = [];
     for (const row of body.holdings) {
       const weight = normalizeProviderWeight(row.weight);

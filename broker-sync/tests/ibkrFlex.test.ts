@@ -20,6 +20,18 @@ describe("parseIbkrFlexStatement", () => {
     expect(() => parseIbkrFlexStatement("not xml")).toThrow(/not an Activity Flex XML/);
   });
 
+  it("books securities and every FX leg on the Flex trade date when report time crosses midnight", () => {
+    const trades = `<FlexStatement><Trades>
+      <Trade symbol="ORCL" tradeID="T1" currency="USD" assetCategory="STK" buySell="BUY" quantity="2" tradePrice="107" tradeDate="20261120" dateTime="20261121;021639" />
+      <Trade symbol="AUD.USD" tradeID="FX1" currency="USD" assetCategory="CASH" buySell="SELL" quantity="-100" proceeds="75" tradeDate="20261120" dateTime="20261121;021639" ibCommission="-1" ibCommissionCurrency="EUR" />
+      <Trade symbol="ABC" tradeID="T2" currency="USD" assetCategory="STK" buySell="BUY" quantity="1" tradePrice="10" dateTime="20261123;101500" />
+    </Trades></FlexStatement>`;
+    const rows = parseIbkrFlexStatement(trades);
+    expect(rows.slice(0, 4).map((r) => r.date.slice(0, 10))).toEqual(Array(4).fill("2026-11-20"));
+    expect(rows.slice(0, 4).every((r) => r.metadata?.ibkrReportedDateTime === "2026-11-21T02:16:39")).toBe(true);
+    expect(rows[4].date).toBe("2026-11-23T10:15:00Z");
+  });
+
   it("rejects a multi-account Flex response instead of mixing broker accounts", () => {
     const multiAccountXml = `<FlexQueryResponse><FlexStatements>
       <FlexStatement accountId="U1"><AccountInformation accountId="U1" currency="AUD" /></FlexStatement>
