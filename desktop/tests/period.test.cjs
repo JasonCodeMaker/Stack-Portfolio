@@ -102,6 +102,31 @@ test("the overview and the review report the same investment gain and time-weigh
   assert.deepEqual([year.startValue, year.netFlow, year.gain], [1000, 500, 20]);
 });
 
+test("the overview measures a custom range from the review through its own end, within the valuation date", async (t) => {
+  const { db, account, event } = book(t);
+  const a = account("A", "2025-01-01", 1000);
+  event(a, "2025-02-10", "INTEREST", 50);
+  event(a, "2025-03-15", "FEE", 30);
+  const overview = await dashboard(db, { ids: [a], date: "2025-03-31", from: "2025-02-01", to: "2025-02-28" });
+  const review = portfolioReview(db, { ids: [a], from: "2025-02-01", to: "2025-02-28" });
+  assert.deepEqual([overview.start, overview.end, overview.pnl], [review.from, review.to, review.money.gain]);
+  assert.equal(overview.pnl, 50);
+  // An end after the valuation date stops at the valuation date.
+  assert.equal((await dashboard(db, { ids: [a], date: "2025-03-10", from: "2025-02-01", to: "2025-03-31" })).end, "2025-03-10");
+});
+
+test("the dashboard covers every active account when asked for all accounts", async (t) => {
+  const { db, account, event } = book(t);
+  const a = account("A", "2025-01-01", 1000),
+    b = account("B", "2025-01-01", 500);
+  event(a, "2025-02-10", "INTEREST", 50);
+  const d = await dashboard(db, { ids: "all", date: "2025-03-31" });
+  assert.deepEqual([...d.selected].sort(), [a, b].sort());
+  // An account no longer in the book is left out; when none is left, the scope is all accounts again.
+  assert.deepEqual((await dashboard(db, { ids: [a, "gone"], date: "2025-03-31" })).selected, [a]);
+  assert.deepEqual([...(await dashboard(db, { ids: ["gone"], date: "2025-03-31" })).selected].sort(), [a, b].sort());
+});
+
 test("on a valuation date after the latest close, both pages measure through the latest valued close", async (t) => {
   const { db } = book(t);
   await seedDemo(db);

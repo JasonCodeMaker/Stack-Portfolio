@@ -761,17 +761,19 @@ export async function dashboard(db, options = {}) {
     raw = await loadAllocationSettings(ctx);
   const active = book.accounts.filter((a) => a.isActive);
   const reconciled = reconcileAccountSelection(raw, active);
+  // The page head's account scope: "all" active accounts, or the chosen ones still active.
+  const chosen = Array.isArray(options.ids) ? active.filter((a) => options.ids.includes(a.id)) : [];
   const settings = reconciled.settings,
-    selected = options.ids?.length
-      ? active.filter((a) => options.ids.includes(a.id))
-      : reconciled.selectedAccounts;
+    selected = options.ids === "all" || (options.ids?.length && !chosen.length) ? active : chosen.length ? chosen : reconciled.selectedAccounts;
   const ids = selected.map((a) => a.id),
     date = options.date ? day(options.date) : book.latest,
-    period = options.period || "1m";
+    period = options.period || "1m",
+    // A custom range from the review keeps its own end, within the valuation date.
+    end = options.from && options.to && day(options.to) < date ? day(options.to) : date;
   // Period figures come from the engine the return review uses, on daily closes.
   const closes = ids.length ? closeBook(db) : null;
   const summarize = (accountIds) =>
-    closes && date ? summarizePeriod(reviewContext(closes, accountIds), { to: date, period, from: options.from }) : null;
+    closes && date ? summarizePeriod(reviewContext(closes, accountIds), { to: end, period, from: options.from }) : null;
   const summary = summarize(ids);
   const current = combined(book, selected, date, settings);
   // The period figures stand as of the engine's latest valued close, as on the review page.
@@ -868,7 +870,8 @@ export async function dashboard(db, options = {}) {
       }),
     ),
     date,
-    start: summary?.period.from ?? date,
+    start: summary?.period.from ?? end,
+    end,
     fromOpening: summary?.fromOpening ?? false,
     period,
     startValue: overall.period?.start ?? null,
