@@ -49,6 +49,11 @@ async function verify() {
     const source = p.getByRole("dialog", { name: /Apple/ });
     await source.getByText("直接持有", { exact: true }).waitFor();
     await source.getByText("通过 IVV 持有", { exact: true }).waitFor();
+    assert.match(await source.innerText(), /今日涨跌幅\s*▲\s*\+0\.16%/);
+    await source.getByRole("button", { name: "直接持有", exact: true }).focus();
+    await p.keyboard.press("ArrowDown");
+    const fundLink = source.getByRole("button", { name: "通过 IVV 持有", exact: true });
+    assert.ok(await fundLink.evaluate((button) => button === document.activeElement));
     await p.keyboard.press("Escape");
     await source.waitFor({ state: "detached" });
 

@@ -26,7 +26,8 @@ import {
   saveEvent,
   transaction,
 } from "./ledger.js";
-import { loadBook, positions, accountSnapshot, storageContext } from "./flows.js";
+import { loadBook, live, positions, accountSnapshot, storageContext } from "./flows.js";
+import { attributedAsset } from "./gainBreakdown.js";
 import { recordIdentity, ibkrHistoryPlan, applyIbkrHistoryPlan, enrichIbkrExecutions, mergeIbkrExecution } from "./ibkrHistory.js";
 import { ibkrReportPrices } from "./ibkrPrices.js";
 import { saveBrokerValue } from "./ledger.js";
@@ -360,6 +361,28 @@ export function syncHost(db, history) {
     },
   };
 }
+export function securityHistory(db, { accountIds, assetIds, through, limit }) {
+  const date = day(through);
+  if (!Array.isArray(accountIds) || !accountIds.length || !Array.isArray(assetIds) || !assetIds.length) return [];
+  const assets = new Map(db.prepare("SELECT id,symbol,currency FROM sp_assets").all().map((a) => [a.id, a]));
+  const wanted = new Set(assetIds);
+  const candidates = db.prepare(`
+    SELECT data FROM sp_events
+    WHERE account IN (SELECT value FROM json_each(?)) AND day <= ?
+      AND (json_extract(data,'$.assetId') IN (SELECT value FROM json_each(?))
+        OR (json_extract(data,'$.activityType') = 'TAX' AND coalesce(json_extract(data,'$.assetId'),'') = ''))
+    ORDER BY day DESC, json_extract(data,'$.date') DESC, id
+  `).iterate(JSON.stringify(accountIds), date, JSON.stringify(assetIds));
+  const events = [];
+  for (const { data } of candidates) {
+    const event = json(data, {});
+    if (!live(event) || event.metadata?.supersededBy || !wanted.has(attributedAsset({ assets }, event))) continue;
+    events.push(event);
+    if (events.length === limit) break;
+  }
+  return events;
+}
+
 export function amendEvent(db, args) {
   const row = db.prepare("SELECT data FROM sp_events WHERE id=? AND account=?").get(args.id, args.account);
   if (!row) throw Error("找不到要更正的流水。");

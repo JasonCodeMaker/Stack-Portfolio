@@ -150,8 +150,9 @@ export function valuation(context, date, detail = false) {
     // An open reconciliation check, or a broker snapshot that disagrees with the ledger, is a
     // defect to fix on the imports page; the day is still valued from the local ledger (spec §5.1).
     const s = accountSnapshot(book, account, date, {}, pos);
+    const { cash: valuedCash, total: valuedTotal } = s.valuation;
     for (const warning of pos.warnings) ledgerGap(warning);
-    if (s.total == null) for (const warning of s.warnings) problems.add(warning);
+    if (valuedTotal == null) for (const warning of s.warnings) problems.add(warning);
     let cashKnownHere = true;
     for (const r of s.rows) {
       const asset = book.assets.get(r.assetId);
@@ -186,10 +187,10 @@ export function valuation(context, date, detail = false) {
           cash: r.type === "cash",
         });
     }
-    if (s.total == null) problems.add(account.name + " · 估值不完整");
-    else total = total.plus(s.total);
-    if (s.cash == null || (!cashKnownHere && !s.valuationSource)) cashKnown = false;
-    else cash = cash.plus(s.cash);
+    if (valuedTotal == null) problems.add(account.name + " · 估值不完整");
+    else total = total.plus(valuedTotal);
+    if (valuedCash == null || (!cashKnownHere && !s.valuationSource)) cashKnown = false;
+    else cash = cash.plus(valuedCash);
   }
   for (const { account, first, needsOpening, archivedBalance, history } of accounts) {
     if (account.mode !== "TRANSACTIONS") ledgerGap(account.name + " · 缺少可核实的交易及资金流水");
@@ -354,8 +355,9 @@ export function summarizePeriod(context, { to, period, from }) {
     .sort()[0];
   const range = resolvePeriod({ to, period, from, earliest });
   const opening = earliest && shiftDay(earliest, -1);
+  const beforeHistory = earliest && range.to < earliest;
   const days = [];
-  for (let date = range.base; date <= range.to; date = shiftDay(date, 1)) {
+  for (let date = range.base; !beforeHistory && date <= range.to; date = shiftDay(date, 1)) {
     const view = valuation(context, date);
     days.push({ date, view, flows: view.flowsKnown ? dayFlows(context, date) : null });
   }
@@ -443,10 +445,11 @@ export function summarizePeriod(context, { to, period, from }) {
     const carried = points.findLastIndex(known);
     return carried > first ? carried : -1;
   };
-  // A period is annualised over its calendar days, or from a later first valued close.
+  // Count calendar days from the measured start through the latest measurable return.
   const measuredFrom = origin > range.from ? origin : range.from;
-  const measuredDays = daysBetween(measuredFrom, range.to) + 1;
   const own = latestIndex((p) => p.portfolio != null, "portfolio");
+  const asOf = own < 0 ? null : points[own].date;
+  const measuredDays = asOf ? daysBetween(measuredFrom, asOf) + 1 : 0;
   const path = own < 0 ? null : drawdown(points, "portfolio", first, own);
   const twrValue = own < 0 ? null : points[own].portfolio;
   const quarter = resolvePeriod({ to: range.to, period: "3m" }).from;
@@ -492,7 +495,7 @@ export function summarizePeriod(context, { to, period, from }) {
     earliest: earliest || null,
     origin,
     fromOpening: origin === opening,
-    asOf: own < 0 ? null : points[own].date,
+    asOf,
     valuedThrough: money ? points[endIndex].date : null,
     measuredDays,
     startValue: money ? opened : null,

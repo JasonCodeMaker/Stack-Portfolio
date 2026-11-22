@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Bookmark, RefreshCw } from "lucide-react";
-import { api, aud, fmt, num, types, signedAud, signedPct, tone, Card, Delta, Empty, Field, Table, Tabs } from "./common";
+import { api, aud, directedPct, fmt, num, types, signedPct, tone, Card, Delta, Empty, Field, Table, Tabs } from "./common";
 import { DivergingBar, LineChart, divergingScale, seriesColor } from "./charts";
-import { Detail, Grid, useMainChartHeight } from "./Shell";
+import { Detail, Grid, useMainChartHeight, useRowKeys, useShell } from "./Shell";
 import { resolvePeriod } from "../periods.js";
 import { PeriodControl } from "./FilterControls";
 import { accountScope, choosePreset, chooseRange, isCustom, periodLabels, periodQuery } from "./filters.js";
@@ -14,16 +14,13 @@ const reviewLayout = {
   3: [["verdict", "chart"], ["contributions"], ["breakdown", "method"]],
 };
 
-const percent = (v) => (v == null ? "—" : signedPct(v));
-const points = (v) => fmt(Math.abs(v) * 100, 2) + " 个百分点";
-const gapText = (v) => (v == null ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + points(v));
-const gapPoints = (v) => percent(v).replace("%", " pp");
+const gapPoints = (v) => signedPct(v).replace("%", " pp");
 const seriesOf = (review) => [{ id: "portfolio", name: "我的组合" }, ...review.series];
 const errorText = (e) =>
   String(e.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
 const labels = { totalReturn: "区间收益", gap: "组合收益差", maxDrawdown: "最大回撤" };
 
-function Metric({ title, name = title, value, format = percent, children }) {
+function Metric({ title, name = title, value, format = signedPct, children }) {
   const direction = tone(value, 4);
   return (
     <section className="card kpi" aria-label={name}>
@@ -52,13 +49,14 @@ function Verdict({ review, benchmark, period }) {
       <Metric name="时间加权收益率" title={"时间加权收益率 · " + period} value={own.totalReturn}>
         {review.measuredDays < 365
           ? "不满一年，不显示年化"
-          : "年化 " + percent(own.annualised) +
-            (index.annualised == null ? "" : " · " + benchmark.name + " " + percent(index.annualised))}
+          : <>年化 <Delta rate={own.annualised} />
+              {index.annualised != null && <> · {benchmark.name} <Delta rate={index.annualised} /></>}
+            </>}
         {own.asOf && review.origin > review.base && <small>收益从 {review.origin} 起算</small>}
         {own.asOf && own.asOf !== review.to && <small>截至 {own.asOf} 收盘</small>}
       </Metric>
       <Metric title={"对" + benchmark.name} value={index.gap} format={gapPoints}>
-        {index.gap == null ? "暂无同期比较" : "指数 " + percent(index.totalReturn)}
+        {index.gap == null ? "暂无同期比较" : <>指数 <Delta rate={index.totalReturn} /></>}
         {index.gap != null && index.asOf !== own.asOf && <small>截至 {index.asOf} 同期比较</small>}
       </Metric>
       <Metric title="最大回撤" value={own.maxDrawdown}>
@@ -123,7 +121,7 @@ function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, z
     if (longest) bands.push({
       from: dates.indexOf(longest.from),
       to: dates.indexOf(longest.to),
-      label: "最长跑输 " + gapPoints(longest.worst),
+      label: "最长跑输 " + directedPct(longest.worst, " pp"),
     });
   } else if (view === "drawdown") {
     label = "回撤曲线";
@@ -138,7 +136,7 @@ function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, z
     if (own.drawdown?.trough) markers.push({
       index: dates.indexOf(own.drawdown.trough),
       value: own.drawdown.depth,
-      label: percent(own.drawdown.depth),
+      label: directedPct(own.drawdown.depth),
     });
   } else {
     label = "累计收益曲线";
@@ -168,7 +166,7 @@ function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, z
             <button type="button" className="btn sm" key={b.id} aria-pressed={benchmark.id === b.id}
               onClick={() => chooseBenchmark(b.id)}>
               <i aria-hidden="true" style={{ background: b.color }} />
-              {b.name} {gapPoints(review.metrics[b.id].gap)}
+              {b.name} <Delta rate={review.metrics[b.id].gap} rateUnit=" pp" />
             </button>
           ))}
         </div>
@@ -186,7 +184,7 @@ function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, z
             bands={bands}
             markers={markers}
             formatAxis={(v) => signedPct(v, 1).replace("%", view === "gap" ? " pp" : "%")}
-            formatValue={view === "gap" ? gapPoints : percent}
+            formatValue={(value) => directedPct(value, view === "gap" ? " pp" : "%")}
             onSelect={select}
             onZoom={zoom}
           />
@@ -242,6 +240,7 @@ function DataPanel({ review, mode, disabled, refresh, results }) {
             <dt>{b.name}</dt>
             <dd>{b.source}</dd>
             <dd className="cap">{coverage(b.first, b.last)}</dd>
+            <dd className="cap">区间最大回撤 <Delta rate={review.metrics[b.id].maxDrawdown} /></dd>
           </div>
         ))}
         <div>
@@ -274,7 +273,7 @@ function DataPanel({ review, mode, disabled, refresh, results }) {
   );
 }
 
-function DailyTable({ review, benchmark, select }) {
+function DailyTable({ review, benchmark, selected, select, docked }) {
   const [limit, setLimit] = useState(40);
   const own = review.metrics.portfolio;
   const index = review.metrics[benchmark.id];
@@ -291,17 +290,27 @@ function DailyTable({ review, benchmark, select }) {
       gap: index.gap != null ? through(point, index.asOf, point.gaps[benchmark.id]) : null,
     }];
   }).reverse();
+  const shown = days.slice(0, limit);
+  const rowKeys = useRowKeys(shown.map((row) => row.date), selected, docked ? select : undefined);
   return (
     <div className="review-daily">
       {days.length ? (
-        <Table head={["日期", ["当日收益", "num"], ["累计收益", "num"], [benchmark.name, "num"], ["收益差", "num"]]}>
-          {days.slice(0, limit).map((row) => (
-            <tr key={row.date}>
-              <td><button type="button" className="text-btn" onClick={() => select(row.date)}>{row.date}</button></td>
-              <td className="num">{percent(row.daily)}</td>
-              <td className="num">{percent(row.cumulative)}</td>
-              <td className="num">{percent(row.benchmark)}</td>
-              <td className={"num " + tone(row.gap, 4)}>{gapPoints(row.gap)}</td>
+        <Table head={["日期", ["当日收益", "num"], ["累计收益", "num"], [benchmark.name, "num"], ["收益差", "num"]]} onKeyDown={rowKeys}>
+          {shown.map((row) => (
+            <tr
+              key={row.date}
+              data-row={row.date}
+              className={row.date === selected ? "click sel" : "click"}
+              onClick={(e) => {
+                e.currentTarget.querySelector("button").focus({ preventScroll: true });
+                select(row.date);
+              }}
+            >
+              <td><button type="button" className="text-btn" aria-pressed={docked ? row.date === selected : undefined}>{row.date}</button></td>
+              <td className="num"><Delta rate={row.daily} /></td>
+              <td className="num"><Delta rate={row.cumulative} /></td>
+              <td className="num"><Delta rate={row.benchmark} /></td>
+              <td className="num"><Delta rate={row.gap} rateUnit=" pp" /></td>
             </tr>
           ))}
         </Table>
@@ -313,16 +322,16 @@ function DailyTable({ review, benchmark, select }) {
   );
 }
 
-const currency = (value) => signedAud(value, Number.isInteger(value) ? 0 : 2);
 const amount = (value) => <Delta amount={value} digits={Number.isInteger(value) ? 0 : 2} />;
 
 function Breakdown({ data, period, selected, select, openHolding }) {
   const item = data?.items.find((item) => item.key === selected);
+  const rowKeys = useRowKeys(item?.rows.filter((row) => row.kind === "security").map((row) => row.key) ?? []);
   return (
     <section className="card" aria-label="盈亏构成">
       <div className="row">
         <h2>盈亏构成</h2>
-        {data && <span className="cap">{period} · 合计 {currency(data.gain)}</span>}
+        {data && <span className="cap">{period} · 合计 {amount(data.gain)}</span>}
       </div>
       {!data ? <Empty>当前区间暂无盈亏构成。</Empty> : (
         <div className="review-breakdown">
@@ -339,9 +348,9 @@ function Breakdown({ data, period, selected, select, openHolding }) {
         <div className="tw review-drill">
           <table>
             <thead><tr><th scope="col">{item.label} · 按证券</th><th scope="col">金额</th></tr></thead>
-            <tbody>
+            <tbody onKeyDown={rowKeys}>
               {item.rows.map((row) => (
-                <tr key={row.key} className={row.kind === "security" ? "click" : undefined}
+                <tr key={row.key} data-row={row.kind === "security" ? row.key : undefined} className={row.kind === "security" ? "click" : undefined}
                   onClick={row.kind === "security" ? () => openHolding(row) : undefined}>
                   <td>
                     {row.kind === "security"
@@ -365,6 +374,8 @@ function Contributions({ data, total, period, expanded, setExpanded, openHolding
   const scale = divergingScale(rows.map((row) => row.gain ?? 0));
   const middle = rows.length > 15 ? rows.slice(7, -7) : [];
   const folded = middle.length > 0 && !expanded;
+  const shown = folded ? [...rows.slice(0, 7), ...rows.slice(-7)] : rows;
+  const rowKeys = useRowKeys(shown.filter((row) => row.kind === "security" || row.events.length).map((row) => row.key));
   const middleTotal = middle.every((row) => row.gain != null) ? middle.reduce((sum, row) => sum + row.gain, 0) : null;
   const renderRow = (row) => {
     const security = row.kind === "security";
@@ -382,7 +393,7 @@ function Contributions({ data, total, period, expanded, setExpanded, openHolding
       </>
     );
     return select ? (
-      <button type="button" key={row.key} className="review-contribution" onClick={select}>
+      <button type="button" key={row.key} data-row={row.key} className="review-contribution" onClick={select}>
         {content}
       </button>
     ) : (
@@ -393,14 +404,14 @@ function Contributions({ data, total, period, expanded, setExpanded, openHolding
     <section className="card" aria-label="持仓贡献">
       <div className="row">
         <h2>持仓贡献</h2>
-        {data && <span className="cap">{period} · 合计 {currency(total)}</span>}
+        {data && <span className="cap">{period} · 合计 {amount(total)}</span>}
       </div>
       {rows.length ? (
-        <div className="review-contributions">
+        <div className="review-contributions" onKeyDown={rowKeys}>
           {(folded ? rows.slice(0, 7) : rows).map(renderRow)}
           {middle.length > 0 && (
             <button type="button" className="review-fold" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-              {folded ? "中间 " + middle.length + " 项合计 " + currency(middleTotal) + " · 展开" : "只看前 7 和后 7"}
+              {folded ? <>中间 {middle.length} 项合计 {amount(middleTotal)} · 展开</> : "只看前 7 和后 7"}
             </button>
           )}
           {folded && rows.slice(-7).map(renderRow)}
@@ -411,10 +422,11 @@ function Contributions({ data, total, period, expanded, setExpanded, openHolding
 }
 
 function ContributionEvidence({ row, accountName, onPage }) {
+  const rowKeys = useRowKeys(row.events.map((e) => e.id));
   return (
-    <Table head={["日期", "账户", "记录", ["金额／成交", "num"], ["费用及税款", "num"], "来源凭据"]}>
+    <Table head={["日期", "账户", "记录", ["金额／成交", "num"], ["费用及税款", "num"], "来源凭据"]} onKeyDown={rowKeys}>
       {row.events.map((e) => (
-        <tr key={e.id}>
+        <tr key={e.id} data-row={e.id} className="click" onClick={() => onPage("imports", { tab: "history", account: e.account })}>
           <td>{e.date}</td>
           <td>{accountName(e.account)}</td>
           <td>{types[e.type] || e.type}</td>
@@ -428,7 +440,7 @@ function ContributionEvidence({ row, accountName, onPage }) {
           </td>
           <td>
             <span>{e.reference}</span>
-            <button type="button" className="text-btn" onClick={() => onPage("imports", { tab: "history", account: e.account })}>
+            <button type="button" className="text-btn">
               查看流水
             </button>
           </td>
@@ -460,6 +472,8 @@ function DayDetail({ review, date, select }) {
     };
   }, [review.token, date]);
   const events = tab === "all" ? review.events : review.events.filter((e) => e.date === date);
+  const shown = events.slice(0, limit);
+  const rowKeys = useRowKeys(shown.map((e) => e.id), null, (id) => select(shown.find((e) => e.id === id).date));
   const reading = review.points.find((p) => p.date === date);
   return (
     <Card
@@ -495,7 +509,7 @@ function DayDetail({ review, date, select }) {
             现金占比 <b>{detail.cashWeight == null ? "—" : fmt(detail.cashWeight * 100, 2) + "%"}</b>
           </span>
           <span>
-            自区间起点 <b className={tone(reading?.portfolio, 4)}>{percent(reading?.portfolio)}</b>
+            自区间起点 <b><Delta rate={reading?.portfolio} /></b>
           </span>
         </p>
       )}
@@ -536,11 +550,11 @@ function DayDetail({ review, date, select }) {
         )
       ) : events.length ? (
         <>
-          <Table head={["日期", "账户", "记录", ["数量 × 单价 / 金额", "num"], ["费用", "num"]]}>
-            {events.slice(0, limit).map((e) => (
-              <tr key={e.id}>
+          <Table head={["日期", "账户", "记录", ["数量 × 单价 / 金额", "num"], ["费用", "num"]]} onKeyDown={rowKeys}>
+            {shown.map((e) => (
+              <tr key={e.id} data-row={e.id} className="click" onClick={() => select(e.date)}>
                 <td>
-                  <button className="text-btn" onClick={() => select(e.date)}>
+                  <button type="button" className="text-btn">
                     {e.date}
                   </button>
                 </td>
@@ -568,7 +582,7 @@ function DayDetail({ review, date, select }) {
   );
 }
 
-function Notes({ review, notes, opened, reopen, save, busy, accountName }) {
+function Notes({ review, notes, opened, comparable, reopen, save, busy, accountName }) {
   const [draft, setDraft] = useState("");
   const [writing, setWriting] = useState(false);
   const draftId = useRef(null);
@@ -612,20 +626,21 @@ function Notes({ review, notes, opened, reopen, save, busy, accountName }) {
         <section className="review-note-comparison">
           <h3>记录时与当前重算</h3>
           <p>{opened.text}</p>
+          {!comparable && <p className="cap">当前无法按此笔记原有的账户范围与期间重算。</p>}
           <Table head={["对象", "指标", ["记录时", "num"], ["当前重算", "num"]]}>
             {seriesOf(review).flatMap(({ id, name }) =>
               Object.keys(labels)
                 .filter((key) => key in (opened.metrics[id] || {}))
                 .map((key) => {
-                  const format = key === "gap" ? gapText : percent;
-                  const before = format(opened.metrics[id][key]),
-                    after = format(review.metrics[id][key]);
+                  const unit = key === "gap" ? " 个百分点" : "%";
+                  const before = directedPct(opened.metrics[id][key], unit),
+                    after = comparable ? directedPct(review.metrics[id]?.[key], unit) : "—";
                   return (
                     <tr key={id + key}>
                       <td>{name}</td>
                       <td>{labels[key]}</td>
                       <td className="num">{before}</td>
-                      <td className={"num " + (before !== after ? "review-changed" : "")}>{after}</td>
+                      <td className={"num " + (comparable && before !== after ? "review-changed" : "")}>{after}</td>
                     </tr>
                   );
                 }),
@@ -659,6 +674,8 @@ function Notes({ review, notes, opened, reopen, save, busy, accountName }) {
 }
 
 export function Performance({ d, mode, run, reload, filters, onFilters, onPage }) {
+  const { tier } = useShell();
+  const docked = tier === "wide";
   // The account scope, valuation date and period are the global filters (spec §2.3).
   const valuationDate = filters.date || d.date;
   const scope = { ids: d.selected, ...periodQuery(filters, valuationDate) };
@@ -683,6 +700,11 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
   const inScope = loaded?.scopeKey === scopeKey;
   const names = new Map(d.accounts.map((a) => [a.id, a.name]));
   const accountName = (id) => names.get(id) || id;
+  const activeIds = d.accounts.filter((a) => a.active).map((a) => a.id);
+  const noteScopeAvailable = (note) => note.ids.length > 0 && note.ids.every((id) => activeIds.includes(id));
+  const comparable = opened && noteScopeAvailable(opened) && review?.to === opened.to &&
+    [review.from, review.requested].includes(opened.from) &&
+    review.ids.length === opened.ids.length && opened.ids.every((id) => review.ids.includes(id));
   useEffect(() => {
     let active = true;
     setError("");
@@ -728,6 +750,7 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
     change(chooseRange(filters, from, to, valuationDate));
   }
   const openDay = (date) => setDetail({ kind: "day", date });
+  const selectDaily = (date) => setDetail({ kind: docked ? "daily" : "day", date });
   const openHolding = (row) => onPage("holdings", { assetId: row.assetId, symbol: row.label });
   async function act(fn) {
     if (lock.current) return;
@@ -834,9 +857,10 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
             />,
             method: <MethodSummary />,
           }} />
-          {inScope && detail?.kind === "daily" && (
-            <Detail wide title="逐日数据" onClose={() => setDetail(null)}>
-              <DailyTable review={review} benchmark={benchmark} select={openDay} />
+          {inScope && detail?.kind === "daily" && (docked || !detail.date) && (
+            <Detail wide title={detail.date ? detail.date + " · 当日明细" : "逐日数据"} onClose={() => setDetail(null)}>
+              <DailyTable review={review} benchmark={benchmark} selected={detail.date} select={selectDaily} docked={docked} />
+              {detail.date && <DayDetail review={review} date={detail.date} select={selectDaily} />}
             </Detail>
           )}
           {inScope && detail?.kind === "methods" && (
@@ -850,7 +874,7 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
               />
             </Detail>
           )}
-          {inScope && detail?.kind === "day" && (
+          {inScope && (detail?.kind === "day" || (!docked && detail?.kind === "daily" && detail.date)) && (
             <Detail wide title={detail.date + " · 当日明细"} onClose={() => setDetail(null)}>
               <DayDetail review={review} date={detail.date} select={openDay} />
             </Detail>
@@ -865,11 +889,15 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
             review={review}
             notes={review.notes}
             opened={current ? opened : null}
+            comparable={comparable}
             reopen={(note) => {
-              const activeIds = d.accounts.filter((a) => a.active).map((a) => a.id),
-                ids = note.ids.filter((id) => activeIds.includes(id));
-              const range = chooseRange(filters, note.from, note.to, valuationDate);
-              change(ids.length ? { ...range, ids: accountScope(ids, activeIds) } : range, note);
+              if (!noteScopeAvailable(note)) {
+                setOpened(note);
+                return;
+              }
+              const date = note.to > valuationDate ? note.to : filters.date;
+              const range = chooseRange({ ...filters, date }, note.from, note.to, date || valuationDate);
+              change({ ...range, ids: accountScope(note.ids, activeIds) }, note);
               setVersion((v) => v + 1);
             }}
             save={save}

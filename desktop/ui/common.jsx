@@ -26,15 +26,23 @@ export const tone = (n, digits = 2) => {
   const sign = n == null || !Number.isFinite(Number(n)) ? "" : signOf(n, digits, true);
   return sign === "+" ? "gain" : sign === "−" ? "loss" : "";
 };
-export function Delta({ amount, rate, digits = 2, currency = true }) {
+const directionMark = (direction) => direction === "gain" ? "▲" : direction === "loss" ? "▼" : "";
+const rateText = (rate, unit = "%") => signedPct(rate).replace("%", unit);
+
+export function directedPct(rate, unit) {
+  const mark = directionMark(tone(rate, 4));
+  return (mark ? mark + " " : "") + rateText(rate, unit);
+}
+
+export function Delta({ amount, rate, digits = 2, currency = true, rateUnit }) {
   const basis = amount ?? rate,
     direction = tone(basis, amount == null ? 4 : digits);
   if (basis == null) return <span className="delta">—</span>;
   return (
     <span className={"delta " + direction}>
-      {direction && <i aria-hidden="true">{direction === "gain" ? "▲" : "▼"}</i>}
+      {direction && <i aria-hidden="true">{directionMark(direction)}</i>}
       {amount != null && (currency ? signedAud(amount, digits) : signedAud(amount, digits).replace("A$", ""))}
-      {rate != null && <em>{amount != null ? "（" + signedPct(rate) + "）" : signedPct(rate)}</em>}
+      {rate != null && <em>{amount != null ? "（" + rateText(rate, rateUnit) + "）" : rateText(rate, rateUnit)}</em>}
     </span>
   );
 }
@@ -127,7 +135,7 @@ export function Empty({ children }) {
   );
 }
 // A heading written as [label, "num"] aligns right, over a column of figures.
-export function Table({ head, children }) {
+export function Table({ head, onKeyDown, children }) {
   return (
     <div className="table-scroll">
       <table>
@@ -140,7 +148,7 @@ export function Table({ head, children }) {
             ))}
           </tr>
         </thead>
-        <tbody>{children}</tbody>
+        <tbody onKeyDown={onKeyDown}>{children}</tbody>
       </table>
     </div>
   );

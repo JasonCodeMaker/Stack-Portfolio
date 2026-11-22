@@ -132,7 +132,7 @@ test("before every listing has closed, the daily change stays on the latest clos
   assert.deepEqual([today.date, today.previous], ["2025-02-11", "2025-02-10"]);
 });
 
-test("a company tile takes the price change of its direct listing and has none when held only through ETFs", async (t) => {
+test("company tiles use dated closes from direct or unambiguously known listings", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "today-company-"));
   const db = createBook(path.join(dir, "test.sqlite"), Buffer.from("raw:" + randomBytes(32).toString("hex")));
   t.after(() => {
@@ -155,4 +155,20 @@ test("a company tile takes the price change of its direct listing and has none w
   // The amounts of the security rows and account items still add up to the portfolio.
   near(sum(d.today.securities.map((r) => r.change)), d.today.change);
   near(sum(d.byAccount.map((v) => v.today.change)), d.today.change);
+
+  const funds = createAccount(db, "ETF-only account");
+  db.prepare("INSERT INTO sp_anchors VALUES(?,?,?,?)").run(funds, "2026-10-27", '{"ivv":"100"}', "{}");
+  const otherMarket = resolveAsset(db, { symbol: "AAPL", exchangeMic: "XASX" }, "AUD");
+  savePrice(db, otherMarket, "2026-10-27", 100, "close");
+  savePrice(db, otherMarket, demoDay, 200, "close");
+  const indirect = await dashboard(db, { ids: [funds], date: demoDay, period: "mtd" });
+  assert.equal(indirect.exposure.rows.find((r) => r.key === aapl.key).directAud, 0);
+  assert.equal(indirect.today.companies[aapl.key], listing.change);
+  assert.equal(indirect.today.companies[company("MSFT").key], null);
+
+  const otherListing = resolveAsset(db, { symbol: "AAPL", exchangeMic: "XNYS" }, "USD");
+  savePrice(db, otherListing, "2026-10-27", 100, "close");
+  savePrice(db, otherListing, demoDay, 200, "close");
+  const ambiguous = await dashboard(db, { ids: [funds], date: demoDay, period: "mtd" });
+  assert.equal(ambiguous.today.companies[aapl.key], null);
 });

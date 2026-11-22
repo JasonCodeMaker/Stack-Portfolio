@@ -2,9 +2,9 @@ import React, { useMemo, useState } from "react";
 import { buildComposition } from "../allocation/domain/composition";
 import { buildBreakdownNodes } from "../allocation/domain/visualization";
 import { buildRebalanceModel, CASH_TARGET, fullTargetTotal, OTHER_INVESTMENTS, STOCKS_TARGET } from "../allocation/domain/rebalance";
-import { api, aud, fmt, pct, signedPct, Card, Field, Modal, Table, Empty } from "./common";
+import { api, aud, directedPct, fmt, pct, Card, Delta, Field, Modal, Table, Empty } from "./common";
 import { BulletBar, RankedBars, StackedBar, Treemap, changeTileColor } from "./charts";
-import { Detail, Grid, useMainChartHeight, useShell } from "./Shell";
+import { Detail, Grid, useMainChartHeight, useRowKeys, useShell } from "./Shell";
 import "./allocation.css";
 const labels = {
   "Individual stocks": "个股",
@@ -238,7 +238,8 @@ function DailyKey() {
 }
 
 function CompanySources({ company, holdings, weight, dayChange, day, onClose, onPage }) {
-  const groups = Map.groupBy(company.sources, (s) => holdings.get(s.holdingId)?.assetId ?? s.holdingId);
+  const groups = [...Map.groupBy(company.sources, (s) => holdings.get(s.holdingId)?.assetId ?? s.holdingId)];
+  const rowKeys = useRowKeys(groups.filter(([, sources]) => holdings.has(sources[0].holdingId)).map(([key]) => key));
   return (
     <Detail title={company.label + (company.ticker ? " · " + company.ticker : "")} onClose={onClose}>
       <dl className="alloc-source-stats">
@@ -249,21 +250,22 @@ function CompanySources({ company, holdings, weight, dayChange, day, onClose, on
         </div>
         <div>
           <dt>今日涨跌幅</dt>
-          <dd className={dayChange > 0 ? "up" : dayChange < 0 ? "down" : ""}>{signedPct(dayChange)}</dd>
+          <dd><Delta rate={dayChange} /></dd>
           <span className="cap">{day}</span>
         </div>
       </dl>
       <p className="cap">这些钱从哪来</p>
-      <Table head={["来源", ["占总资产", "num"], ["金额（AUD）", "num"]]}>
-        {[...groups].map(([key, sources]) => {
+      <Table head={["来源", ["占总资产", "num"], ["金额（AUD）", "num"]]} onKeyDown={rowKeys}>
+        {groups.map(([key, sources]) => {
           const source = sources[0], holding = holdings.get(source.holdingId);
           const direct = source.kind === "direct";
           const label = direct ? "直接持有" : "通过 " + (holding?.ticker || source.etfSymbol) + " 持有";
           const value = sumBy(sources, "amountAud");
           return (
-            <tr key={key}>
+            <tr key={key} data-row={holding ? key : undefined} className={holding ? "click" : undefined}
+              onClick={holding ? () => holdingPage(onPage, holding) : undefined}>
               <td>
-                {holding ? <button className="alloc-link" type="button" onClick={() => holdingPage(onPage, holding)}>{label}</button> : <b>{label}</b>}
+                {holding ? <button className="alloc-link" type="button">{label}</button> : <b>{label}</b>}
                 {direct && holding && <span className="cap alloc-source-ticker">{holding.ticker}</span>}
               </td>
               <td className="num">{pct(weight(value))}</td>
@@ -342,8 +344,8 @@ function CompanyChart({ d, weight, holdings, onPage, openFund }) {
       value: company.valueAud,
       direct: company.directAud,
       change,
-      detail: color === "day" ? [pct(weight(company.valueAud)), signedPct(change)] : [pct(weight(company.valueAud))],
-      title: `${company.label} · ${ticker} · 占总资产 ${pct(weight(company.valueAud))} · 直接 ${pct(weight(company.directAud))} + 通过 ETF ${pct(weight(company.viaEtfsAud))} · 今日 ${signedPct(change)}`,
+      detail: color === "day" ? [pct(weight(company.valueAud)), directedPct(change)] : [pct(weight(company.valueAud))],
+      title: `${company.label} · ${ticker} · 占总资产 ${pct(weight(company.valueAud))} · 直接 ${pct(weight(company.directAud))} + 通过 ETF ${pct(weight(company.viaEtfsAud))} · 今日 ${directedPct(change)}`,
     });
   }
   // Combine aliases which have the same displayed sector before drawing that sector's grey block.

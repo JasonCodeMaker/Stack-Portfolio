@@ -3,6 +3,8 @@
 // each account and each security row use the same two closes, so the amounts add up; a security
 // row's 涨跌幅 is instead the price change of its listing in the trading currency.
 import Decimal from "decimal.js";
+import { canonicalIdentity, preferUsListingKey, usListingKey } from "./allocation/domain/identifiers";
+import { securityType } from "./allocation/domain/portfolio";
 import { last } from "./flows.js";
 import { closingDay, marketFor, shiftDay } from "./marketDays.js";
 import { dayFlows, reviewContext, timeWeightedSeries, valuation } from "./periodSummary.js";
@@ -141,9 +143,9 @@ export function todayChange(book, ids, date) {
   return { ...portfolio, accounts };
 }
 
-// The 涨跌幅 of a company tile: the price change of its directly held listings, weighted by value
-// when there are several; none when it is held only through ETFs.
-function companyChange(row, holdings, book, date) {
+// Weight directly held listings by value. For ETF-only exposure, use a known listing
+// when the exposure identifies exactly one security in the ledger.
+function companyChange(row, holdings, listings, book, date) {
   let weighted = D(0),
     weight = D(0);
   for (const source of row.sources) {
@@ -154,7 +156,10 @@ function companyChange(row, holdings, book, date) {
     weighted = weighted.plus(D(change).mul(source.amountAud));
     weight = weight.plus(source.amountAud);
   }
-  return weight.gt(0) ? weighted.div(weight).toNumber() : null;
+  if (weight.gt(0)) return weighted.div(weight).toNumber();
+  if (row.type !== "stock" || row.sources.some((source) => source.kind === "direct")) return null;
+  const matches = listings.get(row.key);
+  return matches?.length === 1 ? priceChange(book, matches[0].id, date)?.change ?? null : null;
 }
 
 // Puts the daily change on the dashboard's accounts, holding rows, merged holdings and exposure.
@@ -172,8 +177,13 @@ export function applyTodayChange(today, book, { accounts, holdings, exposure }) 
   if (!today) return null;
   const { accounts: _, ...portfolio } = today;
   const byId = new Map(accounts.flatMap((a) => a.rows).map((r) => [r.id, r]));
+  const stocks = [...book.assets.values()].filter((a) => securityType({ ...a, instrumentType: a.kind }) === "stock");
+  const listings = Map.groupBy(stocks, (asset) => {
+    const key = canonicalIdentity(asset).key;
+    return usListingKey(asset) ?? (key && preferUsListingKey(key));
+  });
   portfolio.companies = Object.fromEntries(
-    exposure.rows.map((row) => [row.key, companyChange(row, byId, book, today.date)]),
+    exposure.rows.map((row) => [row.key, companyChange(row, byId, listings, book, today.date)]),
   );
   return portfolio;
 }

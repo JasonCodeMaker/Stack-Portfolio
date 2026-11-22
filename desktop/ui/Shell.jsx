@@ -192,22 +192,23 @@ function Inspector({ title, onClose, children }) {
   );
 }
 
-// ↑↓ in a table moves the selected row. Spread the handler on the element holding the rows and mark each
-// row with data-row={id}; focus follows the selection so the docked inspector keeps updating.
+// Arrow keys move focus through rows marked with data-row. Supply onSelect when
+// the rows select details within the page.
 export function useRowKeys(ids, selected, onSelect) {
   return useCallback(
     (e) => {
       if (e.target.closest("input, select, textarea")) return;
       const focused = e.target.closest("[data-row]")?.dataset.row;
-      const current = ids.includes(selected) ? selected : focused;
+      const current = ids.includes(focused) ? focused : ids.includes(selected) ? selected : null;
       if (current == null) return;
       const next = stepRow(ids, current, e.key);
       if (next === undefined) return;
       e.preventDefault();
-      if (next === selected) return;
-      onSelect(next);
+      if (next !== selected) onSelect?.(next);
       const row = e.currentTarget.querySelector(`[data-row="${CSS.escape(next)}"]`);
-      (row?.querySelector("button, a[href], [tabindex]") || row)?.focus();
+      const controls = "button, a[href], [tabindex]";
+      const target = row?.matches(controls) ? row : row?.querySelector(controls);
+      target?.focus();
     },
     [ids, selected, onSelect],
   );

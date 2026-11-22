@@ -1,6 +1,6 @@
 import React, { useId, useState } from "react";
 import { aud, Delta, Empty, fmt, pct, signedAud } from "./common";
-import { Detail, Grid, useMainChartHeight } from "./Shell";
+import { Detail, Grid, useMainChartHeight, useRowKeys } from "./Shell";
 import { LineChart, seriesColor } from "./charts";
 import { PeriodControl } from "./FilterControls";
 import { isCustom, periodLabels } from "./filters.js";
@@ -123,6 +123,7 @@ export function Overview({ d, onPage, filters, onFilters }) {
   const day = filters.date ? "当日" : "今日";
   const { total } = d.valuation;
   const top = d.holdings.securities.filter((s) => s.value != null).slice(0, 5);
+  const holdingKeys = useRowKeys(top.map((s) => s.key));
   function openHolding(security) {
     // The overview row covers every account. Open the largest account position for its listing.
     const position = security && d.rows
@@ -201,9 +202,9 @@ export function Overview({ d, onPage, filters, onFilters }) {
                 <div className="overview-table">
                   <table>
                     <thead><tr><th>证券</th><th>市值</th><th>占比</th><th>{day}涨跌</th></tr></thead>
-                    <tbody>
+                    <tbody onKeyDown={holdingKeys}>
                       {top.map((s) => (
-                        <tr className="click" key={s.key} onClick={() => openHolding(s)}>
+                        <tr className="click" key={s.key} data-row={s.key} onClick={() => openHolding(s)}>
                           <td>
                             <button className="ticker" type="button">{s.ticker}</button>
                             {s.name && <i title={s.name}>{s.name}</i>}

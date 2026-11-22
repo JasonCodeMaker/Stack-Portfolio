@@ -457,9 +457,10 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
   const itemizedTotal = complete.securities && complete.cash
     ? sum.securities.plus(sum.cash).toNumber() : null;
   const accountTotal = (cash) =>
-    useBroker ? Number(broker.nav) : cash != null && securities != null ? D(cash).plus(securities).toNumber() : null;
-  const total = accountTotal(cash);
-  const valuationCash = brokerCash ?? ledgerCash;
+    cash != null && securities != null ? D(cash).plus(securities).toNumber() : null;
+  const brokerTotal = useBroker ? Number(broker.nav) : null;
+  const total = brokerTotal ?? accountTotal(cash);
+  const valuationCash = ledgerCash ?? brokerCash;
   return {
     id: acc.id,
     name: acc.name,
@@ -469,7 +470,7 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     itemizedCash: complete.cash ? sum.cash.toNumber() : null,
     securities,
     total,
-    valuation: { cash: valuationCash, total: accountTotal(valuationCash) },
+    valuation: { cash: valuationCash, total: accountTotal(ledgerCash) ?? brokerTotal },
     valuationSource: useBroker ? broker.source : null,
     itemizedTotal,
     valuationDifference: useBroker && itemizedTotal != null ? D(broker.nav).minus(itemizedTotal).toNumber() : null,
@@ -964,8 +965,12 @@ export async function dashboard(db, options = {}) {
     row.weight = portfolio.totalAud > 0 && !unpriced.has(row.key) ? row.valueAud / portfolio.totalAud : null;
   const listings = targetListings([...book.assets.values()], settings.typeOverrides);
   const targetSettings = readTargets(db, ids, active.map((a) => a.id), listings);
-  const records = await new EtfCache(ctx).list(),
-    snapshots = new Map(records.filter((r) => r.snapshot).map((r) => [r.etfKey, r.snapshot]));
+  const records = await new EtfCache(ctx).list();
+  const datedSnapshots = records.filter((r) => {
+    const asOf = dayOf(r.snapshot?.asOfDate);
+    return asOf && asOf <= date;
+  });
+  const snapshots = new Map(datedSnapshots.map((r) => [r.etfKey, r.snapshot]));
   const exposure = buildExposureModel({
     holdings: current.rows,
     snapshots,

@@ -44,6 +44,7 @@ const {
   recordAccountValue,
   addManual,
   recordHolding,
+  securityHistory,
   amendEvent,
   brokerReport,
   connectWebull,
@@ -319,8 +320,11 @@ const handlers = {
     return { autoUpdate: marketAutoUpdate(), last: preference(db, "app", "market.updated") };
   },
   account: (args) => createAccount(requireBook(), args.name, args.currency),
-  history({ account: id, limit = 200, offset = 0, text = "" }) {
-    const rows = requireBook()
+  history({ account: id, limit = 200, offset = 0, text = "", accountIds, assetIds, through }) {
+    const book = requireBook();
+    const pageSize = Math.min(500, Math.max(1, Math.trunc(Number(limit)) || 200));
+    if (assetIds) return securityHistory(book, { accountIds, assetIds, through, limit: pageSize });
+    const rows = book
       .prepare(
         "SELECT data FROM sp_events WHERE (?='' OR account=?) AND (?='' OR instr(lower(data),lower(?))>0) ORDER BY day DESC,id LIMIT ? OFFSET ?",
       )
@@ -329,7 +333,7 @@ const handlers = {
         id || "",
         text,
         text,
-        Math.min(500, Math.max(1, Number(limit) || 200)),
+        pageSize,
         Math.max(0, Number(offset) || 0),
       );
     return rows.map((r) => json(r.data, {}));

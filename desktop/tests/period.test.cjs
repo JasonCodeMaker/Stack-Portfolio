@@ -55,6 +55,21 @@ test("a period reaching before the first record starts on that record", () => {
   assert.throws(() => resolvePeriod({ to: "2025-01-01", from: "2025-02-01" }), /起点/);
 });
 
+test("the all-time period is empty when the valuation date precedes the first account record", async (t) => {
+  const { db, account, event } = book(t);
+  const a = account("With opening balance", "2026-09-30", 1000);
+  const b = createAccount(db, "Opened by deposit");
+  event(b, "2026-09-30", "DEPOSIT", 1000);
+  const to = "2025-12-31";
+
+  for (const ids of [[a], [b]]) {
+    const overview = await dashboard(db, { ids, date: to, period: "all" });
+    const review = portfolioReview(db, { ids, to, period: "all" });
+    assert.deepEqual([overview.start, overview.end, overview.pnl, overview.points], [to, to, null, []]);
+    assert.deepEqual([review.from, review.to, review.money, review.points], [to, to, null, []]);
+  }
+});
+
 test("a period of a full year has an annualised return and a drawdown with its peak, trough and recovery", (t) => {
   const { db, account, event } = book(t);
   const a = account("A", "2024-01-01", 1000);
@@ -80,6 +95,21 @@ test("a period of a full year has an annualised return and a drawdown with its p
   near(month.drawdown.depth, -0.2);
   assert.deepEqual([month.drawdown.peak, month.drawdown.trough, month.drawdown.recovery], ["2025-03-02", "2025-03-03", null]);
   assert.equal(month.drawdownSeries, null);
+});
+
+test("annualisation requires a year of measurable returns through the latest close", (t) => {
+  const { db, account, event } = book(t);
+  const a = account("A", "2024-12-31", 1000);
+  const asset = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
+  event(a, "2025-01-02", "BUY", null, { assetId: asset, quantity: 10, unitPrice: 100 });
+  savePrice(db, asset, "2025-01-02", 100, "close");
+  savePrice(db, asset, "2025-12-29", 120, "close");
+
+  const summary = periodSummary(db, { ids: [a], to: "2025-12-31", period: "1y" });
+  assert.equal(summary.asOf, "2025-12-29");
+  near(summary.twr, 0.2);
+  assert.equal(summary.measuredDays, 363);
+  assert.equal(summary.annualised, null);
 });
 
 test("the overview and the review report the same investment gain and time-weighted return for a period", async (t) => {
