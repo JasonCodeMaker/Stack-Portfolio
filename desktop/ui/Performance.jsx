@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Bookmark, ChevronDown, RefreshCw, TriangleAlert, Wallet } from "lucide-react";
+import { Bookmark, RefreshCw, TriangleAlert } from "lucide-react";
 import { api, aud, fmt, num, types, signedAud, signedPct, tone, Card, Empty, Field, Modal, Table, Tabs } from "./common";
 import { TimeChart, seriesColors } from "./Chart";
-import { periods } from "./Cockpit";
+import { PeriodControl } from "./FilterControls";
+import { accountScope, choosePreset, chooseRange, periodQuery } from "./filters.js";
 import "./performance.css";
 
 const percent = (v) => (v == null ? "—" : signedPct(v));
@@ -584,13 +585,13 @@ function Notes({ review, notes, opened, reopen, save, busy, accountName }) {
   );
 }
 
-export function Performance({ d, mode, run, reload, initial = {} }) {
-  const [scope, setScope] = useState({ ids: d.selected, to: d.date, period: "1m", ...initial });
+export function Performance({ d, mode, run, reload, filters, onFilters }) {
+  // The account scope, valuation date and period are the global filters (spec §2.3).
+  const scope = { ids: d.selected, ...periodQuery(filters, d.date) };
   const [version, setVersion] = useState(0),
     [loaded, setLoaded] = useState(null),
     [error, setError] = useState("");
-  const [editIds, setEditIds] = useState(null),
-    [picked, setPicked] = useState(null),
+  const [picked, setPicked] = useState(null),
     [opened, setOpened] = useState(null);
   const [busy, setBusy] = useState(false),
     [updating, setUpdating] = useState(0),
@@ -641,10 +642,10 @@ export function Performance({ d, mode, run, reload, initial = {} }) {
     setOpened(note);
     setPicked(null);
     setResults([]);
-    setScope(next);
+    onFilters(next);
   }
   function zoom(from, to) {
-    change({ ids: scope.ids, from, to });
+    change(chooseRange(filters, from, to, d.date));
   }
   const selected = review && picked >= review.from && picked <= review.to ? picked : review?.metrics.portfolio.asOf || review?.to;
   async function act(fn) {
@@ -684,32 +685,14 @@ export function Performance({ d, mode, run, reload, initial = {} }) {
   const late = review && review.origin > review.requested;
   return (
     <>
-      <div className="review-filters">
-        <button onClick={() => setEditIds([...scope.ids])}>
-          <Wallet size={15} />
-          {scope.ids.map(accountName).join("、") || "选择账户"} <ChevronDown size={13} />
-        </button>
-        {review && (
-          <form
-            key={review.from + review.to}
-            onSubmit={(e) => {
-              e.preventDefault();
-              const form = new FormData(e.currentTarget);
-              zoom(form.get("from"), form.get("to"));
-            }}
-          >
-            <input aria-label="复盘起点" type="date" name="from" required defaultValue={review.from} />
-            <span>至</span>
-            <input aria-label="复盘终点" type="date" name="to" required defaultValue={review.to} />
-            <button>应用区间</button>
-          </form>
-        )}
-        <Tabs
-          items={periods}
-          value={scope.from ? "" : scope.period}
-          onChange={(period) => change({ ids: scope.ids, to: d.date, period })}
-        />
-      </div>
+      <PeriodControl
+        filters={filters}
+        range={review && { from: review.from, to: review.to }}
+        valuationDate={d.date}
+        custom
+        days
+        onChange={(next) => change(next)}
+      />
       {updating > 0 && (
         <p className="review-status" role="status">
           <RefreshCw size={14} /> 正在更新指数、汇率和持仓收盘价…
@@ -720,7 +703,7 @@ export function Performance({ d, mode, run, reload, initial = {} }) {
           <p role="alert" className="warning">
             {error}
           </p>
-          <button onClick={() => change({ ids: scope.ids, to: d.date, period: "1m" })}>重设区间</button>
+          <button onClick={() => change(choosePreset(filters, "ytd"))}>重设区间</button>
         </Card>
       ) : !scope.ids.length ? (
         <Empty>请先建立或选择一个有投资记录的账户。</Empty>
@@ -761,7 +744,10 @@ export function Performance({ d, mode, run, reload, initial = {} }) {
             notes={review.notes}
             opened={current ? opened : null}
             reopen={(note) => {
-              change({ ids: note.ids, from: note.from, to: note.to }, note);
+              const activeIds = d.accounts.filter((a) => a.active).map((a) => a.id),
+                ids = note.ids.filter((id) => activeIds.includes(id));
+              const range = chooseRange(filters, note.from, note.to, d.date);
+              change(ids.length ? { ...range, ids: accountScope(ids, activeIds) } : range, note);
               setVersion((v) => v + 1);
             }}
             save={save}
@@ -777,33 +763,6 @@ export function Performance({ d, mode, run, reload, initial = {} }) {
             results={results}
           />
         </div>
-      )}
-      {editIds && (
-        <Modal title="复盘账户" close={() => setEditIds(null)}>
-          {d.accounts.map((a) => (
-            <label key={a.id} className="check">
-              <input
-                type="checkbox"
-                checked={editIds.includes(a.id)}
-                onChange={(e) =>
-                  setEditIds(e.target.checked ? [...editIds, a.id] : editIds.filter((id) => id !== a.id))
-                }
-              />
-              {a.name}
-              {!a.active && " · 已归档"}
-            </label>
-          ))}
-          <button
-            disabled={!editIds.length}
-            className="primary"
-            onClick={() => {
-              change({ ...scope, ids: editIds });
-              setEditIds(null);
-            }}
-          >
-            应用账户
-          </button>
-        </Modal>
       )}
     </>
   );

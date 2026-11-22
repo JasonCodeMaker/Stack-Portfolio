@@ -640,13 +640,6 @@ tr.clickable:hover td {
   gap: 10px;
   flex-wrap: wrap;
 }
-.date-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  color: var(--muted);
-}
 .metric strong.gain {
   color: var(--gain);
 }
