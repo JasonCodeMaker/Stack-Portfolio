@@ -8,6 +8,7 @@ import { loadAllocationSettings, reconcileAccountSelection } from "./allocation/
 import { loadRebalanceSettings } from "./allocation/storage/rebalance";
 import { closingDay, marketFor, shiftDay } from "./marketDays.js";
 import { closeBook, reviewContext, summarizePeriod } from "./periodSummary.js";
+import { cumulativeIncome, gainBreakdown } from "./gainBreakdown.js";
 import { applyTodayChange, todayChange } from "./todayChange.js";
 
 const D = (n) => new Decimal(n ?? 0);
@@ -510,6 +511,8 @@ function summarizeHoldings(rows) {
       value,
       gain,
       cost,
+      realised: total("realised"),
+      dividends: total("dividends"),
       quantity: holdings.reduce((n, h) => n.plus(h.rawQuantity), D(0)).toFixed(),
       rowIds: holdings.map((r) => r.id),
     });
@@ -631,7 +634,16 @@ const emptyLot = () => ({ units: D(0), local: D(0), aud: D(0), known: true, audK
 // Average cost of the units still held, replayed from the account's own trades. A lot whose
 // history cannot explain the quantity held today reports no cost.
 export function costBasis(book, acc, date) {
-  const lots = new Map();
+  return replayLots(book, acc, date).lots;
+}
+// The average-cost replay behind costBasis, with the cost given up by each sale and security
+// transfer out and the cost taken on by each security transfer in (null where unknown).
+// `fees: false` leaves trading fees out of cost; `fallback(assetId, day)` supplies a unit cost
+// in the trading currency for units that arrive without cost evidence.
+export function replayLots(book, acc, date, { fees = true, fallback } = {}) {
+  const lots = new Map(),
+    sales = [],
+    transfers = [];
   const lot = (id) => {
     if (!lots.has(id)) lots.set(id, emptyLot());
     return lots.get(id);
@@ -641,9 +653,13 @@ export function costBasis(book, acc, date) {
       ccy = book.assets.get(id)?.currency;
     l.units = l.units.plus(units);
     if (!unit || !unit.gt(0) || !ccy || (currency && currency !== ccy)) {
-      l.known = false;
-      l.audKnown = false;
-      return;
+      unit = fallback?.(id, on);
+      extra = D(0);
+      if (!unit) {
+        l.known = false;
+        l.audKnown = false;
+        return null;
+      }
     }
     const cost = units.mul(unit).plus(extra);
     l.local = l.local.plus(cost);
@@ -659,6 +675,7 @@ export function costBasis(book, acc, date) {
       }
     }
     else l.audKnown = false;
+    return cost;
   }
   // Within a trading day, keep execution order even when the Flex reporting clock crossed midnight.
   const time = (e) => Date.parse(e.metadata?.ibkrReportedDateTime ? e.metadata.ibkrReportedDateTime + "Z" : e.date);
@@ -683,6 +700,8 @@ export function costBasis(book, acc, date) {
       if (!l.units.eq(r.quantity)) {
         if (!r.quantityReference && r.local_cost == null && r.aud_cost == null) continue;
         Object.assign(l, emptyLot(), { units: D(r.quantity), known: false, audKnown: false, receipt: null });
+        const unit = fallback?.(r.asset, r.day);
+        if (unit) Object.assign(l, { local: D(r.quantity).mul(unit), known: true });
       }
       const local = r.local_cost ?? (book.assets.get(r.asset)?.currency === "AUD" ? r.aud_cost : null);
       if (local != null || r.aud_cost != null) {
@@ -698,12 +717,14 @@ export function costBasis(book, acc, date) {
       on = dayOf(e.date);
     if (records[at]?.day < on) applyEvidence(shiftDay(on, -1));
     if (e.activityType === "BUY")
-      acquire(e.assetId, units, D(e.unitPrice), D(e.fee).abs().plus(D(e.tax).abs()), on, e.currency, e.metadata?.ibkrExecution);
+      acquire(e.assetId, units, D(e.unitPrice), fees ? D(e.fee).abs().plus(D(e.tax).abs()) : D(0), on, e.currency, e.metadata?.ibkrExecution);
     else if (e.activityType === "TRANSFER_IN") {
-      acquire(e.assetId, units, D(e.unitPrice), D(0), on);
+      transfers.push({ event: e, day: on, cost: acquire(e.assetId, units, D(e.unitPrice), D(0), on) });
     } else if (["SELL", "TRANSFER_OUT"].includes(e.activityType)) {
       const l = lot(e.assetId);
       const left = l.units.minus(units);
+      const cost = l.known && !left.lt("-0.00000001") ? l.local.mul(units).div(l.units) : null;
+      (e.activityType === "SELL" ? sales : transfers).push({ event: e, day: on, cost });
       if (left.lt("-0.00000001"))
         lots.set(e.assetId, { ...emptyLot(), units: left, known: false, audKnown: false });
       else if (left.lte("0.00000001")) lots.set(e.assetId, emptyLot());
@@ -716,7 +737,7 @@ export function costBasis(book, acc, date) {
     }
   }
   applyEvidence(date);
-  return lots;
+  return { lots, sales, transfers };
 }
 export function storageContext(db, scope) {
   const statement = db.prepare("INSERT OR REPLACE INTO sp_prefs VALUES(?,?,?)");
@@ -771,9 +792,12 @@ export async function dashboard(db, options = {}) {
     period = options.period || "1m";
   // Period figures come from the engine the return review uses, on daily closes.
   const closes = ids.length ? closeBook(db) : null;
-  const summarize = (accountIds) =>
-    closes && date ? summarizePeriod(reviewContext(closes, accountIds), { to: date, period, from: options.from }) : null;
-  const summary = summarize(ids);
+  const measure = (context) => summarizePeriod(context, { to: date, period, from: options.from });
+  const summarize = (accountIds) => (closes && date ? measure(reviewContext(closes, accountIds)) : null);
+  const context = closes && date ? reviewContext(closes, ids) : null;
+  const summary = context && measure(context);
+  // The same breakdown as the return review shows for this period.
+  const breakdown = context && gainBreakdown(context, summary);
   const current = combined(book, selected, date, settings);
   // The period figures stand as of the engine's latest valued close, as on the review page.
   const result = (accounts, total, s) => ({
@@ -792,6 +816,29 @@ export async function dashboard(db, options = {}) {
       .map((data) => last(data.get(acc.id), date)?.day).filter(Boolean).sort().at(-1) || null;
     view.result = result([acc], view.total, ids.length > 1 ? summarize([acc.id]) : summary);
     const lots = costBasis(book, acc, date);
+    // Cumulative realised gain and dividends since the account's first record, sold-out securities included.
+    const income = cumulativeIncome(book, acc, date);
+    const amount = (assetId, field) => income.get(assetId)?.[field].toNumber() ?? 0;
+    const held = new Set();
+    for (const row of view.rows)
+      if (row.type !== "cash") {
+        held.add(row.assetId);
+        row.realised = amount(row.assetId, "realised");
+        row.dividends = amount(row.assetId, "dividends");
+      }
+    const total = (field) => [...income.values()].reduce((n, r) => n.plus(r[field]), D(0)).toNumber();
+    view.cumulative = {
+      realised: total("realised"),
+      dividends: total("dividends"),
+      closed: [...income.keys()]
+        .filter((id) => !held.has(id))
+        .map((id) => ({
+          assetId: id,
+          symbol: book.assets.get(id)?.symbol,
+          realised: amount(id, "realised"),
+          dividends: amount(id, "dividends"),
+        })),
+    };
     for (const row of view.rows) {
       const l = lots.get(row.assetId);
       if (row.type === "cash" || !l || l.units.minus(row.rawQuantity).abs().gt("0.000001") || !l.units.gt(0))
@@ -884,6 +931,7 @@ export async function dashboard(db, options = {}) {
     pnl,
     // The shared period summary (see periodSummary.js) without its daily rows.
     summary: periodFigures,
+    breakdown,
     result: overall,
     points,
     ...current,
@@ -891,6 +939,10 @@ export async function dashboard(db, options = {}) {
     byAccount: current.accounts,
     holdings,
     today,
+    // Cumulative realised gain and dividends of the selected accounts, sold-out securities included.
+    cumulative: Object.fromEntries(
+      ["realised", "dividends"].map((k) => [k, current.accounts.reduce((n, a) => n.plus(a.cumulative[k]), D(0)).toNumber()]),
+    ),
     quantityReports: [...book.reported].flatMap(([account, assets]) =>
       [...assets].flatMap(([asset, reports]) =>
         reports
