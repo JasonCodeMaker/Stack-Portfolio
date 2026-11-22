@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { Download, Upload } from "lucide-react";
-import { api, Field, Modal } from "./common";
+import { api, Modal } from "./common";
 
+// Backup, restore and legacy-backup encryption, each confirmed in a dialog. On the welcome page only restore shows, as a link.
 export function BookBackups({ run, restored, welcome = false }) {
   const [prompt, setPrompt] = useState(null);
 
@@ -35,28 +35,66 @@ export function BookBackups({ run, restored, welcome = false }) {
     }, false);
   }
   const reading = prompt?.action === "restore";
-  return <>
-    {!welcome && <button onClick={() => setPrompt({ action: "save" })}><Download size={15} />备份账本</button>}
-    <button className={welcome ? "text-btn" : undefined} onClick={chooseBackup}>
-      {!welcome && <Upload size={15} />}{welcome ? "从账本备份恢复" : "恢复账本备份"}
-    </button>
-    {!welcome && <button onClick={() => setPrompt({ action: "convert" })}>加密旧备份</button>}
-    {prompt && <Modal title={reading ? "解锁备份" : "设置备份密码"} close={() => setPrompt(null)}>
-      <form onSubmit={submit} onInput={(e) => e.currentTarget.elements.confirm?.setCustomValidity("")}>
-        <p>{reading ? prompt.selection.name : "请将密码保存在密码管理器中。换电脑或重装 Windows 后，可用它恢复这份备份。"}</p>
-        {prompt.action === "convert" && <p>请选择旧版或本机备份，再选择密码加密副本的位置。若原文件含明文，请在验证副本后妥善处理原件。</p>}
-        <Field label={reading ? "备份密码" : "备份密码（至少 12 个字符）"}>
-          <input name="password" type="password" minLength={12} maxLength={1024} required autoFocus
-            autoComplete={reading ? "current-password" : "new-password"} />
-        </Field>
-        {!reading && <Field label="再次输入密码">
-          <input name="confirm" type="password" required maxLength={1024} autoComplete="new-password" />
-        </Field>}
-        <div className="actions">
-          <button type="button" onClick={() => setPrompt(null)}>取消</button>
-          <button className="primary">{reading ? "解锁并恢复" : "选择文件位置"}</button>
-        </div>
-      </form>
-    </Modal>}
-  </>;
+  return (
+    <>
+      {!welcome && (
+        <button className="btn" onClick={() => setPrompt({ action: "save" })}>
+          备份账本
+        </button>
+      )}
+      <button className={welcome ? "lnk" : "btn"} onClick={chooseBackup}>
+        {welcome ? "从账本备份恢复" : "恢复账本备份"}
+      </button>
+      {!welcome && (
+        <button className="btn" onClick={() => setPrompt({ action: "convert" })}>
+          加密旧备份
+        </button>
+      )}
+      {prompt && (
+        <Modal title={reading ? "解锁备份" : "设置备份密码"} close={() => setPrompt(null)}>
+          <form
+            onSubmit={submit}
+            onInput={(e) => e.currentTarget.elements.confirm?.setCustomValidity("")}
+          >
+            <p className="muted">
+              {reading
+                ? prompt.selection.name
+                : "请将密码保存在密码管理器中。换电脑或重装 Windows 后，可用它恢复这份备份。"}
+            </p>
+            {prompt.action === "convert" && (
+              <p className="muted">
+                请选择旧版或本机备份，再选择密码加密副本的位置。若原文件含明文，请在验证副本后妥善处理原件。
+              </p>
+            )}
+            <div className="fg">
+              <label className="f">
+                <span>{reading ? "备份密码" : "备份密码（至少 12 个字符）"}</span>
+                <input
+                  name="password"
+                  type="password"
+                  minLength={12}
+                  maxLength={1024}
+                  required
+                  autoFocus
+                  autoComplete={reading ? "current-password" : "new-password"}
+                />
+              </label>
+              {!reading && (
+                <label className="f">
+                  <span>再次输入密码</span>
+                  <input name="confirm" type="password" required maxLength={1024} autoComplete="new-password" />
+                </label>
+              )}
+            </div>
+            <div className="acts">
+              <button type="button" className="btn" onClick={() => setPrompt(null)}>
+                取消
+              </button>
+              <button className="btn pri">{reading ? "解锁并恢复" : "选择文件位置"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
 }
