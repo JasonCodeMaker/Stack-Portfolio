@@ -26,14 +26,14 @@ export const tone = (n, digits = 2) => {
   const sign = n == null || !Number.isFinite(Number(n)) ? "" : signOf(n, digits, true);
   return sign === "+" ? "gain" : sign === "−" ? "loss" : "";
 };
-export function Delta({ amount, rate, digits = 2 }) {
+export function Delta({ amount, rate, digits = 2, currency = true }) {
   const basis = amount ?? rate,
     direction = tone(basis, amount == null ? 4 : digits);
   if (basis == null) return <span className="delta">—</span>;
   return (
     <span className={"delta " + direction}>
       {direction && <i aria-hidden="true">{direction === "gain" ? "▲" : "▼"}</i>}
-      {amount != null && signedAud(amount, digits)}
+      {amount != null && (currency ? signedAud(amount, digits) : signedAud(amount, digits).replace("A$", ""))}
       {rate != null && <em>{amount != null ? "（" + signedPct(rate) + "）" : signedPct(rate)}</em>}
     </span>
   );
