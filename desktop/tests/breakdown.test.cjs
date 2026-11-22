@@ -7,6 +7,7 @@ const { randomBytes } = require("node:crypto");
 const { createBook, createAccount, saveEvent, savePrice, resolveAsset } = require("../out/ledger.cjs");
 const { dashboard } = require("../out/flows.cjs");
 const { portfolioReview } = require("../out/performance.cjs");
+const { seedDemo, demoDay } = require("../out/demo.cjs");
 
 const monday = "2025-02-03",
   tuesday = "2025-02-04",
@@ -64,6 +65,67 @@ test("a share bought at A$40, worth A$100 at the period start and sold at A$110 
   // The overview states the same breakdown for the same period.
   const overview = await dashboard(db, { ids: [a], date: thursday, from: wednesday });
   assert.deepEqual(overview.breakdown, review.breakdown);
+});
+
+test("under 全部 the breakdown's realised gain exceeds the holdings' cumulative realised gain by exactly the trading fees", async (t) => {
+  const { db, account, event, stock, close } = book(t);
+  const a = account("A");
+  const abc = stock("ABC"),
+    ghi = stock("GHI");
+  event(a, monday, "DEPOSIT", 1000);
+  event(a, monday, "BUY", null, { assetId: abc, quantity: "10", unitPrice: "20", fee: "5" });
+  event(a, monday, "BUY", null, { assetId: ghi, quantity: "5", unitPrice: "10", fee: "2" });
+  event(a, tuesday, "SELL", null, { assetId: abc, quantity: "10", unitPrice: "25", fee: "5" });
+  event(a, wednesday, "DIVIDEND", 3, { assetId: ghi, tax: "0.5" });
+  for (const [date, p] of [
+    [monday, 20],
+    [tuesday, 25],
+  ])
+    close(abc, date, p);
+  for (const [date, p] of [
+    [monday, 10],
+    [wednesday, 11],
+  ])
+    close(ghi, date, p);
+  const d = await dashboard(db, { ids: [a], date: wednesday, period: "all" });
+  near(d.breakdown.parts.realised, 10 * (25 - 20));
+  const holdings = d.byAccount[0];
+  near(holdings.cumulative.realised, 250 - 5 - (200 + 5));
+  near(d.breakdown.parts.realised - holdings.cumulative.realised, 5 + 5);
+  // ABC is sold out; GHI is still held and has its dividend net of tax.
+  const held = holdings.rows.find((r) => r.ticker === "GHI");
+  assert.deepEqual([held.realised, held.dividends], [0, 2.5]);
+  assert.deepEqual(
+    holdings.cumulative.closed.map((r) => [r.symbol, r.realised, r.dividends]),
+    [["ABC", 40, 0]],
+  );
+  near(holdings.cumulative.dividends, 2.5);
+  const merged = d.holdings.securities.find((s) => s.ticker === "GHI");
+  assert.deepEqual([merged.realised, merged.dividends], [0, 2.5]);
+});
+
+test("cumulative realised gain counts opening holdings with a recorded cost but not transfers in without one", async (t) => {
+  const { db, account, event, stock, close } = book(t);
+  const abc = stock("ABC"),
+    jkl = stock("JKL");
+  const a = account("A", monday, { AUD: 0 }, { [abc]: "10" });
+  db.prepare(
+    "INSERT INTO sp_holding_evidence(account,asset,day,quantity,reported,local_cost,aud_cost,reference) VALUES(?,?,?,?,?,?,?,?)",
+  ).run(a, abc, monday, "10", 0, "150", null, "补成本");
+  event(a, tuesday, "SELL", null, { assetId: abc, quantity: "4", unitPrice: "20", fee: "0" });
+  event(a, tuesday, "TRANSFER_IN", 0, { assetId: jkl, quantity: "4" });
+  event(a, wednesday, "SELL", null, { assetId: jkl, quantity: "2", unitPrice: "12", fee: "0" });
+  for (const date of [monday, tuesday, wednesday]) {
+    close(abc, date, 20);
+    close(jkl, date, 10);
+  }
+  const d = await dashboard(db, { ids: [a], date: wednesday, period: "all" });
+  const rows = d.byAccount[0].rows;
+  near(rows.find((r) => r.ticker === "ABC").realised, 4 * (20 - 15));
+  assert.equal(rows.find((r) => r.ticker === "JKL").realised, 0);
+  // The breakdown values JKL at its first close instead, so the identity still holds.
+  near(d.breakdown.parts.realised, 4 * (20 - 15) + 2 * (12 - 10));
+  near(sum(d.breakdown.parts), d.pnl);
 });
 
 function mixedBook(t) {
@@ -137,5 +199,39 @@ test("the five parts add up to the period investment gain for every period", asy
   for (const period of ["mtd", "ytd", "all"]) {
     const overview = await dashboard(db, { ids: [a], date: friday, period });
     near(sum(overview.breakdown.parts), overview.pnl);
+  }
+});
+
+test("a security moved between the selected accounts keeps its cost and adds no unrealised change", (t) => {
+  const { db, account, event, stock, close } = book(t);
+  const abc = stock("ABC");
+  const a = account("A", "2025-02-02", { AUD: 100 }),
+    b = account("B", "2025-02-02", { AUD: 0 });
+  event(a, monday, "BUY", null, { assetId: abc, quantity: "5", unitPrice: "20", fee: "0" });
+  event(a, wednesday, "TRANSFER_OUT", 0, { assetId: abc, quantity: "5", group: "move" });
+  event(b, wednesday, "TRANSFER_IN", 0, { accountId: b, assetId: abc, quantity: "5", unitPrice: "30", group: "move" });
+  for (const [date, p] of [
+    [monday, 20],
+    [tuesday, 22],
+    [wednesday, 25],
+    [thursday, 26],
+  ])
+    close(abc, date, p);
+  const { breakdown, money } = portfolioReview(db, { ids: [a, b], from: wednesday, to: thursday });
+  near(money.gain, 5 * (26 - 22));
+  near(breakdown.parts.unrealised, 5 * (26 - 22));
+  near(breakdown.parts.fx, 0);
+});
+
+test("the sample book's breakdown adds up to the same gain on the overview and the review", async (t) => {
+  const { db } = book(t);
+  await seedDemo(db);
+  const ids = ["demo-ibkr", "demo-webull"];
+  for (const period of ["mtd", "3m", "all"]) {
+    const overview = await dashboard(db, { ids, date: demoDay, period });
+    const review = portfolioReview(db, { ids, to: demoDay, period });
+    assert.equal(typeof overview.pnl, "number");
+    near(sum(overview.breakdown.parts), overview.pnl, 1e-6);
+    assert.deepEqual(review.breakdown, overview.breakdown);
   }
 });

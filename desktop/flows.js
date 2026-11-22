@@ -510,6 +510,8 @@ function summarizeHoldings(rows) {
       value,
       gain,
       cost,
+      realised: total("realised"),
+      dividends: total("dividends"),
       quantity: holdings.reduce((n, h) => n.plus(h.rawQuantity), D(0)).toFixed(),
       rowIds: holdings.map((r) => r.id),
     });
@@ -813,6 +815,29 @@ export async function dashboard(db, options = {}) {
       .map((data) => last(data.get(acc.id), date)?.day).filter(Boolean).sort().at(-1) || null;
     view.result = result([acc], view.total, ids.length > 1 ? summarize([acc.id]) : summary);
     const lots = costBasis(book, acc, date);
+    // Cumulative realised gain and dividends since the account's first record, sold-out securities included.
+    const income = cumulativeIncome(book, acc, date);
+    const amount = (assetId, field) => income.get(assetId)?.[field].toNumber() ?? 0;
+    const held = new Set();
+    for (const row of view.rows)
+      if (row.type !== "cash") {
+        held.add(row.assetId);
+        row.realised = amount(row.assetId, "realised");
+        row.dividends = amount(row.assetId, "dividends");
+      }
+    const total = (field) => [...income.values()].reduce((n, r) => n.plus(r[field]), D(0)).toNumber();
+    view.cumulative = {
+      realised: total("realised"),
+      dividends: total("dividends"),
+      closed: [...income.keys()]
+        .filter((id) => !held.has(id))
+        .map((id) => ({
+          assetId: id,
+          symbol: book.assets.get(id)?.symbol,
+          realised: amount(id, "realised"),
+          dividends: amount(id, "dividends"),
+        })),
+    };
     for (const row of view.rows) {
       const l = lots.get(row.assetId);
       if (row.type === "cash" || !l || l.units.minus(row.rawQuantity).abs().gt("0.000001") || !l.units.gt(0))
@@ -905,6 +930,10 @@ export async function dashboard(db, options = {}) {
     accounts: book.accounts,
     byAccount: current.accounts,
     holdings: summarizeHoldings(current.rows),
+    // Cumulative realised gain and dividends of the selected accounts, sold-out securities included.
+    cumulative: Object.fromEntries(
+      ["realised", "dividends"].map((k) => [k, current.accounts.reduce((n, a) => n.plus(a.cumulative[k]), D(0)).toNumber()]),
+    ),
     quantityReports: [...book.reported].flatMap(([account, assets]) =>
       [...assets].flatMap(([asset, reports]) =>
         reports
