@@ -774,18 +774,14 @@ export async function dashboard(db, options = {}) {
     closes && date ? summarizePeriod(reviewContext(closes, accountIds), { to: date, period, from: options.from }) : null;
   const summary = summarize(ids);
   const current = combined(book, selected, date, settings);
-  const result = (accounts, total, s) => {
-    const accountIds = accounts.map((a) => a.id);
-    if (book.issues.some((issue) => accountIds.includes(issue.account) && issue.day <= date))
-      return { period: null, lifetime: null };
-    return {
-      period:
-        s?.gain == null
-          ? null
-          : { start: s.startValue, flows: s.netFlow, end: s.endValue, gain: s.gain, twr: s.twr, annualised: s.annualised },
-      lifetime: lifetimeResult(book, accounts, date, total),
-    };
-  };
+  // The period figures stand as of the engine's latest valued close, as on the review page.
+  const result = (accounts, total, s) => ({
+    period:
+      s?.gain == null
+        ? null
+        : { start: s.startValue, flows: s.netFlow, end: s.endValue, gain: s.gain, twr: s.twr, annualised: s.annualised, asOf: s.valuedThrough },
+    lifetime: lifetimeResult(book, accounts, date, total),
+  });
   const overall = result(selected, current.total, summary);
   const flows = overall.period?.flows ?? null,
     pnl = overall.period?.gain ?? null;

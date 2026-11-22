@@ -4,10 +4,12 @@ const fs = require("node:fs"),
   os = require("node:os"),
   path = require("node:path");
 const { randomBytes } = require("node:crypto");
-const { createBook, createAccount, saveEvent } = require("../out/ledger.cjs");
+const { createBook, createAccount, saveEvent, savePrice, resolveAsset } = require("../out/ledger.cjs");
 const { resolvePeriod, periodSummary } = require("../out/periodSummary.cjs");
 const { dashboard } = require("../out/flows.cjs");
 const { portfolioReview } = require("../out/performance.cjs");
+const { seedDemo, demoDay, demoCsv } = require("../out/demo.cjs");
+const { batch, addManual, compareStatement, parseWebullCsv } = require("../out/services.cjs");
 
 function book(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "period-summary-"));
@@ -98,6 +100,43 @@ test("the overview and the review report the same investment gain and time-weigh
   const year = periodSummary(db, { ids: [a], to, period: "ytd" });
   near(year.twr, 1.05 * (1520 / 1550) - 1);
   assert.deepEqual([year.startValue, year.netFlow, year.gain], [1000, 500, 20]);
+});
+
+test("on a valuation date after the latest close, both pages measure through the latest valued close", async (t) => {
+  const { db } = book(t);
+  await seedDemo(db);
+  // Reconcile the sample Webull statement, as the walkthrough does, so the ledger has no open check.
+  const webull = "demo-webull";
+  await batch(db, webull, "webull", parseWebullCsv(demoCsv), "sample.csv", true);
+  addManual(db, { account: webull, date: "2026-10-28", type: "DEPOSIT", currency: "AUD", amount: "1000", reference: "DEMO-PL-1028" });
+  const statement = { account: webull, date: demoDay, cash: { AUD: "7600" }, flowsReviewed: true };
+  statement.positions = [{ symbol: "A200", quantity: "200" }, { symbol: "BHP", quantity: "150" }];
+  compareStatement(db, statement, true);
+  const today = new Date().toISOString().slice(0, 10);
+  const ids = ["demo-ibkr", "demo-webull"];
+  for (const period of ["mtd", "3m", "ytd", "1y", "all"]) {
+    const overview = await dashboard(db, { ids, date: today, period });
+    const review = portfolioReview(db, { ids, to: today, period });
+    const s = overview.summary;
+    for (const value of [overview.pnl, overview.flows, s.twr, s.drawdown?.depth]) assert.equal(typeof value, "number", period);
+    // The sample closes end on Friday 2026-10-30; the weekend after it is still valued on them.
+    assert.ok(s.asOf < "2026-11-02" && s.valuedThrough < "2026-11-02", period);
+    assert.deepEqual(
+      [overview.pnl, overview.flows, s.twr, s.asOf],
+      [review.money.gain, review.money.flows, review.metrics.portfolio.totalReturn, review.metrics.portfolio.asOf],
+    );
+  }
+});
+
+test("a security that has never had a quote leaves the period unmeasured", (t) => {
+  const { db, account } = book(t);
+  const a = account("A", "2025-02-03", 100);
+  const stock = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
+  db.prepare("UPDATE sp_anchors SET positions=? WHERE account=?").run(JSON.stringify({ [stock]: 1 }), a);
+  const s = periodSummary(db, { ids: [a], from: "2025-02-04", to: "2025-02-06" });
+  assert.deepEqual([s.twr, s.gain, s.drawdown], [null, null, null]);
+  savePrice(db, stock, "2025-02-03", 10, "close");
+  near(periodSummary(db, { ids: [a], from: "2025-02-04", to: "2025-02-06" }).twr, 0);
 });
 
 test("a matched transfer between selected accounts is internal; one account alone sees it as money put in", async (t) => {

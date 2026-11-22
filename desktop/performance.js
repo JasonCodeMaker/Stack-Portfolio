@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
 import { day } from "./ledger.js";
 import { flowValue, isExternalFlow, posting, rate } from "./flows.js";
-import { closingDay, marketFor } from "./marketDays.js";
 import { canonicalIdentity } from "./allocation/domain/identifiers";
 import { reviewDates } from "./reviewMarket.js";
 import { reviewBook, summarizePeriod, valuation } from "./periodSummary.js";
@@ -78,15 +77,14 @@ function periodContributions(context, from, to, gain) {
       add(row, h.value == null ? null : D(h.value).mul(sign));
     }
   }
-  const fresh = (q, asset, date) =>
-    q.day >= closingDay(date, asset === "FX" ? "FX" : marketFor(context.book.assets.get(asset)));
+  // Postings use the latest rate and quote on or before their day, as the valuations do.
   for (const [date, events] of context.byDay) {
     if (date <= from || date > to) continue;
     for (const e of events) {
       const p = posting(e);
       if (!p) continue;
       const fx = rate(context.book, e.currency, date, e.accountId);
-      const convert = (v) => (v.isZero() ? D(0) : fx && fresh(fx, "FX", date) ? v.mul(fx.price) : null);
+      const convert = (v) => (v.isZero() ? D(0) : fx ? v.mul(fx.price) : null);
       const fees = D(e.fee ?? 0)
         .abs()
         .plus(D(e.tax ?? 0).abs());
@@ -127,7 +125,7 @@ function periodContributions(context, from, to, gain) {
         if (e.activityType === "SELL") row.sold = true;
         add(row, cashAud);
         if (external && p.units) {
-          const flow = flowValue(context.book, e, (q, id) => fresh(q, id, date));
+          const flow = flowValue(context.book, e);
           add(row, flow == null ? null : flow.neg());
         }
       } else {

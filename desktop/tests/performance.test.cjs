@@ -109,7 +109,7 @@ test("cash and security transfers respect the selected boundary, including cross
   assert.ok(detail.rows.some((r) => r.account === "账户间在途" && r.value === 200));
 });
 
-test("partial index history, interior missing FX and security quotes suppress only dependent results", (t) => {
+test("a missing close or FX rate mid-period carries the latest known one forward; index history counts from its start", (t) => {
   const { db, account, ids, anchor, level, event, review } = fixture(t);
   const stock = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
   anchor(account, monday, {}, { [stock]: 10 });
@@ -126,28 +126,29 @@ test("partial index history, interior missing FX and security quotes suppress on
   const report = review(monday, thursday);
   assert.equal(report.commonStart, tuesday);
   assert.equal(report.series[1].first, tuesday);
+  // Wednesday keeps Tuesday's close and FX rate.
   const onWednesday = report.points.find((p) => p.date === wednesday);
-  assert.equal(onWednesday.SP500TR, null);
-  assert.equal(onWednesday.portfolio, null);
-  assert.equal(reviewDay(db, { ids, date: wednesday }).rows[0].value, null);
-  assert.equal(report.metrics.portfolio.maxDrawdown, null);
+  assert.deepEqual([onWednesday.value, onWednesday.SP500TR], [110, 0]);
+  near(onWednesday.portfolio, 0.1);
+  assert.equal(reviewDay(db, { ids, date: wednesday }).rows[0].value, 110);
   near(report.metrics.portfolio.totalReturn, 0.2);
-  assert.equal(report.metrics.SP500TR.maxDrawdown, null);
-  assert.equal(report.metrics.SP500TR.totalReturn, 0);
+  assert.equal(report.metrics.portfolio.maxDrawdown, 0);
+  assert.equal(report.metrics.portfolio.asOf, thursday);
+  assert.deepEqual([report.metrics.SP500TR.totalReturn, report.metrics.SP500TR.maxDrawdown], [0, 0]);
+  // The data panel still lists the carried close, so it is fetched.
+  assert.ok(report.outages.some((o) => o.id === "portfolio" && o.from === wednesday && /收盘价/.test(o.reason)));
+  assert.ok(report.missingAssets.includes(stock));
+  // Nasdaq's history starts on Tuesday, after Monday's opening close.
   assert.equal(report.metrics.XNDX.gap, null);
-  // A period from Wednesday is measured from Tuesday's close, where Nasdaq's history starts.
   assert.equal(review(wednesday, thursday).metrics.XNDX.totalReturn, 0);
-  assert.equal(review(tuesday, thursday).metrics.XNDX.totalReturn, null);
-  // A deposit on the unvalued day breaks the chain; the result stands as of the close before it.
+  // A deposit on a day with a carried close keeps the chain: 140 on 140, then 150 on 140.
   event(wednesday, "DEPOSIT", 30);
-  const broken = review(monday, thursday).metrics.portfolio;
-  near(broken.totalReturn, 0.1);
-  assert.equal(broken.asOf, tuesday);
+  near(review(monday, thursday).metrics.portfolio.totalReturn, 1.1 * (150 / 140) - 1);
   db.prepare("INSERT INTO sp_checks VALUES(?,?,?)").run(account, tuesday, "待核对");
   assert.equal(review(monday, tuesday).metrics.portfolio.totalReturn, null);
 });
 
-test("weekends and US exchange holidays carry closes but use current FX; an open weekday requires a close", (t) => {
+test("weekends and US exchange holidays carry closes but use current FX; results stand as of the last session with its own close", (t) => {
   const { db, account, anchor, level, review } = fixture(t);
   const stock = resolveAsset(db, { symbol: "ABC", exchangeMic: "XNAS" }, "USD");
   const friday = "2025-02-14",
@@ -168,8 +169,10 @@ test("weekends and US exchange holidays carry closes but use current FX; an open
   near(on("2025-02-16").portfolio, 0);
   near(on(holiday).portfolio, 0.1);
   near(on(holiday).SP500TR, 0.1);
-  assert.equal(on(open).portfolio, null);
-  assert.equal(on(open).SP500TR, null);
+  // The open Tuesday has no close yet: it carries Friday's, and results stay as of Monday.
+  near(on(open).portfolio, 0.1);
+  near(on(open).SP500TR, 0.1);
+  assert.deepEqual([r.metrics.portfolio.asOf, r.metrics.SP500TR.asOf], [holiday, holiday]);
 });
 
 test("review notes preserve displayed metrics across revisions and old database backups remain recognized", (t) => {
@@ -305,7 +308,7 @@ test("results are measured from the eve of the first record and stated as of the
   assert.deepEqual([r.from, r.requested, r.origin], [tuesday, monday, monday]);
   assert.deepEqual(
     r.points.map((p) => p.portfolio == null ? null : Math.round(p.portfolio * 100)),
-    [0, 0, 10, null],
+    [0, 0, 10, 10],
   );
   assert.equal(r.points[0].SP500TR, 0);
   near(r.points[3].SP500TR, 0.1);
@@ -550,7 +553,7 @@ test("a sold security earns its period change plus linked income less fees, with
   );
 });
 
-test("AUD contributions remain available with verified endpoints and flows across a missing trading-day close", (t) => {
+test("a deposit on a day missing its close keeps the return chain, the gain and the contributions", (t) => {
   const { db, account, event, anchor, review } = fixture(t);
   const stock = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
   anchor(account, monday, { AUD: 100 }, { [stock]: 1 });
@@ -558,7 +561,8 @@ test("AUD contributions remain available with verified endpoints and flows acros
   event(tuesday, "DEPOSIT", 50);
   savePrice(db, stock, wednesday, 115, "statement");
   const result = review(monday, wednesday);
-  assert.equal(result.metrics.portfolio.totalReturn, null);
+  // Tuesday carries Monday's close: 250 on 200 + 50, then 265 on 250.
+  near(result.metrics.portfolio.totalReturn, 265 / 250 - 1);
   assert.equal(result.money.gain, 15);
   assert.equal(result.contributions.rows.find((r) => r.label === "ABC").gain, 15);
 });

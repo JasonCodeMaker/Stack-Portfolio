@@ -1,6 +1,8 @@
 // The period summary engine shared by the overview and the return review: one set of period
 // figures (valuations, external flows, investment gain, time-weighted return, annualised
-// return, drawdown and underperformance) measured on daily closes as ADR 0002 describes.
+// return, drawdown and underperformance) measured on daily closes as ADR 0002 describes. A
+// missing close or rate carries the latest known one forward (spec §5.1), and results are
+// stated as of the latest close valued on its own data.
 import Decimal from "decimal.js";
 import { day, dayOf } from "./ledger.js";
 import {
@@ -171,11 +173,12 @@ export function reviewBook(db, ids) {
   return reviewContext(closeBook(db), ids);
 }
 
-// The portfolio's value at one day's close. Any price or exchange rate older than that close
-// leaves the total unknown.
+// The portfolio's value at one day's close. A price or exchange rate older than that close is
+// carried forward and reported in `stale`; one never recorded leaves the total unknown.
 export function valuation(context, date, detail = false) {
   const { book, accounts, transit } = context;
   const problems = new Set(),
+    stale = new Set(),
     rows = [],
     missingAssets = new Set();
   let total = D(0),
@@ -195,21 +198,23 @@ export function valuation(context, date, detail = false) {
     if (s.total == null) for (const warning of s.warnings) problems.add(warning);
     if (s.warnings.includes("券商快照与本地现金或持仓数量有差异"))
       ledgerGap(account.name + " · 券商估值待对账");
-    let cashFresh = true;
+    let cashKnownHere = true;
     for (const r of s.rows) {
       const asset = book.assets.get(r.assetId);
-      const priceMissing =
-        r.type !== "cash" && (!r.price || r.priceUpdatedAt < closingDay(date, marketFor(asset)));
-      const fxMissing = !r.fx || r.fxDate < closingDay(date, "FX");
-      if (priceMissing && asset) missingAssets.add(asset.id);
-      const reason = [
-        priceMissing && r.ticker + " 缺少收盘价",
-        fxMissing && r.localCurrency + " 缺少同期汇率",
-      ]
-        .filter(Boolean)
-        .join("、");
+      // A missing close or rate carries the latest known one forward (spec §5.1). Only a
+      // security or currency that has never had one leaves the valuation unknown.
+      const priceMissing = r.type !== "cash" && !r.price,
+        fxMissing = !r.fx;
+      const priceStale = r.type !== "cash" && !priceMissing && r.priceUpdatedAt < closingDay(date, marketFor(asset));
+      const fxStale = !fxMissing && r.fxDate < closingDay(date, "FX");
+      if ((priceMissing || priceStale) && asset) missingAssets.add(asset.id);
+      const describe = (price, fx) =>
+        [price && r.ticker + " 缺少收盘价", fx && r.localCurrency + " 缺少同期汇率"].filter(Boolean).join("、");
+      const reason = describe(priceMissing, fxMissing),
+        carried = describe(priceStale, fxStale);
       if (!s.valuationSource && reason) problems.add(reason);
-      if (r.type === "cash" && fxMissing) cashFresh = false;
+      if (!s.valuationSource && carried) stale.add(carried);
+      if (r.type === "cash" && fxMissing) cashKnownHere = false;
       if (detail)
         rows.push({
           account: account.name,
@@ -222,12 +227,13 @@ export function valuation(context, date, detail = false) {
           priceDate: r.priceUpdatedAt,
           fxDate: r.fxDate,
           reason,
+          carried,
           cash: r.type === "cash",
         });
     }
     if (s.total == null) problems.add(account.name + " · 估值不完整");
     else total = total.plus(s.total);
-    if (s.cash == null || unresolved || (!cashFresh && !s.valuationSource)) cashKnown = false;
+    if (s.cash == null || unresolved || (!cashKnownHere && !s.valuationSource)) cashKnown = false;
     else cash = cash.plus(s.cash);
   }
   for (const { account, first, needsOpening, archivedBalance, history } of accounts) {
@@ -253,6 +259,8 @@ export function valuation(context, date, detail = false) {
     total: problems.size ? null : total.toNumber(),
     cash: cashKnown ? cash.toNumber() : null,
     problems: [...problems],
+    // Closes and rates carried forward from an earlier day; the valuation still stands.
+    stale: [...stale],
     flowsKnown,
     rows,
     missingAssets,
@@ -267,12 +275,8 @@ export function dayFlows(context, date) {
     withdrawal = D(0);
   for (const e of context.byDay.get(date) || []) {
     if (!isExternalFlow(e, context.groups)) continue;
-    const v = flowValue(
-      context.book,
-      e,
-      (quote, id) =>
-        quote.day >= closingDay(date, id === "FX" ? "FX" : marketFor(context.book.assets.get(id))),
-    );
+    // Valued at the latest quote and rate on or before the day, like the holdings.
+    const v = flowValue(context.book, e);
     if (v == null) return null;
     if (v.isNegative()) withdrawal = withdrawal.minus(v);
     else deposit = deposit.plus(v);
@@ -423,33 +427,40 @@ export function summarizePeriod(context, { to, period, from }) {
       outages.push(outage);
     }
   }
+  // Whether each close was valued on that day's own closes and rates, not carried ones.
+  const fresh = { portfolio: [] };
+  for (const b of series) fresh[b.id] = [];
   for (const { date, view, flows } of days) {
     for (const id of view.missingAssets) assets.add(id);
     const measured = date >= origin;
     const portfolio = measured ? twr(view.total, flows, date === origin) : null;
     const flow = flows ? flows.deposit.minus(flows.withdrawal).toNumber() : null;
     const point = { date, portfolio, value: view.total, flow, gaps: {} };
+    fresh.portfolio.push(view.total != null && !view.stale.length);
     const issue =
       view.problems.join("、") ||
+      view.stale.join("、") ||
       (!measured && "组合在该日没有可估值的资产") ||
       (!flows && date !== origin && "外部划转缺少同日报价或汇率") ||
       (portfolio == null && "起点净值或资金划转前后的估值不足，请缩短区间");
     recordGap("portfolio", issue, date);
+    // Index levels and the USD rate carry forward like the holdings' closes.
     const fx = rate(book, "USD", date);
-    const fxValid = fx && fx.day >= closingDay(date, "FX");
+    const fxFresh = fx && fx.day >= closingDay(date, "FX");
     let allLevels = view.total > 0;
     for (const b of series) {
       const latest = last(b.rows, date);
-      const known = latest && latest.day >= closingDay(date, "US");
-      const audLevel = known && fxValid ? D(latest.level).mul(fx.price) : null;
+      const levelFresh = latest && latest.day >= closingDay(date, "US");
+      const audLevel = latest && fx ? D(latest.level).mul(fx.price) : null;
       if (date === origin) bases[b.id] = audLevel;
       point[b.id] = measured && audLevel && bases[b.id] ? audLevel.div(bases[b.id]).minus(1).toNumber() : null;
       point.gaps[b.id] = portfolio != null && point[b.id] != null ? portfolio - point[b.id] : null;
+      fresh[b.id].push(Boolean(levelFresh && fxFresh));
       recordGap(
         b.id,
-        !known
+        !levelFresh
           ? "缺少总回报指数收盘点位"
-          : !fxValid
+          : !fxFresh
             ? "缺少同期美元兑澳元汇率"
             : measured && !bases[b.id]
               ? "所选起点缺少指数点位或汇率"
@@ -464,42 +475,45 @@ export function summarizePeriod(context, { to, period, from }) {
     }
     points.push(point);
   }
-  // Results are stated as of the latest close which can be valued, so a session that has not
-  // closed yet, or a quote still to arrive, leaves the period's earlier results in place.
+  // Results are stated as of the latest close valued on its own closes and rates, so a session
+  // that has not closed yet, or a quote still to arrive, leaves the period's results in place.
+  // When no later close has them all, results run through the latest close with carried values.
   const first = Math.max(
     0,
     points.findIndex((p) => p.date === origin),
   );
-  const lastValued = (id) => {
-    const i = points.findLastIndex((p) => p[id] != null);
-    return i > first ? i : -1;
+  const latestIndex = (known, ...ids) => {
+    const i = points.findLastIndex((p, j) => known(p) && ids.every((id) => fresh[id][j]));
+    if (i > first) return i;
+    const carried = points.findLastIndex(known);
+    return carried > first ? carried : -1;
   };
   // A period is annualised over its calendar days, or from a later first valued close.
   const measuredDays = daysBetween(origin > range.from ? origin : range.from, range.to) + 1;
-  const own = lastValued("portfolio");
+  const own = latestIndex((p) => p.portfolio != null, "portfolio");
   const path = own < 0 ? null : drawdown(points, "portfolio", first, own);
   const twrValue = own < 0 ? null : points[own].portfolio;
   const quarter = resolvePeriod({ to: range.to, period: "3m" }).from;
-  const intervals = series.flatMap((b) => underperformance(points, b.id));
+  const intervals = series.flatMap((b) => underperformance(points.slice(0, own + 1), b.id));
   const versus = {};
   for (const { id } of series) {
     // Portfolio and benchmark are compared on the latest close both can be measured at.
-    const shared = points.findLastIndex((p) => p.gaps[id] != null);
-    const i = shared > first ? shared : lastValued(id);
+    const shared = latestIndex((p) => p.gaps[id] != null, "portfolio", id);
+    const i = shared >= 0 ? shared : latestIndex((p) => p[id] != null, id);
     const totalReturn = i < 0 ? null : points[i][id];
     versus[id] = {
       totalReturn,
       annualised: annualise(totalReturn, measuredDays),
       maxDrawdown: i < 0 ? null : (drawdown(points, id, first, i)?.depth ?? null),
-      gap: shared > first ? points[shared].gaps[id] : null,
-      portfolioReturn: shared > first ? points[shared].portfolio : null,
+      gap: shared >= 0 ? points[shared].gaps[id] : null,
+      portfolioReturn: shared >= 0 ? points[shared].portfolio : null,
       asOf: i < 0 ? null : points[i].date,
       longestUnderperformance: longest(intervals.filter((r) => r.id === id)),
     };
   }
-  // A missing intermediate close can prevent a time-weighted return while both
+  // A break in the return chain can prevent a time-weighted return while both
   // endpoints and every external flow still support an absolute AUD result.
-  const endIndex = points.findLastIndex((p) => p.value != null);
+  const endIndex = latestIndex((p) => p.value != null, "portfolio");
   let net = D(0),
     netKnown = endIndex > first;
   for (const p of points.slice(first + 1, endIndex + 1)) {
