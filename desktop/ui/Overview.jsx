@@ -116,6 +116,8 @@ export function Overview({ d, onPage, filters, onFilters }) {
   const [view, setView] = useState("value");
   const dailyId = useId();
   const period = d.summary;
+  // The opening calculation baseline can precede the first recorded valuation.
+  const points = period?.earliest ? d.points.filter((point) => point.date >= period.earliest) : d.points;
   const preset = period?.period.preset ?? (isCustom(filters) ? "custom" : filters.period);
   const span = periodLabels[preset] ?? "期间";
   const day = filters.date ? "当日" : "今日";
@@ -171,7 +173,7 @@ export function Overview({ d, onPage, filters, onFilters }) {
               />
             </section>
           ),
-          chart: <AssetTrend points={d.points} view={view} onViewChange={setView} />,
+          chart: <AssetTrend points={points} view={view} onViewChange={setView} />,
           breakdown: (
             <section className="card overview-breakdown" aria-label="盈亏构成">
               <div className="row">

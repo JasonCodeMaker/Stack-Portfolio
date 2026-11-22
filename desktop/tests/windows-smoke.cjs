@@ -1,317 +1,500 @@
 const { _electron: electron } = require("playwright-core");
-const assert = require("node:assert/strict"),
-  fs = require("node:fs"),
-  os = require("node:os"),
-  path = require("node:path");
-const root = path.join(__dirname, ".."),
-  directory = fs.mkdtempSync(path.join(os.tmpdir(), "stack-portfolio-ui-"));
-const env = {
-  ...process.env,
-  STACK_PORTFOLIO_HEADLESS: "1",
-  STACK_PORTFOLIO_TEST_DIR: directory,
-  STACK_PORTFOLIO_TEST_SOURCE: path.join(directory, "empty"),
-};
-delete env.ELECTRON_RUN_AS_NODE;
-const packaged = process.argv[2];
-async function verifyReview(p) {
-  await p.getByRole("button", { name: "收益复盘", exact: true }).click();
-  const chart = p.getByRole("img", { name: /每日收益曲线/ });
-  await chart.waitFor();
-  assert.equal(await p.locator(".review-metric").count(), 3);
-  assert.match(await p.locator(".review-primary strong").innerText(), /%/);
-  // Each benchmark states whether the portfolio is ahead, and one tooltip reads every curve.
-  assert.match(await p.locator(".review-metric").nth(1).innerText(), /跑赢|跑输|持平/);
-  await chart.scrollIntoViewIfNeeded();
-  const box = await chart.boundingBox();
-  const moveTo = (fraction) => p.mouse.move(box.x + box.width * fraction, box.y + box.height / 2);
-  await moveTo(.5);
-  assert.match(await p.locator(".chart-tip").innerText(), /我的组合[\s\S]*标普 500[\s\S]*相对纳斯达克 100/);
-  await p.getByRole("button", { name: "收益差", exact: true }).click();
-  await p.getByRole("heading", { name: "组合相对指数的收益差" }).waitFor();
-  await moveTo(.22); await p.mouse.down(); await moveTo(.68); await p.mouse.up();
-  await p.waitForFunction(() => document.querySelector("[aria-label='期间起点']")?.value > "2026-09-30");
-  // The review uses the page head's account scope.
-  await p.locator(".header-tools").getByRole("button", { name: "账户范围 · 全部账户" }).click();
-  await p.getByRole("dialog").getByLabel("Webull Australia").uncheck();
-  await p.getByRole("dialog").getByRole("button", { name: "应用", exact: true }).click();
+const assert = require("node:assert/strict");
+const { randomBytes } = require("node:crypto");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { parseArgs } = require("node:util");
+const { seedAcceptanceBook } = require("./fixtures/acceptance-book.cjs");
+
+const root = path.join(__dirname, "..");
+const { values, positionals } = parseArgs({
+  options: { screenshots: { type: "string" } },
+  allowPositionals: true,
+});
+const [packaged] = positionals;
+const pages = [
+  ["overview", "总览"],
+  ["performance", "收益复盘"],
+  ["allocation", "配置分析"],
+  ["holdings", "持仓"],
+  ["imports", "导入与对账"],
+  ["settings", "设置"],
+];
+const button = (scope, name) => scope.getByRole("button", { name, exact: typeof name === "string" });
+const region = (scope, name) => scope.getByRole("region", { name, exact: true });
+const nav = (p) => p.getByRole("navigation", { name: "页面" });
+const preset = (p, name) => button(p.getByRole("group", { name: "期间" }), name);
+const title = (p, name) => p.getByRole("heading", { level: 1, name, exact: true });
+const welcome = (p) => button(p, /^打开示例账本/);
+const assets = (p, amount) => button(p, "总资产 A$" + amount + "，查看明细");
+
+async function withDesktop(directory, verify) {
+  fs.mkdirSync(directory);
+  const env = {
+    ...process.env,
+    STACK_PORTFOLIO_HEADLESS: "1",
+    STACK_PORTFOLIO_TEST_DIR: directory,
+    STACK_PORTFOLIO_TEST_SOURCE: path.join(directory, "empty"),
+  };
+  delete env.ELECTRON_RUN_AS_NODE;
+  const app = await electron.launch({
+    executablePath: packaged ? path.resolve(packaged) : require("electron"),
+    args: packaged ? [] : [root],
+    env,
+    timeout: 30000,
+  });
+  const errors = [];
+  let p;
+  try {
+    assert.equal(await app.evaluate(({ app }) => app.getPath("userData")), directory);
+    p = await app.firstWindow();
+    p.setDefaultTimeout(10000);
+    p.on("pageerror", (error) => errors.push(error.message));
+    await verify(app, p);
+    assert.deepEqual(errors, []);
+  } catch (error) {
+    if (p && !p.isClosed()) {
+      const text = await p.locator("body").innerText({ timeout: 2000 });
+      console.error(text.length < 1600 ? text : text.slice(0, 800) + "\n…\n" + text.slice(-800));
+    }
+    throw error;
+  } finally {
+    await app.close();
+  }
+}
+
+async function open(p, page) {
+  const tab = button(nav(p), page);
+  await tab.click();
+  await title(p, page).waitFor();
+  assert.equal(await tab.getAttribute("aria-current"), "page");
+}
+
+async function openSample(p) {
+  await welcome(p).click();
+  await title(p, "总览").waitFor();
+}
+
+async function resize(app, p, width, height) {
+  await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h), [width, height]);
+  await p.waitForFunction(([w, h]) => innerWidth === w && innerHeight === h, [width, height]);
+}
+
+async function verifyNativeMinimum(app, p) {
+  const { minimum, size, content } = await app.evaluate(({ BrowserWindow }) => {
+    const win = BrowserWindow.getAllWindows()[0];
+    win.setSize(800, 500);
+    return { minimum: win.getMinimumSize(), size: win.getSize(), content: win.getContentSize() };
+  });
+  assert.deepEqual(minimum, [1024, 640]);
+  assert.deepEqual(size, minimum);
+  await p.waitForFunction(([w, h]) =>
+    innerWidth === w && innerHeight === h && document.documentElement.dataset.short === "1", content);
+  const dimensions = (locator) => locator.boundingBox();
+  assert.equal((await dimensions(nav(p))).width, 64);
+  assert.equal((await dimensions(p.getByRole("banner"))).height, 52);
+  assert.equal(await p.getByRole("main").getAttribute("data-cols"), "1");
+  const chart = p.getByRole("img", { name: "总资产与净投入", exact: true });
+  assert.equal((await dimensions(chart)).height, 240);
+  assert.ok(await nav(p).getByText("示例", { exact: true }).isVisible());
+}
+
+async function verifyPeriods(p) {
+  const day = "2025-12-31";
+  await p.getByLabel("估值日").fill("2025-12-05");
+  await p.getByText("正在查看 2025-12-05").waitFor();
+  await p.getByLabel("估值日").fill(day);
+  await p.getByText("正在查看 " + day).waitFor();
+  await assets(p, "100,000.00").waitFor();
+  const top = region(p, "前 5 大持仓");
+  const apple = top.getByRole("row", { name: /AAPL.*4,000\.00/ });
+  await apple.waitFor();
+  // Apple outranks the A$3,500 holding only once both accounts are included.
+  assert.deepEqual(await top.getByRole("table").getByRole("button").allTextContents(), ["IVV", "BHP", "AAPL", "MID", "MOCK"]);
+  const annualHoldings = await top.innerText();
+  const chart = p.getByRole("img", { name: "总资产与净投入", exact: true });
+  const ticks = await chart.locator("text").allTextContents();
+  const breakdown = region(p, "盈亏构成");
+  const gains = async (locators) => (await locators.allTextContents()).map((text) => {
+    const value = text.match(/[+−]?(?:A\$)?[\d,]+(?:\.\d+)?/);
+    assert.ok(value, text);
+    return Number(value[0].replace(/[A$,]/g, "").replace("−", "-"));
+  });
+  const overviewGains = () => gains(breakdown.locator("dd"));
+  const overviewKpis = region(p, "关键数字");
+  await overviewKpis.getByText("+1.09%", { exact: true }).waitFor();
+  assert.match(await overviewKpis.innerText(), /今年以来投资盈亏\s*▲\s*\+1,079\.00[\s\S]*今年以来净投入\s*100\.00/);
+  const yearGains = await overviewGains();
+
+  await preset(p, "本月").click();
+  await overviewKpis.getByText("+0.24%", { exact: true }).waitFor();
+  assert.match(await overviewKpis.innerText(), /本月投资盈亏\s*▲\s*\+244\.00[\s\S]*本月净投入\s*0\.00/);
+  await assets(p, "100,000.00").waitFor();
+  assert.equal(await top.innerText(), annualHoldings);
+  assert.notDeepEqual(await chart.locator("text").allTextContents(), ticks);
+  const monthGains = await overviewGains();
+  assert.notDeepEqual(monthGains, yearGains);
+
+  await open(p, "收益复盘");
+  const returns = region(p, "时间加权收益率");
+  await returns.getByText(/\+0\.24%/).waitFor();
+  assert.deepEqual(await gains(breakdown.getByRole("button")), monthGains);
+  const contribution = region(p, "持仓贡献");
+  await button(contribution, /^ABC.*期间已卖清.*\+A\$10$/).waitFor();
+  await button(contribution, /^IVV.*\+A\$106$/).waitFor();
+  await button(contribution, /^现金利息.*\+A\$3$/).waitFor();
+
+  for (const name of ["今年以来", "近一年"]) {
+    await preset(p, name).click();
+    await p.getByText("2025-01-01 至 2025-12-31 · 365 天", { exact: true }).waitFor();
+    await returns.getByText(/年化 \+1\.09%/).waitFor();
+  }
+  assert.deepEqual(await gains(breakdown.getByRole("button")), yearGains);
+}
+
+async function verifyHoldings(app, p) {
+  await resize(app, p, 1920, 1080);
+  await open(p, "持仓");
+  const holding = (account, ticker) => region(p, account).getByRole("row").filter({ has: button(p, ticker) });
+  for (const [account, quantity] of [["IBKR", "8"], ["Webull Australia", "2"]]) {
+    const row = holding(account, "AAPL");
+    await row.getByRole("cell", { name: quantity, exact: true }).waitFor();
+    assert.equal(await row.count(), 1);
+  }
+  const columns = (n) => p.getByRole("main").and(p.locator('[data-cols="' + n + '"]')).waitFor();
+  await columns(2);
+  await button(holding("IBKR", "AAPL"), "AAPL").click();
+  const dock = p.getByRole("complementary", { name: "AAPL", exact: true });
+  await columns(1);
+  for (const [label, quantity] of [["合计股数", "10"], ["IBKR", "8"], ["Webull Australia", "2"]]) {
+    await dock.getByRole("rowheader", { name: label, exact: true }).locator("..")
+      .getByRole("cell", { name: quantity, exact: true }).waitFor();
+  }
+  await button(dock, "关闭").click();
+  await columns(2);
+  await resize(app, p, 1280, 720);
+  await button(holding("IBKR", "AAPL"), "AAPL").click();
+  const popup = p.getByRole("dialog", { name: "AAPL", exact: true });
+  await popup.waitFor();
+  assert.equal(await dock.count(), 0);
+  await button(popup, "关闭").click();
+}
+
+async function verifyHoldingCost(app, p) {
+  await resize(app, p, 1024, 640);
+  const stock = button(p.getByRole("group", { name: "证券类别" }), "股票");
+  await stock.click();
+  const search = p.getByRole("searchbox", { name: "搜索持仓" });
+  await search.fill("sample");
+  const account = region(p, "Webull Australia");
+  const sort = button(account, "按证券排序");
+  await sort.click();
+  const ticker = button(account, "MOCK");
+  const mock = account.getByRole("row").filter({ has: button(p, "MOCK") });
+  await mock.getByRole("cell", { name: "10", exact: true }).waitFor();
+  await mock.getByRole("cell", { name: "A$1,000.00", exact: true }).waitFor();
+  assert.equal(await mock.getByText("待补", { exact: true }).count(), 2);
+  await ticker.scrollIntoViewIfNeeded();
+  const scroll = () => p.getByRole("main").evaluate((main) => main.scrollTop);
+  const before = await scroll();
+  assert.ok(before > 0, "The filtered table has scrolled to MOCK");
+  await ticker.click();
+  await button(p.getByRole("dialog", { name: "MOCK", exact: true }), "补成本").click();
+  const form = p.getByRole("dialog", { name: "补成本 · MOCK", exact: true });
+  assert.equal(await form.getByLabel("成本凭据日期").inputValue(), "2025-12-31");
+  await form.getByLabel(/这些股数的总买入成本/).fill("600");
+  await form.getByLabel(/凭据（如/).fill("Sample cost evidence");
+  await button(form, "保存").click();
+  await mock.getByText("A$600.00", { exact: true }).waitFor();
+  assert.match(await mock.innerText(), /\+A\$400\.00/);
+  assert.equal(await search.inputValue(), "sample");
+  assert.equal(await stock.getAttribute("aria-pressed"), "true");
+  assert.equal(await sort.locator("..").getAttribute("aria-sort"), "ascending");
+  await p.waitForFunction(() => document.activeElement?.textContent === "MOCK");
+  assert.ok(Math.abs(await scroll() - before) <= 1, "The holdings scroll position is preserved");
+}
+
+async function verifyHoldingLink(p) {
+  await open(p, "配置分析");
+  await button(p, "账户范围 · 全部账户").click();
+  const scope = p.getByRole("dialog", { name: "账户范围", exact: true });
+  await scope.getByLabel("Webull Australia").uncheck();
+  await button(scope, "应用").click();
+  const stocks = region(p, "个股");
+  await stocks.getByText(/^看这 \d+ 只个股$/).click();
+  await button(stocks, "AAPL").click();
+  await title(p, "持仓").waitFor();
+  await p.getByRole("dialog", { name: "AAPL", exact: true }).waitFor();
+  assert.equal(await button(p, "账户范围 · IBKR").count(), 1);
+  assert.equal(await p.getByLabel("估值日").inputValue(), "2025-12-31");
+}
+
+async function verifyReconciliation(p) {
+  await open(p, "导入与对账");
+  await button(p, /^同步券商/).click();
+  const webull = region(p, "WEBULL 同步结果");
+  const preview = region(webull, "导入预览");
+  const trade = preview.getByRole("row").filter({ hasText: "买入 BHP" });
+  assert.match(await trade.innerText(), /10 × AUD 44/);
+  await button(preview, "确认导入 1 笔").click();
+  await button(webull, /^前往结单对账/).click();
+  await button(p, "查看示例月结单").click();
+  await button(p, "填入结单用于比较").click();
+  await button(p, "比较结单").click();
+  await p.getByText(/请检查凭证及相关流水，再次比较/).waitFor();
+  await button(p, "查看示例月结单").click();
+  await button(p, "按凭证补录入金").click();
+  await button(p, /^确认记入/).click();
+  await button(p, "比较结单").click();
+  await p.getByLabel("已核对期间资金流水及所有币种余额").check();
+  await button(p, "完成对账并查看总览").click();
+  await assets(p, "128,400.00").waitFor();
+  await preset(p, "本月").click();
+  await region(p, "关键数字").getByText(/\+3,200\.00/).waitFor();
+}
+
+async function verifyNotes(p) {
+  await open(p, "收益复盘");
+  await button(p, "账户范围 · 全部账户").click();
+  const scope = p.getByRole("dialog", { name: "账户范围", exact: true });
+  await scope.getByLabel("Webull Australia").uncheck();
+  await button(scope, "应用").click();
+  await p.getByRole("img", { name: "累计收益曲线", exact: true }).waitFor();
+  await preset(p, "自定义…").click();
   await p.getByLabel("期间起点").fill("2026-10-16");
   await p.getByLabel("期间终点").fill("2026-10-22");
-  await p.waitForFunction(() => document.querySelector("[aria-label='期间终点']")?.value === "2026-10-22");
-  await p.getByText("查看每日数据",{exact:true}).click();
-  await p.getByRole("button",{name:"2026-10-16",exact:true}).click();
-  await p.getByRole("button", { name: "当日流水" }).click();
-  await p.getByRole("row").filter({ hasText: "账户之间划转" }).waitFor();
-  await p.getByRole("dialog").getByRole("button",{name:"关闭",exact:true}).click();
-  await p.getByRole("button", { name: "写笔记" }).click();
+  await button(p, "逐日数据").click();
+  await button(p.getByRole("dialog", { name: "逐日数据" }), "2026-10-16").click();
+  const day = p.getByRole("dialog", { name: "2026-10-16 · 当日明细" });
+  await button(day, "当日流水").click();
+  await day.getByRole("row").filter({ hasText: "账户之间划转" }).waitFor();
+  await button(day, "关闭").click();
+  await button(p, "写笔记").click();
   await p.getByLabel("这段时间做了什么，下次想验证什么？").fill("观察留现金的影响");
-  await p.getByRole("button", { name: "保存笔记与当前指标" }).click();
+  await button(p, "保存笔记与当前指标").click();
   await p.getByRole("heading", { name: "记录时与当前重算" }).waitFor();
-  // Revise only this isolated example ledger, then reopen the original view.
   await p.evaluate(() => window.portfolio.savePrice({ assetId: "aapl", date: "2026-10-22", price: "212" }));
-  await p.getByRole("button", { name: "全部", exact: true }).click();
-  await p.getByRole("button", { name: /重开区间/ }).click();
+  await preset(p, "全部").click();
+  await reopenNote(p);
+}
+
+async function reopenNote(p) {
+  await button(p, /重开区间/).click();
   await p.locator(".review-changed").first().waitFor();
   assert.equal(await p.getByLabel("期间起点").inputValue(), "2026-10-16");
   assert.equal(await p.getByLabel("期间终点").inputValue(), "2026-10-22");
-  await p.locator(".header-tools").getByRole("button", { name: "账户范围 · IBKR" }).click();
-  // Back to all accounts for the rest of the run.
-  await p.getByRole("dialog").getByRole("button", { name: "全部账户", exact: true }).click();
-  await p.getByRole("dialog").getByRole("button", { name: "应用", exact: true }).click();
-  await p.locator(".header-tools").getByRole("button", { name: "账户范围 · 全部账户" }).waitFor();
+  await button(p, "账户范围 · IBKR").waitFor();
 }
-(async () => {
-  let app;
-  try {
-    const launch = (profile) => electron.launch({
-      executablePath: packaged || require("electron"),
-      args: packaged ? [] : [root],
-      env: { ...env, STACK_PORTFOLIO_TEST_DIR: profile },
-      timeout: 30000,
-    });
-    app = await launch(directory);
-    const p = await app.firstWindow();
-    p.setDefaultTimeout(8000);
-    const errors = [];
-    p.on("pageerror", (e) => errors.push(e.message));
-    await p.getByRole("button", { name: "打开示例账本" }).click();
-    await p.getByRole("heading", { name: "总览", exact: true }).waitFor();
-    const allHoldings = p.locator(".card").filter({has:p.getByRole("heading",{name:"全部证券持仓"})});
-    assert.equal(await allHoldings.locator("tbody tr").count(),4);
-    assert.ok((await p.locator(".overview-totals").innerText()).includes("已计入 3/4 只"));
-    // Total assets opens onto what each account holds.
-    await p.getByRole("button", { name: /^总资产 A\$/ }).click();
-    const assets = p.getByRole("dialog");
-    await assets.getByRole("heading", { name: "Webull Australia" }).waitFor();
-    assert.match(await assets.innerText(), /IBKR[\s\S]*AAPL[\s\S]*USD 现金[\s\S]*A200/);
-    await p.getByRole("button", { name: "关闭", exact: true }).click();
-    const historyChart = p.getByRole("img", { name: /每日走势/ });
-    await historyChart.scrollIntoViewIfNeeded();
-    const trend = await historyChart.boundingBox();
-    await p.mouse.move(trend.x + trend.width / 2, trend.y + trend.height / 2);
-    assert.match(await p.locator(".chart-tip").innerText(), /总资产/);
-    await p.mouse.move(2, 2);
-    await p.getByRole("button", { name: "持仓", exact: true }).click();
-    await p.getByRole("button", { name: "AAPL", exact: true }).click();
-    assert.match(await p.getByRole("dialog").innerText(), /成本均价/);
-    await p.getByRole("dialog").getByText("市值与成本折算汇率", { exact: true }).waitFor();
-    await p.getByRole("dialog").getByRole("button", { name: "补成本", exact: true }).click();
-    const appleCost = p.getByRole("dialog", { name: "补成本 · AAPL" });
-    await appleCost.getByLabel(/这些股数的总买入成本（USD/).fill("18000");
-    await appleCost.getByText("记录历史澳元成本（可选）", { exact: true }).click();
-    await appleCost.getByLabel("凭据中的历史金额（AUD）").fill("25200");
-    await appleCost.getByLabel(/凭据（如/).fill("示例 AAPL 成本");
-    await appleCost.getByRole("button", { name: "保存", exact: true }).click();
-    await p.getByRole("dialog").getByText("A$27,000.00", { exact: true }).waitFor();
-    await p.getByRole("button", { name: "关闭", exact: true }).click();
-    await p.getByLabel("按账户筛选").selectOption("demo-webull");
-    await p.getByLabel("搜索持仓").fill("BHP");
-    await p.getByRole("button",{name:"按账面盈亏（AUD）排序"}).click();
-    await p.getByRole("button",{name:"补成本",exact:true}).click();
-    const costForm = p.getByRole("dialog");
-    await costForm.getByLabel(/这些股数的总买入成本/).fill("5600");
-    await costForm.getByLabel(/凭据（如/).fill("样例成本凭据");
-    await costForm.getByRole("button",{name:"保存",exact:true}).click();
-    await p.getByRole("row").filter({hasText:"BHP"}).getByText("A$5,600.00",{exact:true}).waitFor();
-    assert.equal(await p.getByLabel("搜索持仓").inputValue(),"BHP");
-    assert.equal(await p.getByLabel("按账户筛选").inputValue(),"demo-webull");
-    await p.waitForFunction(() => document.activeElement?.textContent === "BHP");
-    await p.getByRole("button", { name: "配置分析", exact: true }).first().click();
-    await p.getByRole("button",{name:/^IVV/}).click();
-    await p.getByRole("dialog").getByText("基金成分与数据来源").waitFor();
-    await p.getByRole("button",{name:"关闭",exact:true}).click();
-    await p.getByRole("button",{name:"实际投了哪些公司",exact:true}).click();
-    await p.getByRole("button",{name:/Apple|苹果/}).first().click();
-    const sources = p.getByRole("dialog");
-    await sources.getByText("通过 IVV 持有",{exact:true}).waitFor();
-    await sources.getByText("直接持有",{exact:true}).waitFor();
-    await sources.getByRole("button",{name:"关闭",exact:true}).click();
-    await p.getByText(/其余 \d+ 家公司/).click();
-    assert.ok(await p.locator(".company-tail details summary").first().isVisible());
-    await p.getByRole("button", { name: "配置目标", exact: true }).click();
-    await p.getByRole("button", { name: "IVV · 设定目标", exact: true }).click();
-    await p.getByRole("dialog").getByLabel(/目标占总资产/).fill("45");
-    await p.getByRole("button", { name: "保存目标" }).click();
-    await p.getByRole("button",{name:"IVV · 编辑目标",exact:true}).waitFor();
-    await p.getByRole("button",{name:"账户范围 · 全部账户",exact:true}).click();
-    await p.getByRole("dialog").getByLabel("Webull Australia").uncheck();
-    await p.getByRole("button",{name:"应用",exact:true}).click();
-    const target = p.locator(".target-row").filter({has:p.getByRole("button",{name:"IVV · 设定目标",exact:true})});
-    await target.getByText("全部账户目标 45.0%", {exact:true}).waitFor();
-    assert.match(await target.innerText(),/未设当前范围目标/);
-    await p.locator(".header-tools").getByRole("button",{name:"账户范围 · IBKR",exact:true}).click();
-    await p.getByRole("dialog").getByLabel("Webull Australia").check();
-    await p.getByRole("button",{name:"应用",exact:true}).click();
-    await p.getByRole("button",{name:"IVV · 编辑目标",exact:true}).waitFor();
-    await p.getByRole("button", { name: "导入与对账", exact: true }).click();
-    assert.equal(await p.getByRole("button",{name:"两家一起",exact:true}).getAttribute("aria-pressed"),"true");
-    await p.getByRole("button", { name: /^同步券商/ }).click();
-    const webull = p.getByRole("region",{name:"WEBULL 同步结果",exact:true});
-    const ibkr = p.getByRole("region",{name:"IBKR 同步结果",exact:true});
-    const preview = webull.getByRole("region", { name: "导入预览", exact: true });
-    await ibkr.getByRole("region",{name:"导入预览",exact:true}).waitFor();
-    await preview.getByRole("heading", { name: "将新增 1 笔流水" }).waitFor();
-    assert.match(await preview.getByRole("row").filter({ hasText: "买入 BHP" }).innerText(), /10 × AUD 44/);
-    await preview.getByRole("button", { name: "确认导入 1 笔", exact: true }).click();
-    await p.getByRole("button", { name: "前往结单对账" }).click();
-    await p.getByRole("button", { name: "查看示例月结单" }).click();
-    await p.getByRole("button", { name: "填入结单用于比较" }).click();
-    await p.getByRole("button", { name: "比较结单", exact: true }).click();
-    await p.getByText("请检查凭证及相关流水，再次比较。", { exact: false }).waitFor();
-    await p.getByRole("button", { name: "查看示例月结单" }).click();
-    await p.getByRole("button", { name: "按凭证补录入金" }).click();
-    await p.getByRole("button", { name: /确认记入/ }).click();
-    await p.getByRole("button", { name: "比较结单", exact: true }).click();
-    await p.getByLabel("已核对期间资金流水及所有币种余额").check();
-    await p.getByRole("button", { name: "完成对账并查看总览" }).click();
-    await p.getByText("A$128,400.00", { exact: true }).waitFor();
-    await p.getByRole("group",{name:"期间"}).getByRole("button",{name:"本月",exact:true}).click();
-    await p.getByRole("button", { name: /^本月盈亏 \+A\$3,200\.00/ }).waitFor();
-    await p.getByRole("button", { name: /^本月盈亏/ }).click();
-    await p.getByRole("heading",{name:"这段时间的盈亏来自哪里"}).waitFor();
-    // The review shares the period chosen on the overview.
-    await p.getByRole("group",{name:"期间"}).getByText("2026-10-01 至 2026-10-30 · 30 天").waitFor();
-    assert.match(await p.getByRole("row").filter({hasText:"组合期间盈亏"}).innerText(),/3,200/);
-    await p.getByRole("button",{name:"总览",exact:true}).click();
-    await p.getByRole("button",{name:"查看期间计算",exact:true}).click();
-    assert.match(await p.getByRole("dialog").innerText(), /期初资产[\s\S]*Webull Australia[\s\S]*合计[\s\S]*\+A\$3,200\.00/);
-    await p.getByRole("button", { name: "关闭", exact: true }).click();
-    await p.locator(".account-list > button").first().click();
-    await p.getByRole("button", { name: "查看该账户持仓" }).click();
-    assert.equal(await p.getByLabel("按账户筛选").inputValue(), "demo-ibkr");
-    await verifyReview(p);
-    await p.getByRole("button", { name: "总览", exact: true }).click();
-    await p.getByText("A$128,400.00", { exact: true }).waitFor();
-    if (process.env.STACK_PORTFOLIO_SCREENSHOT) {
-      await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-      const screenshot = await app.evaluate(async ({ BrowserWindow }) => {
-        const png = await BrowserWindow.getAllWindows()[0].webContents.capturePage(undefined, {stayHidden:true,stayAwake:true});
-        return png.toDataURL().split(",")[1];
-      });
-      fs.writeFileSync(process.env.STACK_PORTFOLIO_SCREENSHOT, Buffer.from(screenshot,"base64"));
+
+async function verifyBrokerRetry(app, p, file) {
+  await open(p, "导入与对账");
+  const webull = region(p, "WEBULL 同步结果");
+  const ibkr = region(p, "IBKR 同步结果");
+  await p.locator(".account-mapping summary").click();
+  const mapping = p.getByLabel("WEBULL 入账账户");
+  await mapping.selectOption("");
+  await button(p, /^同步券商/).click();
+  await button(webull, "单独重试").waitFor();
+
+  const trades = Array.from({ length: 6 }, (_, i) =>
+    '<Trade accountId="DEMO-IBKR" assetCategory="STK" symbol="AAPL" description="Apple" listingExchange="NASDAQ" ' +
+    'dateTime="20261030;100000" buySell="BUY" quantity="1" tradePrice="208" currency="USD" ibCommission="0" ibExecID="SMOKE-' + i + '"/>');
+  fs.writeFileSync(file, '<FlexQueryResponse><FlexStatements><FlexStatement accountId="DEMO-IBKR" fromDate="20261027" toDate="20261030">' +
+    '<AccountInformation currency="AUD"/><Trades>' + trades.join("") + '</Trades></FlexStatement></FlexStatements></FlexQueryResponse>');
+  await app.evaluate(({ dialog }, file) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+  }, file);
+  const importXml = async () => {
+    await button(p, /^导入文件/).click();
+    await button(p.getByRole("dialog"), /选择 Flex XML/).click();
+  };
+  await importXml();
+  assert.ok(await button(webull, "单独重试").isVisible());
+  await button(ibkr, "确认导入 6 笔").click();
+  const result = region(ibkr, "导入结果").getByText("已新增 6 笔流水", { exact: true });
+  await result.waitFor();
+  await mapping.selectOption("demo-webull");
+  await button(webull, "单独重试").click();
+  await button(webull, "确认导入 1 笔").waitFor();
+  assert.ok(await result.isVisible());
+
+  const balances = () => p.evaluate(async () => {
+    const d = await window.portfolio.dashboard({ ids: "all", date: "2026-10-30" });
+    return d.rows.map(({ accountId, ticker, type, rawQuantity }) => [accountId, ticker, type, rawQuantity]);
+  });
+  const imported = await balances();
+  assert.ok(imported.some((row) => row[1] === "AAPL" && row[3] === "106"));
+  assert.ok(imported.some((row) => row[2] === "cash"));
+  await importXml();
+  await ibkr.getByText("没有新变化", { exact: true }).waitFor();
+  assert.deepEqual(await balances(), imported);
+}
+
+async function useBackupFile(app, file) {
+  await app.evaluate(({ dialog }, file) => {
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+    dialog.showMessageBox = async () => ({ response: 1 });
+  }, file);
+}
+
+async function unlockBackup(p, entry, password) {
+  await button(p, entry).click();
+  const prompt = p.getByRole("dialog", { name: "解锁备份", exact: true });
+  await prompt.getByLabel("备份密码", { exact: true }).fill(password);
+  await button(prompt, "解锁并恢复").click();
+}
+
+async function verifyBackup(app, p, file, password, directory) {
+  await useBackupFile(app, file);
+  await open(p, "设置");
+  await button(p.getByRole("group", { name: "设置页签" }), "账本").click();
+  await button(p, "备份账本").click();
+  const prompt = p.getByRole("dialog", { name: "设置备份密码", exact: true });
+  await prompt.getByLabel("备份密码（至少 12 个字符）").fill(password);
+  await prompt.getByLabel("再次输入密码").fill(password);
+  await button(prompt, "选择文件位置").click();
+  await p.getByText("已保存 " + path.basename(file), { exact: true }).waitFor();
+  assert.ok(fs.statSync(file).size > 0);
+  const ledger = path.join(directory, "sample.sqlite");
+  const original = fs.readFileSync(ledger);
+  await unlockBackup(p, "恢复账本备份", "incorrect backup password");
+  const failure = p.getByRole("dialog", { name: "操作提示", exact: true });
+  await failure.getByText(/密码|备份/).first().waitFor();
+  assert.deepEqual(fs.readFileSync(ledger), original);
+  await button(failure, "知道了").click();
+  await unlockBackup(p, "恢复账本备份", password);
+  await p.locator(".busy").waitFor({ state: "hidden" });
+  await open(p, "总览");
+  await button(p, "账户范围 · IBKR").click();
+  const scope = p.getByRole("dialog", { name: "账户范围", exact: true });
+  await button(scope, "全部账户").click();
+  await button(scope, "应用").click();
+  await assets(p, "128,400.00").waitFor();
+  assert.ok(fs.readdirSync(directory).some((file) => file.startsWith("before-restore-")));
+  await open(p, "收益复盘");
+  await reopenNote(p);
+}
+
+async function captureMatrix(app, p, output) {
+  const sizes = [[1024, 640], [1280, 720], [1920, 1080], [3440, 1440]];
+  const eachViewport = async (verify) => {
+    for (const [width, height] of sizes) {
+      await resize(app, p, width, height);
+      for (const theme of ["light", "dark"]) {
+        await p.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+        const folder = path.join(output, width + "x" + height, theme);
+        fs.mkdirSync(folder, { recursive: true });
+        await verify(async (name) => {
+          await p.mouse.move(0, 0);
+          await p.evaluate(async () => {
+            document.querySelector("main.pane")?.scrollTo(0, 0);
+            await document.fonts.ready;
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+          });
+          const screenshot = await app.evaluate(async ({ BrowserWindow }) => {
+            const window = BrowserWindow.getAllWindows()[0];
+            const image = await window.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true });
+            return image.toPNG({ scaleFactor: 1 }).toString("base64");
+          });
+          const png = Buffer.from(screenshot, "base64");
+          assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [width, height], name);
+          fs.writeFileSync(path.join(folder, name + ".png"), png);
+        });
+      }
     }
-    await p.getByRole("button", { name: "导入与对账", exact: true }).click();
-    await p.getByRole("button", { name: /^同步券商/ }).click();
-    await preview.getByRole("heading", { name: "没有新变化" }).waitFor();
-    assert.deepEqual(await preview.getByRole("button").allTextContents(), ["关闭预览"]);
-    assert.equal(await preview.locator("article,table,details").count(), 0);
-    assert.equal(await p.getByRole("heading", { name: "最近导入批次" }).count(), 0);
-    await preview.getByRole("button", { name: "关闭预览" }).click();
-    await p.locator(".account-mapping summary").click();
-    await p.getByLabel("WEBULL 入账账户").selectOption("");
-    await p.getByRole("button",{name:/^同步券商/}).click();
-    await webull.getByRole("button",{name:"单独重试"}).waitFor();
-    const ibkrPreview = ibkr.getByRole("region", {name:"导入预览", exact:true});
-    await ibkrPreview.getByRole("article", { name: "IBKR 变更" }).getByText("A$83,700.00").waitFor();
-    assert.doesNotMatch(await ibkrPreview.innerText(), /Webull|BHP|重复|已入账|持平/);
-    await ibkrPreview.getByRole("button", { name: "确认保存变更" }).click();
-    await ibkr.getByRole("region",{name:"导入结果",exact:true}).waitFor();
-    await p.getByLabel("WEBULL 入账账户").selectOption("demo-webull");
-    await webull.getByRole("button",{name:"单独重试"}).click();
-    await preview.getByRole("heading",{name:"没有新变化"}).waitFor();
-    await p.getByRole("article", { name: "IBKR 变更" }).getByRole("button", { name: "前往结单对账" }).click();
-    assert.equal(await p.getByLabel("账本账户").inputValue(), "demo-ibkr");
-    assert.equal(await p.getByLabel("结单日期").inputValue(), "2026-10-30");
-    assert.ok(await p.locator('input[value="1792"]').isVisible());
-    const statement = path.join(directory, "amount-change.xml");
-    fs.writeFileSync(statement, require("../out/demo.cjs").demoXml.replace('endingValue="83700"', 'endingValue="83725"'));
-    await app.evaluate(({ dialog }, file) => {
-      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
-    }, statement);
-    await p.getByRole("button", { name: "记录与同步", exact: true }).click();
-    await p.getByRole("button", { name: /^导入文件/ }).click();
-    await p.getByRole("button", { name: /选择 Flex XML/ }).click();
-    await ibkrPreview.getByRole("heading", { name: "将更新 1 项账户数据" }).waitFor();
-    assert.match(await ibkrPreview.innerText(), /账户总额/);
-    assert.ok(await ibkrPreview.getByText("A$83,700.00", { exact: true }).isVisible());
-    assert.ok(await ibkrPreview.getByText("A$83,725.00", { exact: true }).isVisible());
-    assert.doesNotMatch(await ibkrPreview.innerText(), /现金余额|证券市值|AAPL|Webull|已入账/);
-    await ibkrPreview.getByRole("button", { name: "取消预览" }).click();
-    await p.reload();
-    await p.getByText("A$128,400.00", { exact: true }).waitFor();
-    const backup = path.join(directory, "verify-backup.spbackup");
-    const password = require("node:crypto").randomBytes(24).toString("base64");
-    await app.evaluate(({ dialog }, file) => {
-      dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
-      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
-      dialog.showMessageBox = async () => ({ response: 1 });
-    }, backup);
-    await p.getByRole("button", { name: "设置", exact: true }).click();
-    await p.getByRole("button",{ name:"账本", exact:true }).click();
-    await p.getByRole("button", { name: "备份账本", exact: true }).click();
-    await p.getByLabel("备份密码（至少 12 个字符）").fill(password);
-    await p.getByLabel("再次输入密码").fill(password);
-    await p.getByRole("button", { name: "选择文件位置" }).click();
-    await p.getByText("已保存 verify-backup.spbackup", { exact: true }).waitFor();
-    assert.ok(fs.existsSync(backup));
-    const saved = fs.readFileSync(path.join(directory, "sample.sqlite"));
-    const failed = await p.evaluate(async () => {
-      const { token } = await window.portfolio.selectBackup();
-      try { await window.portfolio.restore({ token, password: "incorrect backup password" }); }
-      catch { return true; }
-      return false;
-    });
-    assert.ok(failed);
-    assert.deepEqual(fs.readFileSync(path.join(directory, "sample.sqlite")), saved);
-    await p.getByRole("button", { name: "恢复账本备份", exact: true }).click();
-    await p.getByLabel("备份密码", { exact: true }).fill(password);
-    await p.getByRole("button", { name: "解锁并恢复" }).click();
-    await p.waitForFunction(() => document.querySelector(".busy") === null);
-    await p.getByRole("button", { name: "总览", exact: true }).click();
-    await p.getByText("A$128,400.00", { exact: true }).waitFor();
-    assert.ok(fs.readdirSync(directory).some((f) => f.startsWith("before-restore-")));
-    assert.deepEqual(errors, []);
-    await app.close();
-    app = null;
-    const fresh = path.join(directory, "new-profile");
-    fs.mkdirSync(fresh);
-    app = await launch(fresh);
-    await app.evaluate(({ dialog }, file) => {
-      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
-      dialog.showMessageBox = async () => ({ response: 1 });
-    }, backup);
-    const clean = await app.firstWindow();
-    await clean.getByRole("button", { name: "从账本备份恢复" }).click();
-    await clean.getByLabel("备份密码", { exact: true }).fill(password);
-    await clean.getByRole("button", { name: "解锁并恢复" }).click();
-    await clean.getByText("A$128,400.00", { exact: true }).waitFor();
-    await clean.getByRole("button", { name: "收益复盘", exact: true }).click();
-    await clean.getByRole("button", { name: /重开区间/ }).click();
-    await clean.locator(".review-changed").first().waitFor();
-    assert.notDeepEqual(fs.readFileSync(path.join(directory, "ledger-key.v1")), fs.readFileSync(path.join(fresh, "ledger-key.v1")));
-    await clean.getByRole("button",{name:"导入与对账",exact:true}).click();
-    await clean.getByRole("button",{name:/^手工补一条/}).click();
-    await clean.getByRole("button",{name:"补持仓",exact:true}).click();
-    const manual = clean.getByRole("dialog");
-    await manual.getByLabel("证券代码").fill("MOCK");
-    await manual.getByLabel("上市市场").fill("XASX");
-    await manual.getByLabel("截至该日的股数或份额").fill("10");
-    await manual.getByLabel(/凭据（如/).fill("示例持股凭据");
-    await manual.getByRole("button",{name:"保存持仓"}).click();
-    await manual.waitFor({state:"hidden"});
-    await clean.getByRole("button",{name:"持仓",exact:true}).click();
-    const mock = clean.getByRole("row").filter({has:clean.getByRole("button",{name:"MOCK",exact:true})});
-    await mock.getByRole("button",{name:"补报价",exact:true}).click();
-    await clean.getByRole("dialog").getByLabel("每股／份报价（AUD）").fill("100");
-    await clean.getByRole("dialog").getByRole("button",{name:"保存",exact:true}).click();
-    await mock.getByText("A$1,000.00",{exact:true}).waitFor();
-    await mock.getByRole("button",{name:"补成本",exact:true}).waitFor();
-    console.log(
-      "Windows UI verified: onboarding, holdings, allocation, import, reconciliation, benchmark chart selection, historical review notes, backup and restore.",
-    );
-  } catch (e) {
-    if (app) {
-      const p = await app.firstWindow();
-      console.error((await p.locator("body").innerText()).slice(-1100));
-    }
-    throw e;
-  } finally {
-    if (app) await app.close();
-    const checked = fs.realpathSync(directory),
-      parent = fs.realpathSync(os.tmpdir());
-    if (path.dirname(checked) === parent && path.basename(checked).startsWith("stack-portfolio-ui-"))
-      fs.rmSync(checked, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  };
+
+  await welcome(p).waitFor();
+  await eachViewport((capture) => capture("welcome"));
+  await openSample(p);
+  await open(p, "配置分析");
+  await button(p, "设置目标").click();
+  const targets = p.getByRole("dialog", { name: "设置目标", exact: true });
+  for (const [label, target] of [["IVV", "45"], ["A200", "20"], ["个股", "25"], ["现金", "10"]]) {
+    await targets.getByLabel(label + " 目标（%）").fill(target);
   }
-})().catch((e) => {
-  console.error(e.message);
+  await button(targets, "保存目标").click();
+  await region(p, "IVV").getByText("目标 45.0%", { exact: true }).waitFor();
+  await p.locator(".toast").getByRole("button").click();
+
+  await eachViewport(async (capture) => {
+    for (const [key, name] of pages) {
+      await open(p, name);
+      if (key === "performance") await p.getByRole("img", { name: "累计收益曲线", exact: true }).waitFor();
+      if (key === "imports") {
+        await button(p, /^同步券商/).click();
+        await region(region(p, "IBKR 同步结果"), "导入预览").waitFor();
+        await button(region(p, "WEBULL 同步结果"), "确认导入 1 笔").waitFor();
+      }
+      if (key === "settings") await p.getByText("正式账本可保存券商授权。示例账本使用随附样例。").waitFor();
+      await capture(key);
+    }
+  });
+  console.log("Captured 56 app screenshots in " + output);
+}
+
+async function main() {
+  assert.ok(positionals.length <= 1, "Usage: node tests/windows-smoke.cjs [app.exe] [--screenshots directory]");
+  const prefix = "stack-portfolio-smoke-";
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  try {
+    await withDesktop(path.join(directory, "acceptance"), async (app, p) => {
+      await title(p, "打开投资账本").waitFor();
+      await region(p, "迁入 Wealthfolio 账本").waitFor();
+      await region(p, "示例组合").waitFor();
+      assert.equal(await nav(p).count(), 0);
+      await seedAcceptanceBook(app);
+      await openSample(p);
+      assert.deepEqual((await nav(p).getByRole("button").evaluateAll((buttons) =>
+        buttons.map((item) => item.getAttribute("aria-label")))).slice(0, -1), pages.map(([, name]) => name));
+      await verifyNativeMinimum(app, p);
+      await resize(app, p, 1440, 900);
+      await verifyPeriods(p);
+      await verifyHoldings(app, p);
+      await verifyHoldingCost(app, p);
+      await verifyHoldingLink(p);
+    });
+    const password = randomBytes(24).toString("base64");
+    const backup = path.join(directory, "sample.spbackup");
+    const sample = path.join(directory, "sample");
+    await withDesktop(sample, async (app, p) => {
+      await openSample(p);
+      await resize(app, p, 1440, 900);
+      await p.getByLabel("估值日").fill("2026-10-27");
+      await p.getByText("正在查看 2026-10-27").waitFor();
+      await p.getByLabel("估值日").fill("2026-10-30");
+      await p.getByText("正在查看 2026-10-30").waitFor();
+      await verifyReconciliation(p);
+      await verifyNotes(p);
+      await verifyBackup(app, p, backup, password, sample);
+    });
+    await withDesktop(path.join(directory, "restored"), async (app, p) => {
+      await useBackupFile(app, backup);
+      await unlockBackup(p, "从账本备份恢复", password);
+      await assets(p, "128,400.00").waitFor();
+      await open(p, "收益复盘");
+      await reopenNote(p);
+    });
+    await withDesktop(path.join(directory, "brokers"), async (app, p) => {
+      await openSample(p);
+      await verifyBrokerRetry(app, p, path.join(directory, "six-trades.xml"));
+    });
+    if (values.screenshots) {
+      const output = path.resolve(values.screenshots);
+      await withDesktop(path.join(directory, "screenshots"), (app, p) => captureMatrix(app, p, output));
+    }
+    console.log("Windows smoke passed: welcome, six pages, minimum window, periods, holdings, import and retry, reconciliation, review notes, backup and restore.");
+  } finally {
+    const resolved = fs.realpathSync(directory);
+    assert.equal(path.dirname(resolved), fs.realpathSync(os.tmpdir()));
+    assert.ok(path.basename(resolved).startsWith(prefix));
+    fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  }
+}
+
+main().catch((error) => {
+  console.error(error.stack);
   process.exitCode = 1;
 });

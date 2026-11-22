@@ -107,8 +107,10 @@ function AccountCard({ account, rows, filtered, day, sort, setSort, selectedId, 
                 onClick={() => select(r.id)}
               >
                 <td>
-                  <button type="button" className="ticker">{r.ticker}</button>
-                  {r.name && <i className="holdings-name" title={r.name}>{r.name}</i>}
+                  <div className="holdings-security">
+                    <button type="button" className="ticker">{r.ticker}</button>
+                    {r.name && <i className="holdings-name" title={r.name}>{r.name}</i>}
+                  </div>
                 </td>
                 <td>{num(r.rawQuantity)}</td>
                 <td className="hide-n">{r.costLocal == null ? <span className="warn">待补</span> : aud(r.costAud, 2)}</td>

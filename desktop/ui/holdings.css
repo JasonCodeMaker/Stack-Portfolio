@@ -65,6 +65,21 @@
   text-overflow: ellipsis;
 }
 
+@container (max-width: 1000px) {
+  .holdings-card td:first-child {
+    width: 100%;
+    min-width: 7ch;
+    max-width: 0;
+  }
+  .holdings-security {
+    display: flex;
+    align-items: center;
+  }
+  .holdings-security .ticker {
+    flex: none;
+  }
+}
+
 .holdings-cash {
   color: var(--l2);
 }

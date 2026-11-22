@@ -26,6 +26,16 @@ delete env.ELECTRON_RUN_AS_NODE;
     await chart.waitFor();
     assert.equal(await page.getByRole("main").getAttribute("data-cols"), "1");
     assert.equal((await chart.boundingBox()).height, 240);
+    const presets = await page.getByRole("group", { name: "期间" }).boundingBox();
+    const metrics = await page.getByRole("region", { name: "关键数字" }).boundingBox();
+    assert.equal(metrics.y - presets.y - presets.height, 12);
+    await chart.scrollIntoViewIfNeeded();
+    const box = await chart.boundingBox();
+    await page.mouse.move(box.x + 1, box.y + box.height / 2);
+    const first = page.locator(".ch-tip");
+    await first.waitFor();
+    assert.match(await first.innerText(), /2026-09-30/);
+    assert.match(await first.innerText(), /总资产\s+A\$124,200\.00/);
   } finally {
     if (app) await app.close();
     fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

@@ -20,11 +20,16 @@ delete env.ELECTRON_RUN_AS_NODE;
     app = await electron.launch({ executablePath: require("electron"), args: [path.join(__dirname, "..")], env });
     const page = await app.firstWindow();
     page.setDefaultTimeout(6000);
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 720));
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1024, 640));
     await page.getByRole("button", { name: "打开示例账本" }).click();
     const nav = page.getByRole("navigation", { name: "页面" });
     await nav.getByRole("button", { name: "持仓", exact: true }).click();
     const webull = page.getByRole("region", { name: "Webull Australia", exact: true });
+    const table = webull.getByRole("table");
+    await table.getByRole("columnheader", { name: "累计分红", exact: true }).waitFor();
+    assert.ok(await table.evaluate((el) => el.parentElement.scrollWidth === el.parentElement.clientWidth),
+      "The compact holdings table fits even with a long ETF name");
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 720));
     const bhp = webull.getByRole("row", { name: /^BHP\b/ });
     await bhp.waitFor();
     assert.match(await bhp.innerText(), /A\$6,160\.00/);
