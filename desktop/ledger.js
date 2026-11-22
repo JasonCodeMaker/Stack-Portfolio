@@ -8,6 +8,7 @@ import {
   lockForReplacement, assertNoJournal,
 } from "./bookStorage.cjs";
 
+// Existing ledgers and Wealthfolio migrations use these preference scopes.
 export const ALLOCATION = "portfolio-xray";
 export const BROKER = "broker-sync";
 export const dayOf = (date) => String(date || "").slice(0, 10);

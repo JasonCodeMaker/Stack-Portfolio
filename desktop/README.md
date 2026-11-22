@@ -36,4 +36,4 @@
 
 ## 本地构建
 
-从本目录执行 `npm ci`，然后执行 `npm start`。开发环境需要 Node.js 22.15 或更高版本。运行 `npm test` 验证账本、迁移和对账，`node tests/windows-smoke.cjs` 检查 Windows 界面流程，`npm run dist` 生成当前用户可安装的 x64 安装包。安装后的软件自带运行环境。
+从本目录执行 `npm ci --ignore-scripts`，使用 SQLite 依赖随包提供的预编译二进制，再执行 `npm start`。开发环境需要 Node.js 22.15 或更高版本。运行 `npm run typecheck` 检查配置分析和券商模块的类型，运行 `npm test` 验证账本、迁移、对账、复盘、配置分析和券商同步。测试构建完成后，运行 `node tests/windows-smoke.cjs` 检查 Windows 界面流程。运行 `npm run dist` 会在 `../release/desktop/` 生成 Windows x64 安装包。安装后的软件自带运行环境。

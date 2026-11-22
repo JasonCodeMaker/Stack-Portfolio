@@ -1,15 +1,15 @@
 import { randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
-import { parseCsvRows } from "../src/domain/etf";
-import { runSync, sourceKey, importedKeysStorageKey, resetImportedKeysForMappings } from "../broker-sync/src/syncEngine";
-import { parseIbkrFlexReport, fetchIbkrFlexReport } from "../broker-sync/src/ibkrFlex";
+import { parseCsvRows } from "./allocation/domain/etf";
+import { runSync, sourceKey, importedKeysStorageKey, resetImportedKeysForMappings } from "./brokers/syncEngine";
+import { parseIbkrFlexReport, fetchIbkrFlexReport } from "./brokers/ibkrFlex";
 import {
   fetchWebullReport,
   fetchWebullAccountValue,
   checkWebullToken,
   createWebullToken,
   listWebullAccounts,
-} from "../broker-sync/src/webullOpenApi";
+} from "./brokers/webullOpenApi";
 import {
   ALLOCATION,
   BROKER,
@@ -30,9 +30,9 @@ import { loadBook, positions, accountSnapshot, storageContext } from "./flows.js
 import { recordIdentity, ibkrHistoryPlan, applyIbkrHistoryPlan } from "./ibkrHistory.js";
 import { saveBrokerValue } from "./ledger.js";
 import { activityEdits, valuationEdits } from "./importChanges.js";
-import { EtfCache } from "../src/storage/etfCache";
-import { loadAddonSettings } from "../src/storage/settings";
-import { createProviders, resolveEtfHoldings } from "../src/services/etf/providers";
+import { EtfCache } from "./allocation/storage/etfCache";
+import { loadAllocationSettings } from "./allocation/storage/settings";
+import { createProviders, resolveEtfHoldings } from "./allocation/services/etf/providers";
 
 const D = (x) => new Decimal(x ?? 0);
 const networkHosts = new Set([
@@ -896,7 +896,7 @@ export function resetSync(db, broker, id) {
 export async function refreshFund(db, asset, secrets) {
   const ctx = storageContext(db, ALLOCATION);
   ctx.api.network = network;
-  const settings = await loadAddonSettings(ctx),
+  const settings = await loadAllocationSettings(ctx),
     cache = new EtfCache(ctx),
     current = await cache.get(asset.etfKey);
   if (current?.snapshot?.sourceMode === "manual")

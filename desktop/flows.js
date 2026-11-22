@@ -1,11 +1,11 @@
 import Decimal from "decimal.js";
 import { ALLOCATION, day, dayOf, hasTable, json, preference } from "./ledger.js";
-import { normalizeHolding, buildPortfolioModel } from "../src/domain/portfolio";
-import { buildExposureModel } from "../src/domain/exposure";
-import { EtfCache } from "../src/storage/etfCache";
-import { getSnapshotStatus } from "../src/domain/etf";
-import { loadAddonSettings, reconcileAccountSelection } from "../src/storage/settings";
-import { loadRebalanceSettings } from "../src/storage/rebalance";
+import { normalizeHolding, buildPortfolioModel } from "./allocation/domain/portfolio";
+import { buildExposureModel } from "./allocation/domain/exposure";
+import { EtfCache } from "./allocation/storage/etfCache";
+import { getSnapshotStatus } from "./allocation/domain/etf";
+import { loadAllocationSettings, reconcileAccountSelection } from "./allocation/storage/settings";
+import { loadRebalanceSettings } from "./allocation/storage/rebalance";
 import { closingDay, marketFor, shiftDay } from "./marketDays.js";
 
 const D = (n) => new Decimal(n ?? 0);
@@ -616,7 +616,7 @@ function asStored(book, accounts, date) {
 export async function dashboard(db, options = {}) {
   const book = loadBook(db),
     ctx = storageContext(db, ALLOCATION),
-    raw = await loadAddonSettings(ctx);
+    raw = await loadAllocationSettings(ctx);
   const active = book.accounts.filter((a) => a.isActive);
   const reconciled = reconcileAccountSelection(raw, active);
   const settings = reconciled.settings,

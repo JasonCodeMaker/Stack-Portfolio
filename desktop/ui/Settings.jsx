@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Database, ExternalLink, Wifi, Link2 } from "lucide-react";
 import { api, aud, Card, Field, Modal, Tabs, Table, Empty, kind } from "./common";
-import { scopedAliasKey } from "../../src/domain/identifiers";
+import { scopedAliasKey } from "../allocation/domain/identifiers";
 import { BookBackups } from "./BookBackups";
 export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
   const [tab, setTab] = useState(initial.tab || "book"),

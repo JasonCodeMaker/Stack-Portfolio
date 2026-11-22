@@ -50,11 +50,11 @@ const {
 } = require("./services.js");
 const { seedDemo, demoCsv, demoXml } = require("./demo.js");
 network.browserFetch = (url, init) => net.fetch(url, init);
-const { EtfCache } = require("../src/storage/etfCache.ts");
-const { parseManualCsv, snapshotToCsv } = require("../src/domain/etf.ts");
-const { saveAddonSettings } = require("../src/storage/settings.ts");
-const { saveRebalanceSettings } = require("../src/storage/rebalance.ts");
-const { FxService } = require("../src/services/fx/fxService.ts");
+const { EtfCache } = require("./allocation/storage/etfCache.ts");
+const { parseManualCsv, snapshotToCsv } = require("./allocation/domain/etf.ts");
+const { saveAllocationSettings } = require("./allocation/storage/settings.ts");
+const { saveRebalanceSettings } = require("./allocation/storage/rebalance.ts");
+const { FxService } = require("./allocation/services/fx/fxService.ts");
 app.setName("Stock Portfolio");
 if (process.env.STACK_PORTFOLIO_TEST_DIR) app.setPath("userData", process.env.STACK_PORTFOLIO_TEST_DIR);
 else app.setPath("userData", path.join(app.getPath("appData"), "Stack Portfolio"));
@@ -462,7 +462,7 @@ const handlers = {
     return true;
   },
   allocationSettings: async (args) => {
-    await saveAddonSettings(storageContext(requireBook(), ALLOCATION), args);
+    await saveAllocationSettings(storageContext(requireBook(), ALLOCATION), args);
     return true;
   },
   async fundCsv(a) {
@@ -543,7 +543,6 @@ const handlers = {
         ctx.api.network = network;
         ctx.api.secrets = secrets;
         ctx.api.logger = { warn() {} };
-        ctx.api.exchangeRates = { getAll: async () => [] };
         const quote = await new FxService(ctx).getQuote();
         if (quote?.provider === "twelvedata" && now - Date.parse(quote.fetchedAt) < 300000) {
           savePrice(db, "FX:USD/AUD", day(quote.fetchedAt), quote.rate, "Twelve Data", 25);
@@ -583,7 +582,6 @@ const handlers = {
       ctx = storageContext(db, ALLOCATION);
     ctx.api.network = network;
     ctx.api.secrets = secrets;
-    ctx.api.exchangeRates = { getAll: async () => [] };
     ctx.api.logger = { warn() {} };
     const fx = await new FxService(ctx).getQuote({ force: true });
     if (fx && fx.provider === "twelvedata")

@@ -9,7 +9,8 @@
   "scripts": {
     "build": "node build.mjs",
     "start": "npm run build && electron .",
-    "test": "npm run build && node --test tests/*.test.cjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --test tests/*.test.cjs && vitest run tests/allocation tests/brokers",
     "dist": "npm run build && electron-builder --win nsis --x64"
   },
   "build": {
@@ -33,7 +34,9 @@
       "enableEmbeddedAsarIntegrityValidation": true,
       "onlyLoadAppFromAsar": true
     },
-    "asarUnpack": ["node_modules/better-sqlite3-multiple-ciphers/prebuilds/win32-x64.node"],
+    "asarUnpack": [
+      "node_modules/better-sqlite3-multiple-ciphers/prebuilds/win32-x64.node"
+    ],
     "win": {
       "target": [
         "nsis"
@@ -49,6 +52,7 @@
     }
   },
   "devDependencies": {
+    "@types/node": "22.20.1",
     "decimal.js": "10.6.0",
     "electron": "44.9.3",
     "electron-builder": "26.18.0",
@@ -56,7 +60,10 @@
     "lucide-react": "0.561.0",
     "playwright-core": "1.65.1",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "typescript": "5.9.3",
+    "vite": "7.3.8",
+    "vitest": "5.1.1"
   },
   "dependencies": {
     "better-sqlite3-multiple-ciphers": "13.2.0"

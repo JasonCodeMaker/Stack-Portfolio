@@ -4,9 +4,7 @@ coverage/
 .vite/
 *.local
 *.tsbuildinfo
-.tsbuild/
 release/desktop/
-.codex-spreadsheet-analysis/
 *.sqlite
 *.sqlite-*
 *.sqlite3

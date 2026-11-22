@@ -1,9 +1,9 @@
 import React, { useState } from "react";
 import { ArrowUpRight, Layers3, SlidersHorizontal } from "lucide-react";
-import { buildCoreSatelliteAllocation, buildBreakdownNodes } from "../../src/domain/visualization";
-import { buildRebalanceModel } from "../../src/domain/rebalance";
-import { buildComposition, buildPlanRows } from "../../src/domain/composition";
-import { squarify } from "../../src/domain/compositionLayout";
+import { buildCoreSatelliteAllocation, buildBreakdownNodes } from "../allocation/domain/visualization";
+import { buildRebalanceModel } from "../allocation/domain/rebalance";
+import { buildComposition, buildPlanRows } from "../allocation/domain/composition";
+import { squarify } from "../allocation/domain/compositionLayout";
 import { api, aud, fmt, pct, num, kind, signedPct, Card, Field, Modal, Tabs, Table, Empty } from "./common";
 const labels = {
   "Individual stocks": "个股合计",
