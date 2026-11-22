@@ -45,7 +45,7 @@ function Fold({ title, children }) {
 const securityLabel = (r) =>
   [r.name || r.ticker, r.ticker, marketNames[r.mic] || r.mic || "上市地待补", r.localCurrency].join(" · ");
 
-export function Settings({ d, mode, run, initial = {}, workspace, openHome, onPage }) {
+export function Settings({ d, mode, theme = "system", onThemeChange, run, initial = {}, workspace, openHome, onPage }) {
   const demo = mode === "demo";
   const { cols } = useShell();
   const [tab, setTab] = useState(initial.tab || "connections"),
@@ -668,6 +668,14 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome, onPa
             </button>
           ))}
         </div>
+        <label className="row m0">
+          <span className="cap">主题</span>
+          <select className="btn" value={theme} onChange={(e) => onThemeChange(e.target.value)}>
+            <option value="system">跟随系统</option>
+            <option value="light">浅色</option>
+            <option value="dark">深色</option>
+          </select>
+        </label>
       </div>
       {tab === "connections" && demo && <div className="notice">正式账本可保存券商授权。示例账本使用随附样例。</div>}
       {cols === 1 ? (

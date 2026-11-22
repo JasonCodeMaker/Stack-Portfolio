@@ -132,6 +132,7 @@ function readPreferences() {
 const writePreferences = (patch) =>
   writeFileAtomic(preferenceFile(), JSON.stringify({ ...readPreferences(), ...patch }));
 const lastMode = () => readPreferences().mode ?? null;
+const themes = ["system", "light", "dark"];
 async function activate(m) {
   if (db && mode === m) return m;
   const file = fileFor(m);
@@ -242,9 +243,16 @@ const handlers = {
     return {
       storageError,
       mode: mode || null,
+      theme: nativeTheme.themeSource,
       hasReal: fs.existsSync(fileFor("real")),
       sources: knownSources(originalDir()).map((p, i) => ({ id: i, label: path.relative(originalDir(), p) })),
     };
+  },
+  setTheme({ theme }) {
+    if (!themes.includes(theme)) throw Error("请选择有效的主题。");
+    writePreferences({ theme });
+    nativeTheme.themeSource = theme;
+    return theme;
   },
   openDemo: () => activate("demo"),
   openReal: () => {
@@ -767,6 +775,7 @@ for (const [name, fn] of Object.entries(handlers))
     queue = run.catch(() => {});
     return run;
   });
+const windowBackground = () => (nativeTheme.shouldUseDarkColors ? "#0E1410" : "#ECF1EA");
 function createWindow() {
   const headless = !!process.env.STACK_PORTFOLIO_HEADLESS;
   const { bounds, maximized } = initialWindow(
@@ -779,8 +788,7 @@ function createWindow() {
     ...bounds,
     minWidth: minimumSize.width,
     minHeight: minimumSize.height,
-    // Page background of the design tokens, light or dark with the system.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0E1410" : "#ECF1EA",
+    backgroundColor: windowBackground(),
     show: false,
     webPreferences: {
       ...(process.env.STACK_PORTFOLIO_HEADLESS ? {offscreen:true, backgroundThrottling:false} : {}),
@@ -816,7 +824,14 @@ else {
       win.focus();
     }
   });
-  app.whenReady().then(createWindow);
+  nativeTheme.on("updated", () => {
+    if (win && !win.isDestroyed()) win.setBackgroundColor(windowBackground());
+  });
+  app.whenReady().then(() => {
+    const { theme } = readPreferences();
+    nativeTheme.themeSource = themes.includes(theme) ? theme : "system";
+    createWindow();
+  });
   app.on("window-all-closed", () => app.quit());
   app.on("will-quit", () => {
     db?.close();

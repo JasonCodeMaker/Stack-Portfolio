@@ -243,6 +243,12 @@ function Application() {
     saveFilters(next);
     run(() => refresh(next), false);
   }
+  function changeTheme(theme) {
+    run(async () => {
+      const saved = await api.setTheme({ theme });
+      setHome((current) => ({ ...current, theme: saved }));
+    }, false);
+  }
   function onPage(id, init = {}) {
     setPage(id);
     setInitial({ ...init });
@@ -374,6 +380,8 @@ function Application() {
             key={JSON.stringify(initial)}
             d={d}
             mode={mode}
+            theme={home.theme}
+            onThemeChange={changeTheme}
             run={run}
             initial={initial}
             onPage={onPage}
