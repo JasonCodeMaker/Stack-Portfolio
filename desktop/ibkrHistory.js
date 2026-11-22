@@ -1,6 +1,8 @@
 import Decimal from "decimal.js";
 import { randomUUID } from "node:crypto";
-import { dayOf, json, saveEvent } from "./ledger.js";
+import { isDeepStrictEqual } from "node:util";
+import { importedKeysStorageKey, linkedActivityId, sourceKey } from "./brokers/syncEngine";
+import { BROKER, dayOf, json, preference, saveEvent } from "./ledger.js";
 
 export function recordIdentity(e) {
   const provenance = e.metadata?.brokerSync;
@@ -123,6 +125,48 @@ export function ibkrHistoryPlan(db, account, rows) {
     }
   }
   return { aliases, superseded, blocked };
+}
+
+export function mergeIbkrExecution(previous, incoming) {
+  if (!previous || !incoming) return incoming || previous;
+  if (previous.currency !== incoming.currency || previous.tradeDate !== incoming.tradeDate) return incoming;
+  // A later export may have a different reporting base or omit fields which were present before.
+  if (previous.baseCurrency === "AUD" && incoming.baseCurrency && incoming.baseCurrency !== "AUD") return previous;
+  if (previous.reportDate && incoming.reportDate && previous.reportDate !== incoming.reportDate) return incoming;
+  return { ...previous, ...incoming };
+}
+
+// Old imports may already have a deduplication key, so runSync never sees their new evidence.
+export function enrichIbkrExecutions(db, account, activities, stored, history, write) {
+  const ids = new Map();
+  for (const e of stored.values()) {
+    if (!posted(e) || e.metadata?.supersededBy || history.superseded.has(e.id)) continue;
+    const identity = recordIdentity(e);
+    const id = history.aliases.get(e.id) || (identity?.startsWith("ibkr:") && identity.slice(5));
+    if (id) ids.set(id, ids.has(id) ? null : e.id);
+  }
+  const keys = new Set(json(preference(db, BROKER, importedKeysStorageKey()), []));
+  const select = db.prepare("SELECT data FROM sp_events WHERE id=? AND account=?");
+  const changes = [];
+  for (const r of activities) {
+    const evidence = r.metadata?.ibkrExecution;
+    if (!evidence) continue;
+    const id = ids.has(r.brokerRecordId) ? ids.get(r.brokerRecordId) : linkedActivityId(keys, sourceKey(r, account));
+    const prior = stored.get(id);
+    if (!prior || !posted(prior) || prior.metadata?.supersededBy || history.superseded.has(id) ||
+        prior.activityType !== r.activityType || prior.currency !== r.currency ||
+        (r.symbol && prior.assetSymbol?.toUpperCase() !== r.symbol) ||
+        (recordIdentity(prior) && recordIdentity(prior) !== "ibkr:" + r.brokerRecordId)) continue;
+    const previous = prior.metadata?.ibkrExecution;
+    const next = mergeIbkrExecution(previous, evidence);
+    if (isDeepStrictEqual(previous, next)) continue;
+    changes.push({ record: r, previous, next });
+    if (write) {
+      const e = JSON.parse(select.get(id, account).data);
+      saveEvent(db, { ...e, metadata: { ...e.metadata, ibkrExecution: next } });
+    }
+  }
+  return changes;
 }
 
 export function applyIbkrHistoryPlan(db, plan) {

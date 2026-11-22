@@ -1,16 +1,14 @@
 import type { AllocationRow, RebalanceModel, RebalanceSettings } from "./types";
 
-const TARGET_EPSILON = 0.0001;
-
 export function buildRebalanceModel(
   allocation: AllocationRow[],
   totalAud: number | null,
   settings: RebalanceSettings,
 ): RebalanceModel {
-  const targetTotal = allocation.reduce((sum, row) => sum + (settings.targets[row.key] ?? 0), 0);
-  const configured = Math.abs(targetTotal - 1) <= TARGET_EPSILON;
+  const targetTotal = Object.values(settings.targets).reduce((sum, target) => sum + target, 0);
+  const configured = Object.keys(settings.targets).length > 0;
   const rows = allocation.map((row) => {
-    const targetWeight = configured ? settings.targets[row.key] ?? 0 : null;
+    const targetWeight = settings.targets[row.key] ?? null;
     const drift = targetWeight !== null && row.weight !== null ? row.weight - targetWeight : null;
     const adjustmentAud = drift !== null && totalAud !== null ? -drift * totalAud : null;
     const status = drift === null

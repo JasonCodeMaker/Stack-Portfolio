@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { FileUp, CloudDownload, FileText, Check, History, ArrowRight } from "lucide-react";
+import React, { useEffect, useState, useRef } from "react";
+import { FileUp, CloudDownload, FileText } from "lucide-react";
+import { HoldingEditor, SecurityFields, listingLabel, marketNames } from "./HoldingEditor";
 import { ImportPreview } from "./ImportPreview";
 import {
   api,
@@ -14,7 +15,6 @@ import {
   Empty,
   Modal,
   AccountSelect,
-  parseCash,
 } from "./common";
 const blank = {
   type: "DEPOSIT",
@@ -31,42 +31,202 @@ const blank = {
   kind: "EQUITY",
   group: "",
 };
-function parsePositions(text, opening = false) {
-  if (!text.trim()) return [];
-  return text
-    .trim()
-    .split(/\r?\n/)
-    .map((s) => {
-      const [symbol, quantity, currency, mic, price, kind] = s.trim().split(/[\s,，]+/);
-      if (!symbol || quantity == null || !Number.isFinite(Number(quantity)) || (opening && !currency))
-        throw Error("请核对持仓行中的代码、数量及币种。");
-      return { symbol, quantity, currency, mic, price, kind };
-    });
+function StatementLines({ cash, setCash, positions, setPositions, listings = [], opening = false }) {
+  const change = (rows, set, i, patch) => set(rows.map((v, n) => (n === i ? { ...v, ...patch } : v)));
+  return (
+    <div className="statement-lines">
+      <fieldset>
+        <legend>结单上的现金余额</legend>
+        {cash.map((v, i) => (
+          <div className="inline-form" key={i}>
+            <Field label="币种">
+              <input
+                aria-label={"现金币种 " + (i + 1)}
+                maxLength={3}
+                value={v.currency}
+                onChange={(e) => change(cash, setCash, i, { currency: e.target.value.toUpperCase() })}
+              />
+            </Field>
+            <Field label="余额">
+              <input
+                type="number"
+                step="any"
+                value={v.value}
+                onChange={(e) => change(cash, setCash, i, { value: e.target.value })}
+              />
+            </Field>
+            <button onClick={() => setCash(cash.filter((_, n) => n !== i))}>移除</button>
+          </div>
+        ))}
+        <button className="text-btn" onClick={() => setCash([...cash, { currency: "", value: "" }])}>
+          添加币种
+        </button>
+      </fieldset>
+      <fieldset>
+        <legend>结单上的证券持仓</legend>
+        {positions.map((v, i) => (
+          <div className="inline-form" key={i}>
+            <Field label="证券代码">
+              <input
+                value={v.symbol}
+                onChange={(e) =>
+                  change(positions, setPositions, i, {
+                    symbol: e.target.value.toUpperCase(),
+                    assetId: "",
+                    mic: "",
+                  })
+                }
+              />
+            </Field>
+            <Field label="股数／份额">
+              <input
+                type="number"
+                step="any"
+                value={v.quantity}
+                onChange={(e) => change(positions, setPositions, i, { quantity: e.target.value })}
+              />
+            </Field>
+            {opening && listings.some((a) => a.symbol === v.symbol) && (
+              <Field label="已有上市证券">
+                <select
+                  value={v.assetId || ""}
+                  onChange={(e) => {
+                    const match = listings.find((a) => a.id === e.target.value);
+                    change(
+                      positions,
+                      setPositions,
+                      i,
+                      match
+                        ? { assetId: match.id, mic: match.mic, currency: match.currency, kind: match.kind }
+                        : { assetId: "", mic: "" },
+                    );
+                  }}
+                >
+                  <option value="">手动填写市场及币种</option>
+                  {listings
+                    .filter((a) => a.symbol === v.symbol)
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {listingLabel(a)}
+                      </option>
+                    ))}
+                </select>
+              </Field>
+            )}
+            {opening && (
+              <>
+                <Field label="交易币种">
+                  <input
+                    readOnly={!!v.assetId}
+                    value={v.currency || ""}
+                    maxLength={3}
+                    onChange={(e) =>
+                      change(positions, setPositions, i, { currency: e.target.value.toUpperCase() })
+                    }
+                  />
+                </Field>
+                <Field label="上市市场">
+                  <input
+                    readOnly={!!v.assetId}
+                    list="statement-markets"
+                    value={v.mic || ""}
+                    onChange={(e) =>
+                      change(positions, setPositions, i, { mic: e.target.value.toUpperCase() })
+                    }
+                  />
+                </Field>
+                <Field label="当日市价（可选）">
+                  <input
+                    type="number"
+                    step="any"
+                    value={v.price || ""}
+                    onChange={(e) => change(positions, setPositions, i, { price: e.target.value })}
+                  />
+                </Field>
+                <Field label="类别">
+                  <select
+                    value={v.kind || "EQUITY"}
+                    onChange={(e) => change(positions, setPositions, i, { kind: e.target.value })}
+                  >
+                    <option value="EQUITY">股票</option>
+                    <option value="ETF">ETF</option>
+                  </select>
+                </Field>
+              </>
+            )}
+            <button onClick={() => setPositions(positions.filter((_, n) => n !== i))}>移除</button>
+          </div>
+        ))}
+        <button
+          className="text-btn"
+          onClick={() =>
+            setPositions([...positions, { symbol: "", quantity: "", currency: opening ? "AUD" : "" }])
+          }
+        >
+          添加证券
+        </button>
+      </fieldset>
+      <datalist id="statement-markets">
+        {Object.entries(marketNames).map(([mic, label]) => (
+          <option key={mic} value={mic}>
+            {label}
+          </option>
+        ))}
+      </datalist>
+    </div>
+  );
+}
+function cashAmounts(entries) {
+  const amounts = {};
+  for (const v of entries) {
+    if (v.value === "" && !v.currency) continue;
+    if (v.value === "" || !/^[A-Z]{3}$/.test(v.currency) || v.currency in amounts)
+      throw Error("请逐项填写币种和余额，同一币种填写一次。");
+    amounts[v.currency] = v.value;
+  }
+  return amounts;
+}
+function ListingChoices({ choices, resolve }) {
+  return choices?.map((c) => (
+    <Field key={c.record + c.symbol} label={c.symbol + " 对应多个上市证券，请选择"}>
+      <select defaultValue="" onChange={(e) => e.target.value && resolve(c, e.target.value)}>
+        <option value="">选择上市证券</option>
+        {c.candidates.map((a) => (
+          <option key={a.id} value={a.id}>
+            {listingLabel(a)}
+          </option>
+        ))}
+      </select>
+    </Field>
+  ));
 }
 export function Imports({ d, mode, run, initial = {}, onPage }) {
   const [tab, setTab] = useState(initial.tab || "file"),
-    [broker, setBroker] = useState("webull");
+    [broker, setBroker] = useState(initial.broker || "both");
   const defaultAccount =
-    initial.account || d.accounts.find((a) => /webull/i.test(a.name))?.id || d.selected[0] || "";
+    initial.account ||
+    (initial.broker &&
+      d.accounts.find((a) => a.active && a.name.toLowerCase().includes(initial.broker))?.id) ||
+    d.selected[0] ||
+    "";
   const [account, setAccount] = useState(defaultAccount),
-    [preview, setPreview] = useState(null),
-    [last, setLast] = useState(null);
+    [reports, setReports] = useState({});
+  const started = useRef(false);
+  const requests = useRef({});
   const [ledger, setLedger] = useState([]),
     [offset, setOffset] = useState(0),
     [search, setSearch] = useState(""),
     [modal, setModal] = useState(null);
   const [form, setForm] = useState({ ...blank, date: d.date }),
     [date, setDate] = useState(d.date),
-    [cash, setCash] = useState(""),
-    [pos, setPos] = useState(""),
+    [cash, setCash] = useState([{ currency: "AUD", value: "" }]),
+    [pos, setPos] = useState([]),
+    [noSecurities, setNoSecurities] = useState(false),
     [compare, setCompare] = useState(null),
     [flow, setFlow] = useState(false);
-  const [openCash, setOpenCash] = useState(""),
-    [openPos, setOpenPos] = useState("");
-  const [mapping, setMapping] = useState({
-    ibkr: d.accounts.find((a) => /ibkr|interactive/i.test(a.name))?.id || "",
-    webull: d.accounts.find((a) => /webull/i.test(a.name))?.id || "",
-  });
+  const [openCash, setOpenCash] = useState([]),
+    [openPos, setOpenPos] = useState([]);
+  const [mapping, setMapping] = useState(d.brokerAccounts);
   const [nav, setNav] = useState("");
   const [amend, setAmend] = useState(null),
     [revisions, setRevisions] = useState([]),
@@ -77,13 +237,13 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     if (next === account) return;
     setAccount(next);
     if (!keepImport) {
-      setPreview(null);
-      setLast(null);
+      setReports({});
     }
     setCompare(null);
     setFlow(false);
-    setCash("");
-    setPos("");
+    setCash([{ currency: "AUD", value: "" }]);
+    setPos([]);
+    setNoSecurities(false);
     setNav("");
     setOffset(0);
   }
@@ -100,41 +260,58 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       a = false;
     };
   }, [tab, account, offset, search, d]);
-  function accountFor(b) {
-    return (
-      d.accounts.find((a) => (b === "ibkr" ? /ibkr|interactive/i : /webull/i).test(a.name))?.id || account
-    );
-  }
   function chooseBroker(b) {
+    requests.current = {};
     setBroker(b);
-    if (b !== "both") selectAccount(accountFor(b));
-    setPreview(null);
-    setLast(null);
+    if (b !== "both") selectAccount(mapping[b] || "");
+    setReports({});
   }
-  async function prepare(source) {
+  function updateReport(b, result) {
+    setReports((prev) => ({ ...prev, [b]: result }));
+  }
+  async function prepare(source, which = broker, id = which === "both" ? "" : mapping[which]) {
+    if (which === "both") {
+      if (mapping.ibkr && mapping.ibkr === mapping.webull)
+        return run(() => {
+          throw Error("请给两家券商选择不同的入账账户。");
+        }, false);
+      return Promise.all(["ibkr", "webull"].map((b) => prepare(source, b, mapping[b])));
+    }
+    const request = Symbol();
+    requests.current[which] = request;
+    if (source !== "file") updateReport(which, { broker: which, loading: true });
     await run(async () => {
-      const v = await api.preview({ source, broker, account, mapping });
-      if (v) {
-        setPreview(v);
-        setLast(null);
+      try {
+        if (!id) throw Error("请选择这家券商的入账账户。");
+        const v = await api.preview({ source, broker: which, account: id });
+        if (v && requests.current[which] === request) updateReport(which, { ...v, sourceKind: source });
+      } catch (e) {
+        if (requests.current[which] === request)
+          updateReport(which, {
+            broker: which,
+            account: id,
+            sourceKind: source,
+            error: String(e.message).replace(/^Error invoking remote method '.*?': (?:Error: )?/, ""),
+          });
       }
     }, false);
   }
-  async function commit() {
+  useEffect(() => {
+    if (!initial.sync || started.current) return;
+    started.current = true;
+    prepare(demo ? "sample" : "live", initial.broker);
+  }, []);
+  async function commit(r) {
     await run(async () => {
-      const v = await api.commit({ token: preview.token });
-      setLast(v);
-      setPreview(null);
-    });
+      const v = await api.commit({ token: r.token });
+      updateReport(r.broker, { ...v, done: true });
+    }, "已保存该券商的记录");
   }
   function useStatement(v) {
     setDate(v.date);
-    setCash(
-      Object.entries(v.cash || {})
-        .map(([k, n]) => k + " " + n)
-        .join("\n"),
-    );
-    setPos((v.positions || []).map((p) => [p.symbol, p.quantity, p.currency, p.mic].filter(v => v != null && v !== "").join(" ")).join("\n"));
+    setCash(Object.entries(v.cash || {}).map(([currency, value]) => ({ currency, value })));
+    setNoSecurities(Array.isArray(v.positions) && v.positions.length === 0);
+    setPos((v.positions || []).map((p) => ({ ...p })));
     setNav(v.base === "AUD" && v.nav != null ? String(v.nav) : "");
     setCompare(null);
     setFlow(false);
@@ -144,14 +321,14 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     return {
       account,
       date,
-      cash: parseCash(cash),
-      positions: pos.trim() ? parsePositions(pos) : undefined,
+      cash: cashAmounts(cash),
+      positions: pos.length || noSecurities ? pos : undefined,
       nav: nav.trim() || null,
       flowsReviewed: flow,
       source: webullSample ? "示例 Webull 月结单" : "券商结单",
     };
   }
-  function openManual(sample = false) {
+  function openManual(sample = false, type = "DEPOSIT") {
     setForm(
       sample
         ? {
@@ -163,10 +340,13 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             reference: "WB-OCT-DEP-01",
             note: "月结单 · 银行入金",
           }
-        : { ...blank, date: d.date },
+        : { ...blank, date: d.date, type },
     );
     setModal("manual");
   }
+  const accountReports = d.quantityReports
+    .filter((r) => r.account === account)
+    .sort((a, b) => b.day.localeCompare(a.day));
   const change = (k, v) => setForm({ ...form, [k]: v });
   async function edit(v) {
     setAmend(v);
@@ -195,7 +375,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     return (
       <Card title="导入与对账">
         <Empty>请先建立一个券商账户。</Empty>
-        <button className="primary" onClick={() => onPage("settings")}>
+        <button className="primary" onClick={() => onPage("settings", { tab: "book" })}>
           建立账户
         </button>
       </Card>
@@ -205,50 +385,77 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       <div className="page-controls">
         <Tabs
           items={[
-            ["file", "导入与同步"],
-            ["check", "结单对账"],
+            ["file", "记录与同步"],
+            ["check", "和券商结单核对"],
             ["history", "交易流水"],
-            ["opening", "期初余额"],
+            ["opening", "从这一天开始记录"],
           ]}
           value={tab}
           onChange={setTab}
         />
-        {(tab !== "file" || broker !== "both") && <AccountSelect data={d} value={account} set={selectAccount} />}
+        {tab !== "file" && <AccountSelect data={d} value={account} set={selectAccount} />}
       </div>
       {tab === "file" && (
         <>
           <Card
-            title="选择券商数据"
+            title="更新投资记录"
             action={
               <Tabs
                 items={[
-                  ["webull", "Webull AU"],
-                  ["ibkr", "IBKR"],
                   ["both", "两家一起"],
+                  ["ibkr", "IBKR"],
+                  ["webull", "Webull AU"],
                 ]}
                 value={broker}
                 onChange={chooseBroker}
               />
             }
           >
-            {broker === "both" && (
+            <div className="import-options">
+              <button onClick={() => prepare(demo ? "sample" : "live")}>
+                <CloudDownload />
+                <b>同步券商</b>
+                <small>{demo ? "预览示例券商记录" : "预览交易和账户余额"}</small>
+              </button>
+              <button onClick={() => setModal("file")}>
+                <FileUp />
+                <b>导入文件</b>
+                <small>IBKR 结单或 Webull 成交记录</small>
+              </button>
+              <button onClick={() => setModal("entry")}>
+                <FileText />
+                <b>手工补一条</b>
+                <small>买卖、持仓或资金收支</small>
+              </button>
+            </div>
+            <details
+              className="account-mapping"
+              open={
+                Object.keys(mapping).some((b) => (b === broker || broker === "both") && !mapping[b]) ||
+                undefined
+              }
+            >
+              <summary>
+                入账账户 ·{" "}
+                {(broker === "both" ? ["ibkr", "webull"] : [broker])
+                  .map((b) => d.accounts.find((a) => a.id === mapping[b])?.name || "待选择")
+                  .join("、")}
+              </summary>
               <div className="form-grid">
-                {[
-                  ["ibkr", "IBKR 入账账户"],
-                  ["webull", "Webull 入账账户"],
-                ].map(([k, l]) => (
-                  <Field key={k} label={l}>
+                {(broker === "both" ? ["ibkr", "webull"] : [broker]).map((b) => (
+                  <Field key={b} label={b.toUpperCase() + " 入账账户"}>
                     <select
-                      value={mapping[k]}
+                      value={mapping[b]}
                       onChange={(e) => {
-                        setMapping({ ...mapping, [k]: e.target.value });
-                        setPreview(null);
-                        setLast(null);
+                        delete requests.current[b];
+                        setMapping({ ...mapping, [b]: e.target.value });
+                        if (!reports[b]?.error) updateReport(b, null);
+                        if (broker === b) selectAccount(e.target.value, true);
                       }}
                     >
                       <option value="">选择账户</option>
                       {d.accounts
-                        .filter((a) => a.active)
+                        .filter((a) => a.active && a.mode === "TRANSACTIONS")
                         .map((a) => (
                           <option key={a.id} value={a.id}>
                             {a.name}
@@ -258,54 +465,60 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   </Field>
                 ))}
               </div>
-            )}
-            <div className="import-options">
-              {broker !== "both" && (
-                <button onClick={() => prepare("file")}>
-                  <FileUp />
-                  <b>选择{broker === "ibkr" ? " Flex XML" : "成交 CSV"}</b>
-                  <small>查看本次新增和修改</small>
-                </button>
-              )}
-              {demo ? (
-                <button onClick={() => prepare("sample")}>
-                  <FileText />
-                  <b>载入示例文件</b>
-                  <small>
-                    {broker === "both" ? "分别查看 IBKR 结单和 Webull 成交" : broker === "ibkr" ? "一笔 AAPL 买入和同期现金、持仓结单" : "一笔 BHP 买入，可重复导入"}
-                  </small>
-                </button>
-              ) : (
-                <button onClick={() => prepare("live")}>
-                  <CloudDownload />
-                  <b>从券商拉取</b>
-                  <small>
-                    {broker === "both" ? "IBKR Flex 报表和 Webull AU 近六个月流水及账户金额" : broker === "ibkr" ? "最近 365 天的 Activity Flex 记录" : "最近六个月的流水及本次账户金额"}
-                  </small>
-                </button>
-              )}
-            </div>
-            {!demo && (
-              <button className="text-btn" onClick={() => onPage("settings", { tab: "connections" })}>
-                管理券商连接 <ArrowRight size={15} />
-              </button>
-            )}
+            </details>
           </Card>
-          {(preview || last) && (
-            <ImportPreview
-              key={preview?.token || "result"}
-              result={preview || last}
-              done={Boolean(last)}
-              accounts={d.accounts}
-              confirm={commit}
-              close={() => { setPreview(null); setLast(null); }}
-              reconcile={(r) => {
-                selectAccount(r.account, true);
-                useStatement(r.statement || { date: d.date });
-              }}
-            />
-          )}
-          {!preview && !last && batches.length > 0 && (
+          {Object.values(reports)
+            .filter(Boolean)
+            .map((r) => (
+              <section
+                key={r.broker}
+                className="broker-result"
+                aria-label={r.broker.toUpperCase() + " 同步结果"}
+              >
+                <h2>{r.broker.toUpperCase()}</h2>
+                {r.loading ? (
+                  <p role="status">正在读取券商记录…</p>
+                ) : r.error ? (
+                  <div className="notice">
+                    <span>{r.error}</span>
+                    <button onClick={() => prepare(r.sourceKind, r.broker)}>单独重试</button>
+                    {!demo && (
+                      <button onClick={() => onPage("settings", { tab: "connections", broker: r.broker })}>
+                        连接券商
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <ListingChoices
+                      choices={r.choices}
+                      resolve={(c, id) =>
+                        run(async () => {
+                          await api.rememberListing({ ...c, assetId: id });
+                          updateReport(r.broker, {
+                            ...(await api.preview({ token: r.token })),
+                            sourceKind: r.sourceKind,
+                          });
+                        }, false)
+                      }
+                    />
+                    <ImportPreview
+                      key={r.token || "saved"}
+                      result={r}
+                      done={!!r.done}
+                      accounts={d.accounts}
+                      confirm={() => commit(r)}
+                      close={() => updateReport(r.broker, null)}
+                      reconcile={(result) => {
+                        selectAccount(result.account, true);
+                        useStatement(result.statement || { date: d.date });
+                      }}
+                    />
+                  </>
+                )}
+              </section>
+            ))}
+          {!Object.values(reports).some(Boolean) && batches.length > 0 && (
             <Card title="最近导入批次">
               <Table head={["文件或连接", "时间", ["新增", "num"], ["重复", "num"], ["更正", "num"]]}>
                 {batches.slice(0, 8).map((b) => (
@@ -324,6 +537,33 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       )}
       {tab === "check" && (
         <>
+          {accountReports.length > 0 && (
+            <Card title="已补录的股数凭据">
+              {accountReports.map((r) => (
+                <div className="evidence-line" key={r.day + r.asset}>
+                  <b>
+                    {r.symbol} · {r.day}
+                  </b>
+                  <span>
+                    {r.reference} 记载 {num(r.quantity)} 股，账本可解释 {num(r.ledgerQuantity)} 股。
+                  </span>
+                  <strong>
+                    {Number(r.difference) ? "相差 " + num(Math.abs(r.difference)) + " 股" : "股数吻合"}
+                  </strong>
+                  <button
+                    className="text-btn"
+                    onClick={() => {
+                      setSearch(r.symbol);
+                      setOffset(0);
+                      setTab("history");
+                    }}
+                  >
+                    查看相关流水
+                  </button>
+                </div>
+              ))}
+            </Card>
+          )}
           <Card
             title="核对同日券商结单"
             action={
@@ -350,26 +590,22 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   }}
                 />
               </Field>
-              <Field label="各币种期末现金（每行一项）">
-                <textarea
-                  value={cash}
-                  placeholder={"AUD 7600\nUSD 2000"}
-                  onChange={(e) => {
-                    setCash(e.target.value);
-                    setCompare(null);
-                  }}
-                />
-              </Field>
-              <Field label="结单持仓（代码和数量，每行一项）">
-                <textarea
-                  value={pos}
-                  placeholder={"BHP 150\nA200 200"}
-                  onChange={(e) => {
-                    setPos(e.target.value);
-                    setCompare(null);
-                  }}
-                />
-              </Field>
+              <StatementLines
+                cash={cash}
+                setCash={(v) => {
+                  setCash(v);
+                  setCompare(null);
+                }}
+                positions={pos}
+                setPositions={(v) => {
+                  setPos(v);
+                  setCompare(null);
+                }}
+              />
+              {!pos.length && <label className="check">
+                <input type="checkbox" checked={noSecurities} onChange={(e) => {setNoSecurities(e.target.checked);setCompare(null);}}/>
+                结单显示证券持仓为零
+              </label>}
               <Field label="结单同日总资产（AUD，可选）">
                 <input
                   type="number"
@@ -391,13 +627,38 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               </button>
               <button onClick={() => openManual(false)}>补录一笔流水</button>
               {!demo && nav.trim() && (
-                <button onClick={() => run(() => api.recordAccountValue({ ...compareArgs(), positions: parsePositions(pos) }), "已保存同日券商估值")}>
+                <button
+                  onClick={() =>
+                    run(
+                      () => api.recordAccountValue({ ...compareArgs(), positions: pos }),
+                      "已保存同日券商估值",
+                    )
+                  }
+                >
                   核对现金及持仓，采用券商净值
                 </button>
               )}
             </div>
             {compare && (
               <>
+                <ListingChoices
+                  choices={compare.choices}
+                  resolve={(c, id) =>
+                    run(async () => {
+                      await api.rememberListing({ ...c, assetId: id });
+                      setCompare(await api.compare(compareArgs()));
+                    }, false)
+                  }
+                />
+                {!compare.choices.length &&
+                  compare.rows
+                    .filter((r) => r.symbol && Math.abs(Number(r.delta)) > 1e-8)
+                    .map((r) => (
+                      <p className="warning" key={r.label}>
+                        {d.accounts.find((a) => a.id === account)?.name} 的 {r.symbol} 比结单
+                        {Number(r.delta) < 0 ? "少" : "多"} {num(Math.abs(Number(r.delta)))} 股
+                      </p>
+                    ))}
                 <Table head={["核对项", "结单", "本地账本", "差异", "来源"]}>
                   {compare.rows.map((r) => (
                     <tr key={r.label}>
@@ -478,11 +739,21 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           </div>
           {entries.length ? (
             <Table
-              head={["日期", "类型", "证券", ["数量 × 单价", "num"], ["金额", "num"], ["费用", "num"], "来源 / 凭证", ""]}
+              head={[
+                "日期",
+                "类型",
+                "证券",
+                ["数量 × 单价", "num"],
+                ["金额", "num"],
+                ["费用", "num"],
+                "来源 / 凭证",
+                "",
+              ]}
             >
               {entries.map((v) => {
                 const traded = Number(v.quantity) && v.unitPrice != null;
                 const amount = v.amount ?? (traded ? Number(v.quantity) * Number(v.unitPrice) : null);
+                const execution = v.metadata?.ibkrExecution, fx = v.metadata?.fx;
                 return (
                   <tr key={v.id}>
                     <td>{String(v.date).slice(0, 10)}</td>
@@ -491,13 +762,17 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                         ? "换汇" + (v.activityType === "TRANSFER_OUT" ? "卖出" : "买入")
                         : types[v.activityType] || v.activityType}
                       {superseded(v) && <small>已冲销重复流水</small>}
+                      {fx?.sourceCurrency && fx.destinationCurrency && <small>{execution?.autoFx && "自动换汇 · "}{fx.sourceCurrency} → {fx.destinationCurrency}</small>}
                     </td>
                     <td>{v.assetSymbol || "—"}</td>
                     <td className="num">
-                      {Number(v.quantity) ? num(v.quantity) + (v.unitPrice != null ? " × " + num(v.unitPrice) : "") : "—"}
+                      {Number(v.quantity)
+                        ? num(v.quantity) + (v.unitPrice != null ? " × " + num(v.unitPrice) : "")
+                        : fx?.sourceCurrency && Number(fx.impliedRate) > 0
+                          ? "1 " + fx.sourceCurrency + " = " + num(fx.impliedRate) + " " + fx.destinationCurrency : "—"}
                     </td>
                     <td className="num">{amount == null ? "—" : v.currency + " " + fmt(amount, 2)}</td>
-                    <td className="num">{Number(v.fee) ? fmt(v.fee, 2) : "—"}</td>
+                    <td className="num">{Number(v.fee) ? v.currency + " " + num(v.fee) : "—"}</td>
                     <td>
                       {sources[v.sourceSystem] || v.sourceSystem || "原账本"}
                       <small>{v.sourceRecordId || v.comment}</small>
@@ -523,26 +798,20 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         </Card>
       )}
       {tab === "opening" && (
-        <Card title="从一份结单建立期初余额">
+        <Card title="从这一天开始记录">
           <p>选择开始跟踪的日期，按结单分别填写证券和现金。期初资产会作为计算起点。</p>
           <div className="form-grid">
             <Field label="期初日期">
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </Field>
-            <Field label="现金（币种 余额）">
-              <textarea
-                value={openCash}
-                onChange={(e) => setOpenCash(e.target.value)}
-                placeholder="AUD 10000"
-              />
-            </Field>
-            <Field label="持仓（代码 数量 币种 交易所 单价 类型）">
-              <textarea
-                value={openPos}
-                onChange={(e) => setOpenPos(e.target.value)}
-                placeholder="AAPL 10 USD XNAS 180 EQUITY"
-              />
-            </Field>
+            <StatementLines
+              cash={openCash}
+              setCash={setOpenCash}
+              positions={openPos}
+              setPositions={setOpenPos}
+              listings={d.listings}
+              opening
+            />
           </div>
           <button
             className="primary"
@@ -551,8 +820,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                 await api.opening({
                   account,
                   date,
-                  cash: parseCash(openCash),
-                  positions: parsePositions(openPos, true),
+                  cash: cashAmounts(openCash),
+                  positions: openPos,
                 });
                 setTab("history");
               }, "期初余额已保存")
@@ -561,6 +830,45 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             保存期初余额
           </button>
         </Card>
+      )}
+      {modal === "file" && (
+        <Modal title="导入券商文件" close={() => setModal(null)}>
+          {["ibkr", "webull"].map((b) => (
+            <div className="actions" key={b}>
+              <Field label={b.toUpperCase() + " 入账账户"}>
+                <AccountSelect
+                  data={d}
+                  value={mapping[b]}
+                  set={(id) => setMapping({ ...mapping, [b]: id })}
+                />
+              </Field>
+              <button
+                disabled={!mapping[b]}
+                onClick={() => {
+                  setModal(null);
+                  prepare("file", b, mapping[b]);
+                }}
+              >
+                {b === "ibkr" ? "选择 Flex XML" : "选择成交 CSV"}
+              </button>
+            </div>
+          ))}
+        </Modal>
+      )}
+      {modal === "entry" && (
+        <Modal title="手工补一条" close={() => setModal(null)}>
+          <Field label="所属账户">
+            <AccountSelect data={d} value={account} set={selectAccount} />
+          </Field>
+          <div className="actions">
+            <button onClick={() => openManual(false, "BUY")}>补一笔买卖</button>
+            <button onClick={() => setModal("position")}>补持仓</button>
+            <button onClick={() => openManual()}>补资金流水</button>
+          </div>
+        </Modal>
+      )}
+      {modal === "position" && (
+        <HoldingEditor d={d} run={run} account={account} action="position" close={() => setModal(null)} />
       )}
       {modal === "statement" && (
         <Modal title="Webull Australia · 示例月结单" close={() => setModal(null)}>
@@ -611,7 +919,19 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           >
             <div className="form-grid">
               <Field label="类型">
-                <select value={form.type} onChange={(e) => change("type", e.target.value)}>
+                <select
+                  value={form.type}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      type: e.target.value,
+                      assetId: "",
+                      symbol: "",
+                      mic: "",
+                      linkDividend: false,
+                    })
+                  }
+                >
                   {Object.entries(types).map(([k, v]) => (
                     <option key={k} value={k}>
                       {v}
@@ -619,13 +939,24 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   ))}
                 </select>
               </Field>
+              {["BUY", "SELL", "DIVIDEND"].includes(form.type) &&
+              (form.type !== "DIVIDEND" || form.symbol || form.linkDividend) ? (
+                <SecurityFields d={d} form={form} setForm={setForm} />
+              ) : (
+                form.type === "DIVIDEND" && (
+                  <button type="button" className="text-btn" onClick={() => change("linkDividend", true)}>
+                    关联证券
+                  </button>
+                )
+              )}
               {[
                 ["date", "日期", "date"],
-                ["currency", "币种", "text"],
+                ...(["BUY", "SELL"].includes(form.type) ||
+                (form.type === "DIVIDEND" && (form.linkDividend || form.symbol))
+                  ? []
+                  : [["currency", "币种", "text"]]),
                 ...(["BUY", "SELL"].includes(form.type)
                   ? [
-                      ["symbol", "证券代码", "text"],
-                      ["mic", "交易所代码", "text"],
                       ["quantity", "成交数量", "number"],
                       ["price", "成交价", "number"],
                       ["fee", "手续费", "number"],

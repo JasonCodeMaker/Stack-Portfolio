@@ -26,21 +26,23 @@ const {
   money,
   account,
   resolveAsset,
+  listingMatch,
+  rememberListing,
   transaction,
   json,
 } = require("./ledger.js");
-const { dashboard, storageContext, loadBook, positions } = require("./flows.js");
+const { dashboard, storageContext, loadBook, positions, targetScope } = require("./flows.js");
 const { portfolioReview, reviewDay, saveReviewNote, reviewNotes } = require("./performance.js");
 const { refreshBenchmarks, refreshCloses, refreshReviewPrices } = require("./reviewMarket.js");
 const { shiftDay } = require("./marketDays.js");
 const {
   batch,
-  combinedBatch,
   parseWebullCsv,
   detailedIbkr,
   compareStatement,
   recordAccountValue,
   addManual,
+  recordHolding,
   amendEvent,
   brokerReport,
   connectWebull,
@@ -66,6 +68,7 @@ let db,
   displayedReview,
   bookKey,
   previews = new Map(),
+  previewRequests = new Map(),
   lastFxCheck = 0,
   lastMarketCheck = 0;
 const reviewChecks = new Map();
@@ -141,6 +144,7 @@ async function activate(m) {
   db = next;
   mode = m;
   previews.clear();
+  previewRequests.clear();
   displayedReview = null;
   fundChecks.clear();
   reviewChecks.clear();
@@ -327,43 +331,49 @@ const handlers = {
     return rows.map((r) => json(r.data, {}));
   },
   manual: (args) => addManual(requireBook(), args),
+  recordHolding: (args) => recordHolding(requireBook(), args),
+  rememberListing: (args) => rememberListing(requireBook(), args),
   amend: (args) => amendEvent(requireBook(), args),
   corrections: (args) =>
     requireBook()
       .prepare("SELECT created,reason FROM sp_corrections WHERE event=? ORDER BY created DESC")
       .all(args.id),
   async preview(args) {
-    if (args.broker === "both") {
-      requireBook();
-      const parts = [];
-      for (const broker of ["ibkr", "webull"]) {
-        const a = account(db, args.mapping?.[broker]);
-        if (!a.active || a.mode !== "TRANSACTIONS") throw Error("请选择启用的交易账户。");
-        if (parts.some((p) => p.account === a.id)) throw Error("请为两家券商分别指定对应的本地账户。");
-        let report, source;
-        if (args.source === "live" && mode === "real") {
-          report = await brokerReport(db, broker, secrets);
-          source = broker.toUpperCase() + " 在线同步";
-        } else if (args.source === "sample" && mode === "demo") {
-          report = broker === "ibkr" ? detailedIbkr(demoXml) : parseWebullCsv(demoCsv);
-          source = broker === "ibkr" ? "示例 IBKR.xml" : "示例 Webull.csv";
-        } else throw Error("批量预览需要两家券商连接，或使用示例账本。");
-        parts.push({ account: a.id, broker, report, source });
-      }
-      const summary = await combinedBatch(db, parts),
-        token = randomUUID();
-      previews.clear();
-      previews.set(token, { parts });
-      return { ...summary, token };
+    const book = requireBook();
+    if (args.token) {
+      const p = previews.get(args.token);
+      if (!p) throw Error("预览已过期，请重新读取。");
+      return { ...await batch(book, p.account, p.broker, p.report, p.source), token: args.token };
     }
-    requireBook();
+    if (args.broker === "both") {
+      if (args.mapping?.ibkr && args.mapping.ibkr === args.mapping.webull)
+        throw Error("请给两家券商选择不同的入账账户。");
+      const reports = await Promise.all(["ibkr", "webull"].map(async (broker) => {
+        const id = args.mapping?.[broker];
+        try {
+          if (!id) throw Error("请选择这家券商的入账账户。");
+          return await handlers.preview({ broker, source: args.source, account: id });
+        } catch (err) {
+          return { broker, account: id, error: err.message };
+        }
+      }));
+      return { broker: "both", reports };
+    }
     const broker = args.broker === "ibkr" ? "ibkr" : "webull",
       a = account(db, args.account);
     if (!a.active || a.mode !== "TRANSACTIONS") throw Error("请选择启用的交易账户。");
+    const requestKey = JSON.stringify([broker, a.id]);
+    const request = randomUUID();
+    previewRequests.set(requestKey, request);
     let report, source;
     if (args.source === "live") {
       if (mode === "demo") throw Error("请在正式账本中连接券商。");
-      report = await brokerReport(db, broker, secrets);
+      try {
+        report = await brokerReport(book, broker, secrets);
+      } catch (error) {
+        if (db === book) putPref(book, BROKER, "verified." + broker, null);
+        throw error;
+      }
       source = broker.toUpperCase() + " 在线同步";
     } else {
       let text;
@@ -385,20 +395,26 @@ const handlers = {
       }
       report = broker === "ibkr" ? detailedIbkr(text) : parseWebullCsv(text);
     }
-    const summary = await batch(db, a.id, broker, report, source),
+    if (db !== book) throw Error("账本已切换，请重新同步。");
+    const summary = await batch(book, a.id, broker, report, source),
       token = randomUUID();
-    previews.clear();
+    if (db !== book) throw Error("账本已切换，请重新同步。");
+    if (previewRequests.get(requestKey) !== request) throw Error("已重新读取该券商记录。");
+    for (const [old, preview] of previews) if (preview.broker === broker && preview.account === a.id) previews.delete(old);
+    putPref(db, BROKER, "local-account." + broker, a.id);
+    if (args.source === "live") {
+      putPref(db, BROKER, "last-success." + broker, new Date().toISOString());
+      putPref(db, BROKER, "verified." + broker, "1");
+    }
     previews.set(token, { account: a.id, broker, report, source });
     return { ...summary, token };
   },
   async commit({ token }) {
     const p = previews.get(token);
     if (!p) throw Error("预览已过期，请重新选择文件。");
-    const r = p.parts
-      ? await combinedBatch(requireBook(), p.parts, true)
-      : await batch(requireBook(), p.account, p.broker, p.report, p.source, true);
+    const result = await batch(requireBook(), p.account, p.broker, p.report, p.source, true);
     previews.delete(token);
-    return r;
+    return result;
   },
   compare: (args) => compareStatement(requireBook(), args),
   recordAccountValue: (args) => recordAccountValue(requireBook(), args),
@@ -417,7 +433,9 @@ const handlers = {
         positions = {};
       for (const [c, v] of Object.entries(args.cash || {})) cash[currency(c)] = money(v);
       for (const r of args.positions || []) {
-        const id = resolveAsset(
+        const picked = r.assetId && listingMatch(db, {account: a.id, symbol:r.symbol, currency:r.currency, mic:r.mic}).candidates.find((c) => c.id === r.assetId);
+        if (r.assetId && !picked) throw Error("所选证券与上市市场或币种不符。");
+        const id = picked?.id || resolveAsset(
           db,
           { symbol: r.symbol, exchangeMic: r.mic, instrumentType: r.kind || "EQUITY" },
           r.currency,
@@ -449,16 +467,16 @@ const handlers = {
   targets: async (args) => {
     const values = Object.values(args.targets || {});
     if (
-      !values.length ||
-      values.some((v) => typeof v !== "number" || v < 0 || v > 1) ||
-      Math.abs(values.reduce((a, b) => a + b, 0) - 1) > 0.0001 ||
+      values.some((v) => !Number.isFinite(v) || v < 0 || v > 1) ||
+      values.reduce((a, b) => a + b, 0) > 1.0001 ||
       !(args.tolerance >= 0.005 && args.tolerance <= 0.25)
     )
-      throw Error("目标合计必须为 100%，允许偏离须为 0.5% 至 25%。");
+      throw Error("目标合计最多为 100%，允许偏离须为 0.5 至 25 个百分点。");
     const settings = { schemaVersion: 1, tolerance: args.tolerance, targets: args.targets };
+    const scope = targetScope(requireBook(), args.ids);
     if (args.scope === "instruments")
-      putPref(requireBook(), ALLOCATION, "targets.instruments.v1", JSON.stringify(settings));
-    else await saveRebalanceSettings(storageContext(requireBook(), ALLOCATION), settings);
+      putPref(db, scope, "targets.instruments.v1", JSON.stringify(settings));
+    else await saveRebalanceSettings(storageContext(db, scope), settings);
     return true;
   },
   allocationSettings: async (args) => {
@@ -502,6 +520,8 @@ const handlers = {
     );
     return {
       present,
+      lastSuccess: Object.fromEntries(["ibkr", "webull"].map((id) => [id, preference(db, BROKER, "last-success." + id)])),
+      verified: Object.fromEntries(["ibkr", "webull"].map((id) => [id, preference(db, BROKER, "verified." + id) === "1"])),
       query: preference(db, BROKER, "ibkr.flex-query-id") || "",
       webullKey: preference(db, BROKER, "webull.app-key") || "",
       webullId: preference(db, BROKER, "webull.api-account-id") || "",
@@ -513,6 +533,7 @@ const handlers = {
     const allowed = new Set(["ibkr.flex-query-id", "webull.app-key", "webull.api-account-id"]);
     transaction(db, () => {
       for (const [k, v] of Object.entries(args)) {
+        if (/^(ibkr|webull)\./.test(k)) putPref(db, BROKER, "verified." + k.split(".")[0], null);
         if (secretNames.has(k)) secrets.set(k, v);
         else if (allowed.has(k)) putPref(db, BROKER, k, v || null);
         else throw Error("未知连接设置。");
@@ -524,11 +545,8 @@ const handlers = {
     requireBook();
     if (mode !== "real") throw Error("请打开正式账本。");
     const result = await connectWebull(db, secrets);
-    if (
-      result.accounts.length &&
-      !result.accounts.some((a) => a.accountId === preference(db, BROKER, "webull.api-account-id"))
-    )
-      putPref(db, BROKER, "webull.api-account-id", result.accounts[0].accountId);
+    if (result.accounts.length && !result.accounts.some((a) => a.accountId === preference(db, BROKER, "webull.api-account-id")))
+      putPref(db, BROKER, "webull.api-account-id", result.accounts.length === 1 ? result.accounts[0].accountId : null);
     return result;
   },
   resetSync: (a) => resetSync(requireBook(), a.broker, a.account),
@@ -604,6 +622,8 @@ const handlers = {
           response.status !== 200 ||
           !out.close ||
           !out.datetime ||
+          String(out.symbol || "").toUpperCase() !== asset.symbol.toUpperCase() ||
+          (asset.mic && out.mic_code !== asset.mic) ||
           out.currency?.toUpperCase() !== asset.currency
         )
           throw Error("报价缺失或币种不一致");
@@ -733,7 +753,7 @@ for (const [name, fn] of Object.entries(handlers))
   ipcMain.handle("portfolio:" + name, (event, args) => {
     if (event.sender !== win?.webContents || event.senderFrame !== win.webContents.mainFrame ||
         event.senderFrame?.url !== page) throw Error("请求来源无效。");
-    if (!switchingBooks && ["dashboard", "history", "connections"].includes(name)) {
+    if (!switchingBooks && ["dashboard", "history", "connections", "preview"].includes(name)) {
       const read = Promise.resolve().then(() => fn(args || {}));
       readers.add(read);
       return read.finally(() => readers.delete(read));
@@ -763,6 +783,7 @@ function createWindow() {
     backgroundColor: "#f4f5ee",
     show: false,
     webPreferences: {
+      ...(process.env.STACK_PORTFOLIO_HEADLESS ? {offscreen:true, backgroundThrottling:false} : {}),
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,

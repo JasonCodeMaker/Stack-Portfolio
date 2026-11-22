@@ -473,9 +473,10 @@ test("the dashboard reports money put in, the gain on it and the cost of each ho
   near(row.averageCost, 60.5);
   near(row.costLocal, 907.5);
   near(row.gainLocal, 292.5);
-  near(row.costAud, (510 * 1.5 + 700 * 1.6) * 0.75);
-  near(row.gainAud, 1920 - 1413.75);
-  near(row.gainRate, 1920 / 1413.75 - 1);
+  near(row.costAud, 907.5 * 1.6);
+  near(row.gainAud, 292.5 * 1.6);
+  near(row.gainRate, 292.5 / 907.5);
+  near(d.holdings.gain, row.gainAud);
   assert.equal(row.stale, false);
   // A holding the trades cannot account for reports no cost.
   db.prepare("INSERT INTO sp_anchors VALUES(?,?,?,?)").run(
@@ -487,4 +488,65 @@ test("the dashboard reports money put in, the gain on it and the cost of each ho
   const unexplained = (await dashboard(db, { ids: [account], date: thursday })).rows.find((r) => r.ticker === "ABC");
   assert.notEqual(unexplained.rawQuantity, "15");
   assert.equal(unexplained.costAud, undefined);
+});
+
+test("open positions translate native cost and gain with the valuation FX even without a purchase-day rate", async (t) => {
+  const { db, ids, event } = fixture(t);
+  const assetId = resolveAsset(db, { symbol: "ABC", exchangeMic: "XNAS" }, "USD");
+  event(monday, "BUY", null, { assetId, quantity: 10, unitPrice: 100, fee: 1, currency: "USD" });
+  savePrice(db, assetId, monday, 100, "close");
+  savePrice(db, "FX:USD/AUD", tuesday, 1.5104, "close");
+  savePrice(db, "FX:USD/AUD", wednesday, 1.6, "close");
+  for (const [date, fx] of [[monday, null], [tuesday, 1.5104], [wednesday, 1.6]]) {
+    const view = await dashboard(db, { ids, date });
+    const row = view.rows.find(r => r.assetId === assetId);
+    assert.deepEqual([row.costLocal, row.gainLocal], [1001, -1]);
+    if (fx == null) {
+      assert.deepEqual([row.costAud, row.gainAud, view.holdings.gain], [undefined, undefined, null]);
+    } else {
+      near(row.costAud, 1001 * fx);
+      near(row.gainAud, -fx);
+      near(row.gainRate, -1 / 1001);
+      near(view.holdings.securities[0].cost, row.costAud);
+      near(view.holdings.gain, row.gainAud);
+    }
+  }
+});
+
+test("a sold security earns its period change plus linked income less fees, with account income traceable", (t) => {
+  const { db, account, event, anchor, review } = fixture(t);
+  const stock = resolveAsset(db, { symbol: "FUND", exchangeMic: "XASX" }, "AUD");
+  anchor(account, "2025-01-30", { AUD: 500 });
+  event("2025-01-31", "BUY", 0, { assetId: stock, assetSymbol: "FUND", quantity: 1, unitPrice: 40 });
+  for (const date of [monday, tuesday]) savePrice(db, stock, date, 100, "statement");
+  event(tuesday, "DIVIDEND", 8, { assetId: stock, sourceRecordId: "dividend-voucher" });
+  event(wednesday, "SELL", 0, { assetId: stock, quantity: 1, unitPrice: 110, fee: 2 });
+  event(wednesday, "INTEREST", 3);
+  event(wednesday, "FEE", 1, { sourceRecordId: "fee-voucher" });
+  const r = review(monday, wednesday);
+  const get = (label) => r.contributions.rows.find((v) => v.label === label);
+  near(r.money.gain, 18);
+  near(get("FUND").gain, 16);
+  assert.equal(get("FUND").closed, true);
+  assert.ok(get("FUND").events.some((v) => v.reference === "dividend-voucher"));
+  near(get("现金利息").gain, 3);
+  near(get("待归属").gain, -1);
+  assert.equal(get("待归属").events[0].reference, "fee-voucher");
+  assert.equal(
+    r.contributions.rows.reduce((n, v) => n + v.gain, 0),
+    r.money.gain,
+  );
+});
+
+test("AUD contributions remain available with verified endpoints and flows across a missing trading-day close", (t) => {
+  const { db, account, event, anchor, review } = fixture(t);
+  const stock = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
+  anchor(account, monday, { AUD: 100 }, { [stock]: 1 });
+  savePrice(db, stock, monday, 100, "statement");
+  event(tuesday, "DEPOSIT", 50);
+  savePrice(db, stock, wednesday, 115, "statement");
+  const result = review(monday, wednesday);
+  assert.equal(result.metrics.portfolio.totalReturn, null);
+  assert.equal(result.money.gain, 15);
+  assert.equal(result.contributions.rows.find((r) => r.label === "ABC").gain, 15);
 });

@@ -9,7 +9,7 @@ const percent = (v) => (v == null ? "—" : signedPct(v));
 const points = (v) => fmt(Math.abs(v) * 100, 2) + " 个百分点";
 const gapText = (v) => (v == null ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + points(v));
 const level = (v) => Math.abs(v) < 1e-9;
-const seriesOf = (review) => [{ id: "portfolio", name: "实盘组合" }, ...review.series];
+const seriesOf = (review) => [{ id: "portfolio", name: "我的组合" }, ...review.series];
 const errorText = (e) =>
   String(e.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
 const labels = { totalReturn: "区间收益", gap: "组合收益差", maxDrawdown: "最大回撤" };
@@ -22,11 +22,12 @@ function Verdict({ review }) {
       <section className="review-metric review-primary">
         <h2>
           <i style={{ background: "#c5e8a3" }} />
-          实盘组合
+          我的组合
         </h2>
-        <strong>{percent(own.totalReturn)}</strong>
+        <strong className={tone(own.totalReturn,4)}>{percent(own.totalReturn)}</strong>
         <span>
-          期间盈亏 <b>{review.money ? signedAud(review.money.gain) : "—"}</b>
+          期间盈亏 <b className={tone(review.money?.gain)}>{review.money ? signedAud(review.money.gain) : "—"}</b>
+          {review.contributions && review.contributions.to !== own.asOf && " · 截至 " + review.contributions.to}
         </span>
         <span>
           最大回撤 <b>{percent(own.maxDrawdown)}</b>
@@ -90,10 +91,13 @@ function ReviewChart({ review, selected, select, zoom }) {
   const [mode, setMode] = useState("returns"),
     [table, setTable] = useState(30);
   const returns = mode === "returns";
+  const lines = { portfolio: { emphasis:true }, SP500TR: { dashed:true }, XNDX: { dotted:true } };
   const series = returns
-    ? seriesOf(review).map((s) => ({ ...s, color: seriesColors[s.id], value: (p) => p[s.id] }))
+    ? seriesOf(review).map((s) => ({ ...s, ...lines[s.id], endName:s.name, color: seriesColors[s.id], value: (p) => p[s.id] }))
     : review.series.map((s) => ({
         ...s,
+        ...lines[s.id],
+        endName: s.name,
         name: "相对" + s.name,
         color: seriesColors[s.id],
         value: (p) => p.gaps[s.id],
@@ -151,14 +155,14 @@ function ReviewChart({ review, selected, select, zoom }) {
             }
           />
           <p className="review-hint">
-            悬停读数 · 点选一天看当日持仓和流水 · 拖选一段区间，从新起点的 0% 重新比较 · 点图例隐藏曲线，只留一个指数时标出领先与落后的区域
+            拖选日期可比较该区间。点击曲线上的日期查看当日明细。
           </p>
           <details className="review-details">
             <summary>查看每日数据</summary>
             <Table
               head={[
                 "日期",
-                ["实盘组合", "num"],
+                ["我的组合", "num"],
                 ...review.series.flatMap((b) => [
                   [b.name, "num"],
                   ["收益差", "num"],
@@ -282,52 +286,79 @@ function DataPanel({ review, mode, busy, updating, refresh, results }) {
   );
 }
 
-function Periods({ review, zoom }) {
-  const [all, setAll] = useState(false);
-  const rows = [...review.intervals].sort((a, b) => b.from.localeCompare(a.from));
-  const names = Object.fromEntries(review.series.map((s) => [s.id, s.name]));
+function Contributions({ review }) {
+  const [selected, select] = useState(null);
+  const data = review.contributions;
   return (
-    <Card title="跑输时段">
-      {rows.length ? (
+    <Card
+      title="这段时间的盈亏来自哪里"
+      action={
+        data && (
+          <span className="muted">
+            {data.from} 至 {data.to} · AUD
+          </span>
+        )
+      }
+    >
+      {!data ? (
+        <Empty>取得区间起止估值和资金流水后，可计算区间贡献。</Empty>
+      ) : !data.rows.length ? (
+        <Empty>区间内没有持仓或收支贡献。</Empty>
+      ) : (
         <>
-          <Table head={["参照指数", "首次观察到落后", "追平 / 最近观察", ["持续天数", "num"], ["最大落后", "num"], ""]}>
-            {(all ? rows : rows.slice(0, 6)).map((r) => (
-              <tr key={r.id + r.from}>
-                <td>{names[r.id]}</td>
+          <Table head={["证券或收支", ["区间贡献（AUD）", "num"], "依据"]}>
+            {data.rows.map((r) => (
+              <tr key={r.key}>
                 <td>
-                  {r.from}
-                  {!r.startKnown && <small>此前数据有缺口</small>}
+                  <b>{r.label}</b>
+                  {r.listing && <small>{r.listing}</small>}
+                  {r.closed && <small>期间已卖清</small>}
                 </td>
+                <td className={"num " + tone(r.gain)}>{r.gain == null ? "待核对" : signedAud(r.gain)}</td>
                 <td>
-                  {r.to}
-                  <small>
-                    {
-                      { recovered: "已追平", open: "截至区间末仍落后", interrupted: "后续数据有缺口" }[
-                        r.status
-                      ]
-                    }
-                  </small>
-                </td>
-                <td className="num">
-                  {(Date.parse(r.to) - Date.parse(r.from)) / 86400000 + (r.status === "recovered" ? 0 : 1)}
-                </td>
-                <td className="num loss">{points(r.worst)}</td>
-                <td>
-                  <button title={"从 " + r.baseline + " 收盘开始比较"} onClick={() => zoom(r.baseline, r.to)}>
-                    复盘此段
-                  </button>
+                  {r.events.length ? (
+                    <button className="text-btn" onClick={() => select(r)}>
+                      {r.events.length} 笔流水
+                    </button>
+                  ) : r.kind === "security" ? (
+                    "期初与期末持仓估值"
+                  ) : r.key.startsWith("fx:") ? (
+                    "期初与期末现金折算"
+                  ) : (
+                    "核对估值和现金记录"
+                  )}
                 </td>
               </tr>
             ))}
+            <tr className="sum">
+              <td>组合期间盈亏</td>
+              <td className={"num " + tone(review.money.gain)}>{signedAud(review.money.gain)}</td>
+              <td />
+            </tr>
           </Table>
-          {!all && rows.length > 6 && <button onClick={() => setAll(true)}>查看全部 {rows.length} 段</button>}
         </>
-      ) : (
-        <p className="muted">
-          {review.points.some((p) => Object.values(p.gaps).some((v) => v != null))
-            ? "可核实的收盘日中，没有观察到组合落后于基准。"
-            : "有可比较的组合和指数收益后，这里会列出落后时段。"}
-        </p>
+      )}
+      {selected && (
+        <Modal wide title={selected.label + " · 区间原始流水"} close={() => select(null)}>
+          <Table head={["日期", "账户", "记录", "金额／成交", "费用及税款", "来源凭据"]}>
+            {selected.events.map((e) => (
+              <tr key={e.id}>
+                <td>{e.date}</td>
+                <td>{review.accountNames[e.account] || e.account}</td>
+                <td>{types[e.type] || e.type}</td>
+                <td>
+                  {e.quantity && Number(e.quantity)
+                    ? num(e.quantity) + " × " + e.currency + " " + num(e.price)
+                    : e.currency + " " + num(e.amount)}
+                </td>
+                <td>
+                  {e.currency} {num(Number(e.fee || 0) + Number(e.tax || 0))}
+                </td>
+                <td>{e.reference}</td>
+              </tr>
+            ))}
+          </Table>
+        </Modal>
       )}
     </Card>
   );
@@ -358,7 +389,7 @@ function DayDetail({ review, date, select }) {
   const reading = review.points.find((p) => p.date === date);
   return (
     <Card
-      title="持仓与交易复盘"
+      title="收盘持仓与流水"
       action={
         <Field label="观察日">
           <input
@@ -553,8 +584,8 @@ function Notes({ review, notes, opened, reopen, save, busy, accountName }) {
   );
 }
 
-export function Performance({ d, mode, run, reload }) {
-  const [scope, setScope] = useState({ ids: d.selected, to: d.date, period: "1m" });
+export function Performance({ d, mode, run, reload, initial = {} }) {
+  const [scope, setScope] = useState({ ids: d.selected, to: d.date, period: "1m", ...initial });
   const [version, setVersion] = useState(0),
     [loaded, setLoaded] = useState(null),
     [error, setError] = useState("");
@@ -720,8 +751,10 @@ export function Performance({ d, mode, run, reload }) {
             select={setPicked}
             zoom={zoom}
           />
-          <Periods review={review} zoom={zoom} />
-          <DayDetail review={review} date={selected} select={setPicked} />
+          <Contributions key={"contributions" + review.token} review={review}/>
+          {picked && <Modal wide title={picked + " · 当日明细"} close={() => setPicked(null)}>
+            <DayDetail review={review} date={selected} select={setPicked}/>
+          </Modal>}
           <Notes
             key={"notes" + review.token}
             review={review}

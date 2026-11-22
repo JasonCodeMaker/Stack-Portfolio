@@ -7,11 +7,13 @@ const allocation = [
 ];
 
 describe("rebalance model", () => {
-  it("does not claim a recommendation until targets total 100%", () => {
+  it("compares partial targets and keeps unspecified securities unconfigured", () => {
     const model = buildRebalanceModel(allocation, 1000, { schemaVersion: 1, tolerance: 0.05, targets: { "stock:a": 0.5 } });
-    expect(model.configured).toBe(false);
-    expect(model.needsRebalance).toBe(false);
-    expect(model.rows[0].status).toBe("unconfigured");
+    expect(model.configured).toBe(true);
+    expect(model.needsRebalance).toBe(true);
+    expect(model.rows[0].drift).toBeCloseTo(0.2);
+    expect(model.rows[1].targetWeight).toBeNull();
+    expect(model.rows[1].status).toBe("unconfigured");
   });
 
   it("flags drift outside the configured tolerance", () => {

@@ -5,7 +5,7 @@ import { Table, types } from "./common";
 const brokerNames = { ibkr: "IBKR", webull: "Webull AU" };
 const statusNames = {
   update: ["将修改", "已修改"], new: ["将新增", "已新增"], void: ["将冲销", "已冲销"],
-  link: ["将关联凭证", "已关联凭证"], review: ["待核对", "待核对"],
+  link: ["将关联凭证", "已关联凭证"], evidence: ["将补充券商凭据", "已补充券商凭据"], review: ["待核对", "待核对"],
 };
 const number = new Intl.NumberFormat("en-AU", { maximumFractionDigits: 20 });
 const money = new Intl.NumberFormat("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 20 });
@@ -108,6 +108,7 @@ function impact(changed, done) {
     const n = count(status);
     if (n) actions.push(status === "link" ? "为 " + n + " 笔流水关联券商凭证" : verb + " " + n + " 笔流水");
   }
+  if (count("evidence")) actions.push("为 " + count("evidence") + " 条流水补充券商凭据");
   const fields = changed.reduce((n, r) => n + r.edits.length, 0);
   if (fields) actions.push("更新 " + fields + " 项账户数据");
   const pending = count("review");
@@ -120,24 +121,64 @@ function impact(changed, done) {
 
 export function ImportPreview({ result, done, accounts, confirm, close, reconcile }) {
   const panel = useRef(null);
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
+    if (panel.current.closest(".broker-result")?.previousElementSibling?.classList.contains("broker-result"))
+      return;
     panel.current.focus({ preventScroll: true });
-    panel.current.scrollIntoView({ block: "start" });
   }, []);
   const changed = changedReports(result);
+  const priceWarnings = [...new Set((result.reports || [result]).flatMap(r => r.priceWarnings || []))];
   const { title, button, note } = impact(changed, done);
   return (
-    <section ref={panel} tabIndex={-1} className="card import-preview" aria-label={done ? "导入结果" : "导入预览"}>
-      <div className="card-head"><h2>{done ? "导入结果" : "导入预览"}</h2></div>
+    <section
+      ref={panel}
+      tabIndex={-1}
+      className="card import-preview"
+      aria-label={done ? "导入结果" : "导入预览"}
+    >
+      <div className="card-head">
+        <h2>{done ? "导入结果" : "导入预览"}</h2>
+      </div>
       <div className="import-impact">
-        <div><h3>{title}</h3>{note && <p>{note}</p>}</div>
+        <div>
+          <h3>
+            {result.choices?.length ? "请先确认 " + result.choices.length + " 条记录的上市证券" : title}
+          </h3>
+          {note && <p>{note}</p>}
+          {priceWarnings.map(warning => <p key={warning}>{warning}，请核对该日结单。</p>)}
+        </div>
         <div className="import-decisions">
-          {!done && button && <button className="primary" onClick={confirm}>{button}</button>}
+          {!done && button && (
+            <button
+              className="primary"
+              disabled={saving || !!result.choices?.length}
+              onClick={async () => {
+                setSaving(true);
+                try {
+                  await confirm();
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              {button}
+            </button>
+          )}
           <button onClick={close}>{done ? "关闭结果" : button ? "取消预览" : "关闭预览"}</button>
         </div>
       </div>
-      {changed.map(({ report, rows, edits }) => <AccountChanges key={report.account} report={report} rows={rows} edits={edits}
-        name={accounts.find((a) => a.id === report.account)?.name} done={done} reconcile={reconcile} />)}
+      {changed.map(({ report, rows, edits }) => (
+        <AccountChanges
+          key={report.account}
+          report={report}
+          rows={rows}
+          edits={edits}
+          name={accounts.find((a) => a.id === report.account)?.name}
+          done={done}
+          reconcile={reconcile}
+        />
+      ))}
     </section>
   );
 }

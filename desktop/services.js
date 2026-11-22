@@ -18,16 +18,17 @@ import {
   day,
   dayOf,
   json,
+  listingMatch,
   money,
   preference,
   putPref,
   resolveAsset,
   saveEvent,
-  savePrice,
   transaction,
 } from "./ledger.js";
 import { loadBook, positions, accountSnapshot, storageContext } from "./flows.js";
-import { recordIdentity, ibkrHistoryPlan, applyIbkrHistoryPlan } from "./ibkrHistory.js";
+import { recordIdentity, ibkrHistoryPlan, applyIbkrHistoryPlan, enrichIbkrExecutions, mergeIbkrExecution } from "./ibkrHistory.js";
+import { ibkrReportPrices } from "./ibkrPrices.js";
 import { saveBrokerValue } from "./ledger.js";
 import { activityEdits, valuationEdits } from "./importChanges.js";
 import { EtfCache } from "./allocation/storage/etfCache";
@@ -257,7 +258,9 @@ export function validActivity(row) {
   return { ...row, isValid: !Object.keys(errors).length, errors };
 }
 function nativeEvent(db, v, id) {
-  const assetId = resolveAsset(db, v.asset, v.currency);
+  const saved = v.asset && listingMatch(db, { account:v.accountId, source:v.sourceSystem?.toLowerCase(), record:v.sourceRecordId,
+    symbol:v.asset.symbol, currency:v.asset.quoteCcy || v.currency, mic:v.asset.exchangeMic }).match;
+  const assetId = saved?.id || resolveAsset(db, v.asset, v.currency);
   const n = (k) => (v[k] == null ? null : money(v[k]));
   return {
     id,
@@ -341,9 +344,17 @@ export function syncHost(db, history) {
         createdMappings.push({ tempId: v.id, activityId: id });
       }
       for (const v of updates) {
-        updated.push(v.metadata?.ibkrReportedDateTime
-          ? correctIbkrTradeDate(db, v.id, v.activityDate, v.metadata.ibkrReportedDateTime)
-          : saveEvent(db, nativeEvent(db, v, v.id)));
+        if (v.metadata?.ibkrReportedDateTime) {
+          updated.push(correctIbkrTradeDate(db, v.id, v.activityDate, v.metadata.ibkrReportedDateTime));
+        } else {
+          const event = nativeEvent(db, v, v.id);
+          if (v.sourceSystem === "IBKR") {
+            const prior = db.prepare("SELECT data FROM sp_events WHERE id=?").get(v.id);
+            const receipt = prior && JSON.parse(prior.data).metadata?.ibkrExecution;
+            if (receipt) event.metadata.ibkrExecution = mergeIbkrExecution(receipt, event.metadata.ibkrExecution);
+          }
+          updated.push(saveEvent(db, event));
+        }
       }
       return { created, updated, createdMappings, deleted: [], errors: [] };
     },
@@ -505,32 +516,6 @@ function importRows(active, problems, result, accountId, storedById) {
   return rows.concat(problems.map((row) => ({ ...row, status: "review" })));
 }
 
-function statementPrices(db, statement, checked, write) {
-  const changes = new Map();
-  const previous = db.prepare("SELECT day,price FROM sp_prices WHERE asset=? AND day<=? AND source=? ORDER BY day DESC LIMIT 1");
-  function add(asset, price, source, label, format, ccy) {
-    if (!asset || !(Number(price) > 0)) return;
-    const old = previous.get(asset, statement.date, source);
-    const different = !old || !D(old.price).eq(price);
-    if (!different && old.day === statement.date) return;
-    const edit = different ? { label, format, before: old?.price ?? null, after: price, currency: ccy } : null;
-    changes.set(JSON.stringify([asset, source]), { asset, price, source, edit });
-  }
-  for (const r of statement.positions || []) {
-    let id = resolveAsset(db, { symbol: r.symbol, exchangeMic: r.mic }, r.currency, false);
-    // A new fill creates its security during confirmation, after the read-only preview.
-    if (!write && !id && checked.some((v) => v.isValid && v.symbol === r.symbol && v.currency === r.currency &&
-      (!r.mic || !v.exchangeMic || r.mic === v.exchangeMic))) id = JSON.stringify([r.symbol, r.currency, r.mic]);
-    add(id, r.price, "IBKR 结单报价", r.symbol + " 持仓报价", "price", r.currency);
-    if (statement.base === "AUD" && r.currency !== "AUD")
-      add("FX:" + currency(r.currency) + "/AUD", r.fxToBase, "IBKR 结单汇率", r.currency + "/AUD 汇率", "rate");
-  }
-  if (write)
-    for (const { asset, price, source } of changes.values())
-      savePrice(db, asset, statement.date, price, source, 30);
-  return [...changes.values()].flatMap((p) => p.edit ? [p.edit] : []);
-}
-
 function lastBrokerValue(db, accountId, through) {
   const row = db.prepare(
     "SELECT day,source,data FROM sp_broker_values WHERE account=? AND (? IS NULL OR day<=?) ORDER BY day DESC LIMIT 1",
@@ -543,6 +528,46 @@ export async function batch(db, accountId, broker, report, source, commit = fals
   const ownTransaction = commit === true;
   if (ownTransaction) db.exec("BEGIN IMMEDIATE");
   try {
+    const choices = [];
+    const match = (r, record, mic, ccy) => {
+      if (!r.symbol || !record || /^fallback-[a-f0-9]+(?:$|:)/i.test(record)) return r;
+      const input = { account: accountId, source: broker, record, symbol: r.symbol, currency: ccy, mic };
+      const lookup = listingMatch(db, input);
+      if (lookup.candidates.length < 2) return r;
+      if (lookup.match)
+        return {
+          ...r,
+          assetId: lookup.match.id,
+          mic: lookup.match.mic,
+          exchangeMic: lookup.match.mic,
+          currency: r.currency || lookup.match.currency,
+        };
+      choices.push({ ...input, candidates: lookup.candidates });
+      return null;
+    };
+    const matchedStatements = new Map();
+    const matchStatement = (s) => {
+      if (!s?.positions) return s;
+      if (!matchedStatements.has(s))
+        matchedStatements.set(s, {
+          ...s,
+          positions: s.positions
+            .map((r, i) =>
+              match(r, JSON.stringify(["statement", s.date, i, r.symbol, r.quantity]), r.mic, r.currency),
+            )
+            .filter(Boolean),
+        });
+      return matchedStatements.get(s);
+    };
+    report = {
+      ...report,
+      activities: report.activities
+        .map((r) => match(r, r.brokerRecordId, r.exchangeMic, r.quoteCcy || r.currency))
+        .filter(Boolean),
+      statement: matchStatement(report.statement),
+      valuation: matchStatement(report.valuation),
+    };
+    if (commit && choices.length) throw Error("请先确认记录对应的上市证券，再保存。");
     const history = broker === "ibkr" ? ibkrHistoryPlan(db, accountId, report.activities) : null;
     const { active, problems, storedById } = splitConflicts(db, accountId, report, history);
     const repaired = history?.superseded.size || 0;
@@ -554,13 +579,25 @@ export async function batch(db, accountId, broker, report, source, commit = fals
       !commit,
     );
     const rows = importRows(active, problems, result, accountId, storedById);
+    const invalidLines = new Set(result.checked.filter(r => !r.isValid).map(r => r.lineNumber));
+    const rejected = new Set(result.candidates.filter(c => invalidLines.has(c.activity.lineNumber)).map(c => c.sourceKey));
+    const accepted = active.filter(r => !rejected.has(sourceKey(r, accountId)));
+    const evidence = history ? enrichIbkrExecutions(db, accountId, accepted, storedById, history, Boolean(commit)) : [];
+    for (const { record, previous, next } of evidence) {
+      const edits = [];
+      if (next.fxRateToBase && previous?.fxRateToBase !== next.fxRateToBase)
+        edits.push({ label: next.currency + " 兑 " + next.baseCurrency + " 报表折算率", before: previous?.fxRateToBase, after: next.fxRateToBase, format: "rate" });
+      rows.push({ ...activityDetail(record), status: "evidence", edits, reason: next.pair ? "保留换汇成交方向、价格及费用币种" : "补齐券商成交凭据" });
+    }
     for (const { event, reason } of history?.superseded.values() || [])
       rows.push({ ...activityDetail(event), status: "void", reason });
     const previousValue = lastBrokerValue(db, accountId, report.valuation?.date);
-    const valueChange = report.valuation ? saveBrokerValue(db, accountId, report.valuation, Boolean(commit)) : null;
+    const valueChange = report.valuation
+      ? saveBrokerValue(db, accountId, report.valuation, Boolean(commit))
+      : null;
     const amountEdits = valueChange === "value" ? valuationEdits(previousValue, report.valuation) : [];
-    const priceEdits = broker === "ibkr" && report.statement
-      ? statementPrices(db, report.statement, result.checked, Boolean(commit)) : [];
+    const prices = history ? ibkrReportPrices(db, accountId, report, accepted, result.checked, Boolean(commit)) : { edits: [], warnings: [] };
+    const priceEdits = prices.edits;
     const summary = {
       source,
       broker,
@@ -568,11 +605,13 @@ export async function batch(db, accountId, broker, report, source, commit = fals
       imported: result.imported,
       updated: result.updated,
       repaired,
+      enriched: evidence.length,
       added: result.valid,
       duplicate: result.alreadyImported + result.duplicates,
       unknown: problems,
       invalid: result.invalid,
-      audit: report.audit || {},
+      audit: { ...report.audit, warnings: [...(report.audit?.warnings || []), ...prices.warnings] },
+      priceWarnings: prices.warnings,
       statement: report.statement || report.valuation,
       previousValue,
       valueChange,
@@ -580,9 +619,12 @@ export async function batch(db, accountId, broker, report, source, commit = fals
       amountEdits,
       priceEdits,
       rows,
+      choices: [
+        ...new Map(choices.map((c) => [JSON.stringify([c.record, c.symbol, c.currency]), c])).values(),
+      ],
     };
     if (commit) {
-      if (result.imported || result.updated || repaired || problems.length || result.invalid) {
+      if (result.imported || result.updated || repaired || evidence.length || priceEdits.length || problems.length || result.invalid) {
         const { previousValue: _previous, ...batchRecord } = summary;
         db.prepare("INSERT INTO sp_batches VALUES(?,?,?,?,?)").run(
           randomUUID(),
@@ -606,7 +648,7 @@ export async function batch(db, accountId, broker, report, source, commit = fals
           latest &&
           (problems.length ||
             result.invalid ||
-            noStartingBalance ||
+            (noStartingBalance && (result.imported || result.updated || repaired)) ||
             (broker === "webull" && (source.toLowerCase().includes("csv") || report.audit?.warnings?.length)))
         ) {
           db.prepare("INSERT OR REPLACE INTO sp_checks VALUES(?,?,?)").run(
@@ -653,6 +695,78 @@ export async function combinedBatch(db, parts, commit = false) {
     throw e;
   }
 }
+function manualAsset(db, args) {
+  if (!String(args.symbol || "").trim()) throw Error("请输入证券代码。");
+  const { match, candidates } = listingMatch(db, {
+    ...args,
+    source: "manual",
+    record: args.reference,
+    currency: args.currency,
+    mic: args.mic,
+  });
+  if (args.assetId && args.assetId !== "new") {
+    if (!candidates.some((c) => c.id === args.assetId)) throw Error("所选证券与代码、市场或币种不符。");
+    return args.assetId;
+  }
+  if (match) return match.id;
+  if (candidates.length > 1) throw Error("请选择证券的上市市场。");
+  return resolveAsset(
+    db,
+    {
+      symbol: args.symbol,
+      exchangeMic: args.mic,
+      name: args.name,
+      instrumentType: args.kind || "EQUITY",
+      requireMarketMatch: args.assetId === "new",
+    },
+    args.currency,
+  );
+}
+export function recordHolding(db, args) {
+  const a = account(db, args.account),
+    date = day(args.date);
+  const reference = String(args.reference || "").trim();
+  if (!reference) throw Error("请填写股数或成本的依据，例如券商结单编号。");
+  return transaction(db, () => {
+    const asset = args.symbol ? manualAsset(db, args) : args.assetId;
+    const profile = db.prepare("SELECT currency FROM sp_assets WHERE id=?").get(asset);
+    if (!profile) throw Error("找不到证券。");
+    const quantity = money(args.quantity, true);
+    const old = db
+      .prepare(
+        "SELECT * FROM sp_holding_evidence WHERE account=? AND asset=? AND day=? ORDER BY id DESC LIMIT 1",
+      )
+      .get(a.id, asset, date);
+    const sameQuantity = old && D(old.quantity).eq(quantity);
+    if (args.costOnly) {
+      const held = positions(loadBook(db), a, date).holdings.get(asset);
+      if (!held?.eq(quantity)) throw Error("该日持仓数量已经改变，请重新打开持仓再补成本。");
+    }
+    const optional = (value) => (value == null || value === "" ? null : money(value, true));
+    const local = optional(args.localCost),
+      aud = optional(args.audCost);
+    if (args.costOnly && aud == null && local == null) throw Error("请填写凭据上的持仓总成本。");
+    if (profile.currency === "AUD" && local != null && aud != null && !D(local).eq(aud))
+      throw Error("澳元证券的两项成本应一致。");
+    const localCost =
+      local ?? (profile.currency === "AUD" ? aud : null) ?? (sameQuantity ? old.local_cost : null);
+    const audCost =
+      aud ?? (profile.currency === "AUD" ? local : null) ?? (sameQuantity ? old.aud_cost : null);
+    const reported = Number(!args.costOnly);
+    if (
+      sameQuantity &&
+      old.reported === reported &&
+      old.local_cost === localCost &&
+      old.aud_cost === audCost &&
+      old.reference === reference
+    )
+      return asset;
+    db.prepare(
+      "INSERT INTO sp_holding_evidence(account,asset,day,quantity,reported,local_cost,aud_cost,reference) VALUES(?,?,?,?,?,?,?,?)",
+    ).run(a.id, asset, date, quantity, reported, localCost, audCost, reference);
+    return asset;
+  });
+}
 export function addManual(db, args) {
   const a = account(db, args.account),
     date = day(args.date),
@@ -693,21 +807,16 @@ export function addManual(db, args) {
     if (type === "BUY" || type === "SELL") {
       if (!String(args.symbol || "").trim()) throw Error("请输入证券代码。");
       e.assetSymbol = String(args.symbol).trim().toUpperCase();
-      e.assetId = resolveAsset(
-        db,
-        {
-          symbol: e.assetSymbol,
-          exchangeMic: args.mic,
-          name: args.name,
-          instrumentType: args.kind || "EQUITY",
-        },
-        ccy,
-      );
+      e.assetId = manualAsset(db, args);
       e.quantity = money(args.quantity, true);
       e.unitPrice = money(args.price, true);
       e.fee = money(args.fee || 0, true);
       if (D(e.quantity).lte(0) || D(e.unitPrice).lte(0)) throw Error("数量和成交价必须大于零。");
     } else {
+      if (type === "DIVIDEND" && args.symbol) {
+        e.assetId = manualAsset(db, args);
+        e.assetSymbol = String(args.symbol).trim().toUpperCase();
+      }
       e.amount = money(args.amount, true);
       if (D(e.amount).lte(0)) throw Error("金额必须大于零。");
     }
@@ -726,8 +835,9 @@ export function compareStatement(db, args, commit = false) {
     input = args.cash || {},
     cashEntries = Object.entries(input);
   if (!cashEntries.length) throw Error("请填写结单上的分币种现金余额。");
-  const pos = positions(book, a, date),
-    result = [];
+  const pos = positions(book, a, date, false),
+    result = [],
+    choices = [];
   for (const c of new Set([...pos.cash.keys(), ...Object.keys(input)])) {
     const expected = input[c] == null ? null : D(money(input[c])),
       actual = pos.cash.get(c) || D(0);
@@ -749,20 +859,23 @@ export function compareStatement(db, args, commit = false) {
       actual.set(id, qty);
       labels.set(id, (asset?.symbol || id) + (asset?.mic ? " · " + asset.mic : ""));
     }
-    for (const v of args.positions) {
+    for (const [index, v] of args.positions.entries()) {
       const sym = String(v.symbol).toUpperCase();
-      const matches = held.filter(
-        ({ asset }) =>
-          asset?.symbol.toUpperCase() === sym &&
-          (!v.currency || asset.currency === v.currency) &&
-          (!v.mic || asset.mic === v.mic),
-      );
-      if (matches.length > 1) {
-        pos.warnings.push(sym + " 对应多个上市证券，请在数量后填写币种与交易所。");
+      const input = {
+        account: a.id,
+        source: args.source || "券商结单",
+        record: JSON.stringify([date, index, sym, v.quantity]),
+        symbol: sym,
+        currency: v.currency,
+        mic: v.mic,
+      };
+      const { match, candidates } = listingMatch(db, input);
+      if (!match && candidates.length > 1) {
+        choices.push({ ...input, candidates });
         continue;
       }
-      const key = matches[0]?.id || [sym, v.currency, v.mic].filter(Boolean).join(":");
-      if (!labels.has(key)) labels.set(key, sym);
+      const key = match?.id || [sym, v.currency, v.mic].filter(Boolean).join(":");
+      if (!labels.has(key)) labels.set(key, sym + (match?.mic ? " · " + match.mic : ""));
       map.set(key, (map.get(key) || D(0)).plus(money(v.quantity)));
     }
     for (const s of new Set([...map.keys(), ...actual.keys()])) {
@@ -770,6 +883,7 @@ export function compareStatement(db, args, commit = false) {
         expected = map.get(s) || D(0);
       result.push({
         label: labels.get(s) + " 数量",
+        symbol: book.assets.get(s)?.symbol || labels.get(s),
         expected: expected.toFixed(),
         actual: observed.toFixed(),
         delta: observed.minus(expected).toFixed(),
@@ -777,7 +891,7 @@ export function compareStatement(db, args, commit = false) {
     }
   }
   if (args.nav != null && (args.base == null || args.base === "AUD")) {
-    const view = accountSnapshot(book, a, date),
+    const view = accountSnapshot(book, a, date, {}, pos),
       expected = D(money(args.nav)),
       quoted = view.rows.every(
         (r) =>
@@ -795,6 +909,7 @@ export function compareStatement(db, args, commit = false) {
     if (!quoted) pos.warnings.push("请补齐与结单同日的报价及澳元汇率，再比较总资产。");
   }
   const ok =
+    !choices.length &&
     !pos.warnings.length &&
     result.every(
       (r) =>
@@ -816,7 +931,7 @@ export function compareStatement(db, args, commit = false) {
       db.prepare("DELETE FROM sp_checks WHERE account=? AND day<=?").run(a.id, date);
     });
   }
-  return { ok, rows: result, warnings: pos.warnings };
+  return { ok, rows: result, warnings: pos.warnings, choices };
 }
 
 export function recordAccountValue(db, args, withinTransaction = false) {

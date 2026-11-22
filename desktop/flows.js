@@ -1,5 +1,5 @@
 import Decimal from "decimal.js";
-import { ALLOCATION, day, dayOf, hasTable, json, preference } from "./ledger.js";
+import { ALLOCATION, BROKER, day, dayOf, hasTable, json, preference } from "./ledger.js";
 import { normalizeHolding, buildPortfolioModel } from "./allocation/domain/portfolio";
 import { buildExposureModel } from "./allocation/domain/exposure";
 import { EtfCache } from "./allocation/storage/etfCache";
@@ -44,10 +44,17 @@ export function loadBook(db) {
     }));
   // Older books also stored fills here. Only quotes can mark a position to market.
   // A completed daily close supersedes a Twelve Data intraday reading from the same session.
-  const prices = db.prepare(`SELECT * FROM sp_prices WHERE source <> '成交价'
+  const prices = db.prepare(`SELECT * FROM sp_prices WHERE source NOT IN ('成交价','IBKR 结单报价','IBKR 结单汇率')
     ORDER BY asset, day,
       CASE WHEN source='Twelve Data' AND asset NOT LIKE 'FX:%' THEN 11 ELSE priority END, source`).all();
+  const brokerPrices = hasTable(db, "sp_broker_prices")
+    ? db.prepare("SELECT * FROM sp_broker_prices ORDER BY account,asset,day,priority,source").all() : [];
   const anchors = db.prepare("SELECT * FROM sp_anchors ORDER BY account,day").all();
+  const evidence = db.prepare(`SELECT e.*, (SELECT reference FROM sp_holding_evidence q
+    WHERE q.account=e.account AND q.asset=e.asset AND q.day=e.day AND q.reported=1 AND q.quantity=e.quantity
+    ORDER BY q.id DESC LIMIT 1) AS quantityReference FROM sp_holding_evidence e JOIN
+    (SELECT max(id) id FROM sp_holding_evidence GROUP BY account, asset, day) latest USING(id)
+    ORDER BY account,day,id`).all();
   if (preference(db, "app", "migration")) includeMigratedFxFees(anchors, events);
   const brokerValues = hasTable(db, "sp_broker_values")
     ? db
@@ -66,40 +73,104 @@ export function loadBook(db) {
       .all()
       .map((a) => [a.id, a]),
   );
+  const statements = db.prepare("SELECT DISTINCT account,day FROM sp_statements ORDER BY account,day").all();
   const dates = [
-    ...new Set([...events.map((r) => r.day), ...anchors.map((r) => r.day), ...archived.map((r) => r.day)]),
+    ...new Set([...events, ...anchors, ...archived, ...evidence, ...statements].map((r) => r.day)),
   ].sort();
   const latest =
-    [dates.at(-1), ...prices.map((r) => r.day), ...brokerValues.map((r) => r.day)]
+    [dates.at(-1), ...prices.map((r) => r.day), ...brokerPrices.map((r) => r.day), ...brokerValues.map((r) => r.day)]
       .filter(Boolean)
       .sort()
       .at(-1) || iso(new Date());
   const issues = db.prepare("SELECT * FROM sp_checks").all();
-  return {
+  const book = {
     db,
+    statements: groupBy(statements, "account"),
+    cashUnknown: new Map(),
     accounts,
     assets,
     events,
     byAccount: groupBy(events, "account"),
     prices: groupBy(prices, "asset"),
+    brokerPrices: new Map([...groupBy(brokerPrices, "account")].map(([id, rows]) => [id, groupBy(rows, "asset")])),
     anchors: groupBy(anchors, "account"),
     brokerValues: groupBy(brokerValues, "account"),
     archived: groupBy(archived, "account"),
     dates,
     latest,
     issues,
+    evidence: groupBy(evidence, "account"),
+    reported: new Map(),
+    quantityGaps: [],
   };
+  // Compare each report with the independent ledger at that close. Rebuilding this
+  // difference on load lets a later import explain shares without adding them twice.
+  for (const [id, records] of book.evidence) {
+    const history = positionHistory(book, { id }, false);
+    const anchors = book.anchors.get(id) || [];
+    const byAsset = new Map(),
+      differences = new Map();
+    const timeline = [...anchors.map(({ day }) => ({ day, anchor: true })), ...records].sort(
+      (a, b) => a.day.localeCompare(b.day) || Number(!!b.anchor) - Number(!!a.anchor),
+    );
+    for (const r of timeline) {
+      if (r.anchor) {
+        if (differences.size) book.quantityGaps.push({ account: id, day: r.day });
+        differences.clear();
+        continue;
+      }
+      const raw = history(r.day).holdings.get(r.asset) || D(0);
+      const offset = differences.get(r.asset) || D(0);
+      if (!r.quantityReference) {
+        r.applies = raw.plus(offset).eq(r.quantity);
+        continue;
+      }
+      r.ledgerQuantity = raw.toFixed();
+      const difference = D(r.quantity).minus(raw);
+      r.difference = difference.toFixed();
+      if (!difference.eq(offset)) book.quantityGaps.push({ account: id, day: r.day });
+      if (difference.isZero()) differences.delete(r.asset);
+      else differences.set(r.asset, difference);
+      if (!byAsset.has(r.asset)) byAsset.set(r.asset, []);
+      byAsset.get(r.asset).push(r);
+    }
+    book.reported.set(id, byAsset);
+    const firstReport = records.find((r) => r.quantityReference);
+    if (firstReport) {
+      const funded = (book.byAccount.get(id) || []).find(
+        ({ current: e }) =>
+          live(e) && ["DEPOSIT", "TRANSFER_IN", "CREDIT"].includes(e.activityType) && !e.assetId,
+      );
+      const baseline = [
+        anchors[0]?.day,
+        book.statements.get(id)?.[0]?.day,
+        funded?.day <= firstReport.day ? funded.day : null,
+      ]
+        .filter(Boolean)
+        .sort()[0];
+      book.cashUnknown.set(id, { from: firstReport.day, until: baseline });
+    }
+  }
+  return book;
 }
 function price(book, id, date) {
   return last(book.prices.get(id), date);
 }
-export function rate(book, ccy, date) {
+function accountQuote(book, account, id, date, market, fallback) {
+  const quote = last(book.brokerPrices?.get(account)?.get(id), date);
+  if (!quote) return fallback;
+  // A weekend timestamp on public FX is not a later trading session than Friday's broker quote.
+  if (!fallback || quote.day > fallback.day ||
+      (quote.day >= closingDay(fallback.day, market) && !(fallback.priority >= 40))) return quote;
+  return fallback;
+}
+export function rate(book, ccy, date, account) {
   if (ccy === "AUD") return { price: "1", day: date, source: "AUD" };
   const direct = price(book, "FX:" + ccy + "/AUD", date),
     inv = price(book, "FX:AUD/" + ccy, date);
-  if (direct && (!inv || direct.day >= inv.day)) return direct;
-  if (inv) return { ...inv, price: D(1).div(inv.price).toString() };
-  return null;
+  const market = direct && (!inv || direct.day >= inv.day) ? direct
+    : inv ? { ...inv, price: D(1).div(inv.price).toString() } : null;
+  return account ? accountQuote(book, account, "FX:" + ccy + "/AUD", date, "FX", market) : market;
 }
 export function posting(e) {
   const amount = D(e.amount).abs(),
@@ -188,7 +259,18 @@ function applyPosting(state, e, sign) {
   if (post.units) add(state.holdings, e.assetId, post.units.mul(sign));
   add(state.cash, e.currency, post.cash.mul(sign));
 }
-export function positions(book, acc, date) {
+function includeReported(book, accountId, date, state) {
+  const anchor = last(book.anchors.get(accountId), date);
+  state.evidence = new Map();
+  for (const [asset, reports] of book.reported?.get(accountId) || []) {
+    const r = last(reports, date);
+    if (!r || (anchor && anchor.day > r.day)) continue;
+    add(state.holdings, asset, D(r.difference));
+    state.evidence.set(asset, r);
+  }
+  return state;
+}
+export function positions(book, acc, date, reported = true) {
   const anchor = last(book.anchors.get(acc.id), date);
   const state = balances(anchor);
   for (const entry of book.byAccount.get(acc.id) || []) {
@@ -199,10 +281,10 @@ export function positions(book, acc, date) {
     if (original && dayOf(original.date) <= date) applyPosting(state, original, -1);
     if (entry.day <= date) applyPosting(state, current, 1);
   }
-  return state;
+  return reported ? includeReported(book, acc.id, date, state) : state;
 }
 // Walk the same original ledger and correction overlay once for a series of daily closes.
-export function positionHistory(book, acc) {
+export function positionHistory(book, acc, reported = true) {
   const entries = book.byAccount.get(acc.id) || [];
   const anchors = book.anchors.get(acc.id) || [];
   const originals = [], edits = [];
@@ -231,7 +313,7 @@ export function positionHistory(book, acc) {
     const result = { holdings: new Map(base.holdings), cash: new Map(base.cash), warnings: [...base.warnings, ...delta.warnings] };
     for (const key of ["holdings", "cash"])
       for (const [id, amount] of delta[key]) add(result[key], id, amount);
-    return result;
+    return reported ? includeReported(book, acc.id, date, result) : result;
   };
 }
 function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, date)) {
@@ -261,15 +343,15 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     const [id, qty] = matches[0];
     if (matched.has(id) || qty.minus(item.quantity).abs().gt("0.00000001")) quantitiesAgree = false;
     matched.add(id);
-    if (item.price != null && D(item.price).gt(0)) marks.set(id, item);
+    if (item.price != null || item.fx != null) marks.set(id, item);
   }
   quantitiesAgree = quantitiesAgree && matched.size === active.length;
   function row(assetId, quantity, asset, ccy, q, isCash) {
     if (quantity.isZero()) return;
     const mark = marks.get(assetId);
-    if (mark && (!q || q.day <= broker.day))
+    if (mark?.price != null && D(mark.price).gt(0) && (!q || q.day <= broker.day))
       q = { price: mark.price, day: broker.day, source: broker.source };
-    let fx = rate(book, ccy, date);
+    let fx = rate(book, ccy, date, acc.id);
     if (mark?.fx && (!fx || fx.day <= broker.day))
       fx = { price: mark.fx, day: broker.day, source: broker.source };
     const local = q ? quantity.mul(q.price) : null,
@@ -312,6 +394,9 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     if (!isCash && !item.etfKey && asset?.kind === "ETF") throw Error("无法识别 ETF");
     rows.push({
       ...item,
+      audValue: aud?.toNumber() ?? null,
+      identityKey: item.identityKey || "asset:" + assetId,
+      evidence: pos.evidence?.get(assetId) || null,
       rawQuantity: quantity.toFixed(),
       price: q?.price ?? null,
       quoteSource: q?.source || "",
@@ -326,11 +411,17 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
   }
   for (const [id, qty] of pos.holdings) {
     const a = book.assets.get(id);
-    row(id, qty, a, a?.currency || acc.currency, price(book, id, date), false);
+    row(id, qty, a, a?.currency || acc.currency, accountQuote(book, acc.id, id, date, marketFor(a), price(book, id, date)), false);
   }
   for (const [code, qty] of pos.cash)
     row("cash:" + code, qty, null, code, { price: "1", day: date, source: "账户现金" }, true);
-  const cashPending = book.issues.some((issue) => issue.account === acc.id && issue.day <= date);
+  const gap = book.cashUnknown.get(acc.id);
+  const needsCash = gap && gap.from <= date && (!gap.until || gap.until > date);
+  if (needsCash) {
+    complete.cash = false;
+    warnings.push("已记录股数，现金余额待结单核对");
+  }
+  const cashPending = needsCash || book.issues.some((issue) => issue.account === acc.id && issue.day <= date);
   for (const issue of book.issues)
     if (issue.account === acc.id && issue.day <= date && !warnings.includes(issue.reason)) {
       complete.cash = false;
@@ -358,13 +449,9 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
       : complete.cash
         ? sum.cash.toNumber()
         : null;
-  const holdingsEstimate = complete.securities ? sum.securities.toNumber() : null;
-  const nonCashFromNav = useBroker && broker.securities == null && cash != null;
-  const securities = nonCashFromNav
-    ? D(broker.nav).minus(cash).toNumber()
-    : useBroker && broker.securities != null
-      ? Number(broker.securities)
-      : holdingsEstimate;
+  const securities = complete.securities ? sum.securities.toNumber() : null;
+  const itemizedTotal = complete.securities && complete.cash
+    ? sum.securities.plus(sum.cash).toNumber() : null;
   const total = useBroker
     ? Number(broker.nav)
     : cash != null && securities != null
@@ -376,11 +463,12 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     rows,
     warnings,
     cash,
+    itemizedCash: complete.cash ? sum.cash.toNumber() : null,
     securities,
     total,
     valuationSource: useBroker ? broker.source : null,
-    nonCashFromNav,
-    holdingsEstimate,
+    itemizedTotal,
+    valuationDifference: useBroker && itemizedTotal != null ? D(broker.nav).minus(itemizedTotal).toNumber() : null,
     observedAt: useBroker ? broker.observedAt : null,
     unrealized: useBroker && broker.unrealized != null ? Number(broker.unrealized) : null,
     approximatePnl: useBroker && broker.approximatePnl,
@@ -388,16 +476,60 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
   };
 }
 export const accountSnapshot = snapshot;
+
+function summarizeHoldings(rows) {
+  const groups = Map.groupBy(
+    rows.filter((r) => r.type !== "cash"),
+    (r) => JSON.stringify([r.identityKey, r.localCurrency]),
+  );
+  const securities = [];
+  let knownGain = D(0),
+    count = 0;
+  for (const [key, holdings] of groups) {
+    const { ticker, name, type, mic, localCurrency } = holdings[0];
+    const total = (field) =>
+      holdings.every((h) => h[field] != null)
+        ? holdings.reduce((n, h) => n.plus(h[field]), D(0)).toNumber()
+        : null;
+    const gain = total("gainAud"),
+      value = total("audValue"),
+      cost = total("costAud");
+    if (gain != null) {
+      knownGain = knownGain.plus(gain);
+      count++;
+    }
+    securities.push({
+      key,
+      ticker,
+      name,
+      type,
+      mic,
+      localCurrency,
+      value,
+      gain,
+      cost,
+      quantity: holdings.reduce((n, h) => n.plus(h.rawQuantity), D(0)).toFixed(),
+      rowIds: holdings.map((r) => r.id),
+    });
+  }
+  securities.sort((a, b) => (b.value ?? -Infinity) - (a.value ?? -Infinity));
+  return { securities, count, gain: count || !securities.length ? knownGain.toNumber() : null };
+}
 function combined(book, selected, date, settings) {
   const accounts = selected.map((a) => snapshot(book, a, date, settings.typeOverrides));
   const sum = (key) =>
-    accounts.some((a) => a[key] === null) ? null : accounts.reduce((n, a) => n.plus(a[key]), D(0)).toNumber();
+    accounts.some((a) => a[key] == null) ? null : accounts.reduce((n, a) => n.plus(a[key]), D(0)).toNumber();
+  const itemizedTotal = sum("itemizedTotal"), total = sum("total");
   return {
     accounts,
     rows: accounts.flatMap((a) => a.rows),
     cash: sum("cash"),
+    itemizedCash: sum("itemizedCash"),
     securities: sum("securities"),
-    total: sum("total"),
+    total,
+    itemizedTotal,
+    valuationDifference: accounts.some(a => a.valuationSource) && total != null && itemizedTotal != null
+      ? D(total).minus(itemizedTotal).toNumber() : null,
     known: sum("known"),
   };
 }
@@ -419,12 +551,12 @@ export function flowValue(book, e, usable = () => true) {
   let amount = D(e.amount).abs(), ccy = e.currency;
   const date = dayOf(e.date);
   if (e.assetId && D(e.quantity).abs().gt(0) && e.activityType.startsWith("TRANSFER")) {
-    const quote = price(book, e.assetId, date);
+    const quote = accountQuote(book, e.accountId, e.assetId, date, marketFor(book.assets.get(e.assetId)), price(book, e.assetId, date));
     if (!quote || !usable(quote, e.assetId, date)) return null;
     amount = D(e.quantity).abs().mul(quote.price);
     ccy = book.assets.get(e.assetId)?.currency || ccy;
   }
-  const fx = rate(book, ccy, date);
+  const fx = rate(book, ccy, date, e.accountId);
   if (!fx || !usable(fx, "FX", date)) return null;
   return amount.mul(fx.price).mul(["WITHDRAWAL", "TRANSFER_OUT"].includes(e.activityType) ? -1 : 1);
 }
@@ -468,13 +600,14 @@ export function periodResult(startValue, endValue, flows) {
 // The first day on which any of the accounts has a record.
 function firstRecord(book, accounts) {
   return accounts
-    .flatMap((a) => [book.byAccount, book.anchors, book.archived].map((rows) => rows.get(a.id)?.[0]?.day))
+    .flatMap((a) => [book.byAccount, book.anchors, book.archived, book.evidence].map((rows) => rows.get(a.id)?.[0]?.day))
     .filter(Boolean)
     .sort()[0];
 }
 // Money brought in and taken out after `from` and up to `to`: external flows, and an opening
 // balance recorded before any activity, which arrives on its own day. Null when one cannot be valued.
 function contributions(book, accounts, from, to) {
+  if (book.quantityGaps.some((r) => r.day > from && r.day <= to && accounts.some((a) => a.id === r.account))) return null;
   const flows = flowList(book, accounts.map((a) => a.id), from, to);
   if (!flows) return null;
   for (const a of accounts) {
@@ -519,18 +652,28 @@ export function costBasis(book, acc, date) {
     if (!lots.has(id)) lots.set(id, emptyLot());
     return lots.get(id);
   };
-  function acquire(id, units, unit, extra, on, currency) {
+  function acquire(id, units, unit, extra, on, currency, execution) {
     const l = lot(id),
       ccy = book.assets.get(id)?.currency;
     l.units = l.units.plus(units);
     if (!unit || !unit.gt(0) || !ccy || (currency && currency !== ccy)) {
       l.known = false;
+      l.audKnown = false;
       return;
     }
     const cost = units.mul(unit).plus(extra);
     l.local = l.local.plus(cost);
-    const fx = rate(book, ccy, on);
-    if (fx) l.aud = l.aud.plus(cost.mul(fx.price));
+    const brokerRate = ccy !== "AUD" && execution?.baseCurrency === "AUD" && execution.currency === ccy &&
+      execution.tradeDate === on && Number.isFinite(Number(execution.fxRateToBase)) && Number(execution.fxRateToBase) > 0
+      ? execution.fxRateToBase : null;
+    const fx = brokerRate ? { price: brokerRate, source: "IBKR 逐笔成交报表汇率" } : rate(book, ccy, on, acc.id);
+    if (fx) {
+      l.aud = l.aud.plus(cost.mul(fx.price));
+      if (ccy !== "AUD") {
+        const source = fx.source?.startsWith("IBKR") ? fx.source : "买入日行情汇率";
+        l.fxSource = !l.fxSource || l.fxSource === source ? source : "按各笔买入凭据与当日汇率折算";
+      }
+    }
     else l.audKnown = false;
   }
   // Within a trading day, keep execution order even when the Flex reporting clock crossed midnight.
@@ -544,22 +687,42 @@ export function costBasis(book, acc, date) {
   const anchor = book.anchors.get(acc.id)?.[0];
   if (anchor && anchor.day <= date && !(entries[0]?.day <= anchor.day))
     for (const [id, quantity] of Object.entries(json(anchor.positions, {}))) {
-      const quote = price(book, id, anchor.day);
-      acquire(id, D(quantity), quote?.day === anchor.day ? D(quote.price) : null, D(0), anchor.day);
+      acquire(id, D(quantity), null, D(0), anchor.day);
     }
+  const records = (book.evidence?.get(acc.id) || []).filter((r) => r.day <= date);
+  let at = 0;
+  function applyEvidence(through) {
+    while (at < records.length && records[at].day <= through) {
+      const r = records[at++];
+      if (r.applies === false) continue;
+      const l = lot(r.asset);
+      if (!l.units.eq(r.quantity)) {
+        if (!r.quantityReference && r.local_cost == null && r.aud_cost == null) continue;
+        Object.assign(l, emptyLot(), { units: D(r.quantity), known: false, audKnown: false, receipt: null });
+      }
+      const local = r.local_cost ?? (book.assets.get(r.asset)?.currency === "AUD" ? r.aud_cost : null);
+      if (local != null || r.aud_cost != null) {
+        l.receipt = { day: r.day, reference: r.reference };
+        if (local == null) l.receipt.historicalAud = r.aud_cost;
+      }
+      if (local != null) Object.assign(l, { local: D(local), known: true });
+      if (r.aud_cost != null) Object.assign(l, { aud: D(r.aud_cost), audKnown: true });
+    }
+  }
   for (const e of events) {
     const units = D(e.quantity).abs(),
       on = dayOf(e.date);
+    if (records[at]?.day < on) applyEvidence(shiftDay(on, -1));
     if (e.activityType === "BUY")
-      acquire(e.assetId, units, D(e.unitPrice), D(e.fee).abs().plus(D(e.tax).abs()), on, e.currency);
+      acquire(e.assetId, units, D(e.unitPrice), D(e.fee).abs().plus(D(e.tax).abs()), on, e.currency, e.metadata?.ibkrExecution);
     else if (e.activityType === "TRANSFER_IN") {
-      const quote = D(e.unitPrice).gt(0) ? { price: e.unitPrice } : price(book, e.assetId, on);
-      acquire(e.assetId, units, quote ? D(quote.price) : null, D(0), on);
+      acquire(e.assetId, units, D(e.unitPrice), D(0), on);
     } else if (["SELL", "TRANSFER_OUT"].includes(e.activityType)) {
       const l = lot(e.assetId);
       const left = l.units.minus(units);
-      if (left.lt("-0.00000001")) l.known = false;
-      if (left.lte("0.00000001")) lots.set(e.assetId, { ...emptyLot(), known: l.known && !left.lt("-0.00000001") });
+      if (left.lt("-0.00000001"))
+        lots.set(e.assetId, { ...emptyLot(), units: left, known: false, audKnown: false });
+      else if (left.lte("0.00000001")) lots.set(e.assetId, emptyLot());
       else {
         const kept = left.div(l.units);
         l.local = l.local.mul(kept);
@@ -568,6 +731,7 @@ export function costBasis(book, acc, date) {
       }
     }
   }
+  applyEvidence(date);
   return lots;
 }
 export function storageContext(db, scope) {
@@ -585,6 +749,12 @@ export function storageContext(db, scope) {
       },
     },
   };
+}
+export function targetScope(db, ids) {
+  const active = db.prepare("SELECT id FROM sp_accounts WHERE active=1").all().map((a) => a.id);
+  const selected = [...new Set(ids ?? active)].sort();
+  if (!selected.every((id) => active.includes(id))) throw Error("配置目标的账户范围已改变。");
+  return selected.length === active.length ? ALLOCATION : ALLOCATION + ".targets." + JSON.stringify(selected);
 }
 export function periodStart(end, period, earliest) {
   const e = new Date(end + "T00:00:00Z");
@@ -656,6 +826,8 @@ export async function dashboard(db, options = {}) {
   const overall = result(selected, current.total, startValue);
   for (const view of current.accounts) {
     const acc = selected.find((a) => a.id === view.id);
+    view.balanceDate = [book.byAccount, book.anchors, book.brokerValues, book.evidence, book.archived, book.statements]
+      .map((data) => last(data.get(acc.id), date)?.day).filter(Boolean).sort().at(-1) || null;
     view.result = result(
       [acc],
       view.total,
@@ -664,17 +836,20 @@ export async function dashboard(db, options = {}) {
     const lots = costBasis(book, acc, date);
     for (const row of view.rows) {
       const l = lots.get(row.assetId);
-      if (row.type === "cash" || !l?.known || l.units.minus(row.rawQuantity).abs().gt("0.000001") || !l.local.gt(0))
+      if (row.type === "cash" || !l || l.units.minus(row.rawQuantity).abs().gt("0.000001") || !l.units.gt(0))
         continue;
+      row.costReceipt = l.receipt;
+      if (!l.known) continue;
       row.costLocal = l.local.toNumber();
       row.averageCost = l.local.div(l.units).toNumber();
-      if (row.nativeValue != null) row.gainLocal = D(row.nativeValue).minus(l.local).toNumber();
-      if (l.audKnown && l.aud.gt(0)) {
-        row.costAud = l.aud.toNumber();
-        if (row.audValue != null) {
-          row.gainAud = D(row.audValue).minus(l.aud).toNumber();
-          row.gainRate = D(row.audValue).div(l.aud).minus(1).toNumber();
-        }
+      // Open positions use the same reporting rate for cost, market value and unrealised gain.
+      if (row.fx != null) row.costAud = l.local.mul(row.fx).toNumber();
+      if (row.price == null) continue;
+      const gain = D(row.rawQuantity).mul(row.price).minus(l.local);
+      row.gainLocal = gain.toNumber();
+      if (row.fx != null) {
+        row.gainAud = gain.mul(row.fx).toNumber();
+        row.gainRate = l.local.gt(0) ? gain.div(l.local).toNumber() : null;
       }
     }
   }
@@ -693,11 +868,19 @@ export async function dashboard(db, options = {}) {
     };
   });
   const portfolio = buildPortfolioModel(current.rows, ids);
-  if (current.total == null) {
-    portfolio.totalAud = null;
-    portfolio.incomplete = true;
-    portfolio.instrumentAllocation.forEach((r) => (r.weight = null));
-  }
+  // A reconciled same-day broker NAV can supply the denominator even when
+  // an individual price is missing. Only fully valued listings get a weight.
+  const unpriced = new Set(current.rows.filter((r) => r.audValue == null).map((r) => r.identityKey));
+  portfolio.totalAud = current.rows.some((r) => r.status === "unsupported-position") ? null : current.total;
+  portfolio.incomplete ||= portfolio.totalAud == null;
+  for (const row of portfolio.instrumentAllocation)
+    row.weight = portfolio.totalAud > 0 && !unpriced.has(row.key) ? row.valueAud / portfolio.totalAud : null;
+  const scope = targetScope(db, ids);
+  const readTargets = async (scope) => ({
+    strategy: await loadRebalanceSettings(storageContext(db, scope)),
+    instruments: json(preference(db, scope, "targets.instruments.v1"), { schemaVersion: 1, tolerance: 0.05, targets: {} }),
+  });
+  const targets = await readTargets(scope);
   const records = await new EtfCache(ctx).list(),
     snapshots = new Map(records.filter((r) => r.snapshot).map((r) => [r.etfKey, r.snapshot]));
   const exposure = buildExposureModel({
@@ -719,6 +902,19 @@ export async function dashboard(db, options = {}) {
   });
   return {
     selected: ids,
+    brokerAccounts: Object.fromEntries(
+      ["ibkr", "webull"].map((b) => {
+        const saved = preference(db, BROKER, "local-account." + b);
+        const matches = active.filter(
+          (a) => a.mode === "TRANSACTIONS" && (b === "ibkr" ? /ibkr|interactive/i : /webull/i).test(a.name),
+        );
+        return [
+          b,
+          active.find((a) => a.id === saved && a.mode === "TRANSACTIONS")?.id ||
+            (matches.length === 1 ? matches[0].id : ""),
+        ];
+      }),
+    ),
     date,
     start: shownFrom,
     fromOpening,
@@ -731,15 +927,53 @@ export async function dashboard(db, options = {}) {
     ...current,
     accounts: book.accounts,
     byAccount: current.accounts,
+    holdings: summarizeHoldings(current.rows),
+    quantityReports: [...book.reported].flatMap(([account, assets]) =>
+      [...assets].flatMap(([asset, reports]) =>
+        reports
+          .filter((r) => r.day <= date)
+          .map((r) => ({
+            account,
+            asset,
+            symbol: book.assets.get(asset)?.symbol,
+            day: r.day,
+            quantity: r.quantity,
+            ledgerQuantity: r.ledgerQuantity,
+            difference: r.difference,
+            reference: r.quantityReference,
+          })),
+      ),
+    ),
+
     portfolio,
     exposure,
     settings,
     etfData,
-    targets: await loadRebalanceSettings(ctx),
-    instrumentTargets: json(preference(db, ALLOCATION, "targets.instruments.v1"), null),
+    targets: targets.strategy,
+    instrumentTargets: targets.instruments,
+    globalTargets: scope === ALLOCATION ? null : await readTargets(ALLOCATION),
+    listings: [...book.assets.values()].map(({ id, symbol, name, currency, mic, kind }) => ({
+      id,
+      symbol,
+      name,
+      currency,
+      mic,
+      kind,
+    })),
     originalValue: asStored(book, selected, date),
     issues: current.accounts.flatMap((a) =>
-      a.warnings.map((reason) => ({ account: a.name, id: a.id, reason })),
+      a.warnings.map((reason) => {
+        const row = a.rows.find(
+          (r) => reason === r.ticker + " 缺少报价" || reason === r.ticker + " 缺少汇率",
+        );
+        return {
+          account: a.name,
+          id: a.id,
+          reason,
+          rowId: row?.id,
+          action: row && (row.price ? "fx" : "price"),
+        };
+      }),
     ),
     batches: db
       .prepare("SELECT * FROM sp_batches ORDER BY created DESC LIMIT 25")

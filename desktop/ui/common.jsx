@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useLayoutEffect, useRef } from "react";
 import { X, Inbox } from "lucide-react";
 export const api = window.portfolio;
 export const fmt = (n, digits = 0) =>
@@ -63,9 +63,10 @@ export const types = {
 };
 export function Modal({ title, children, close, wide = false }) {
   const ref = useRef(null);
-  useEffect(() => {
-    ref.current.showModal();
-    return () => ref.current?.close();
+  useLayoutEffect(() => {
+    const dialog = ref.current;
+    dialog.showModal();
+    return () => dialog.close();
   }, []);
   return (
     <dialog
@@ -159,7 +160,8 @@ export function Card({ title, action, children }) {
 }
 export function AccountSelect({ data, value, set }) {
   return (
-    <select aria-label="账本账户" value={value} onChange={(e) => set(e.target.value)}>
+    <select aria-label="账本账户" value={value || ""} onChange={(e) => set(e.target.value)}>
+      {!value && <option value="">选择账户</option>}
       {data.accounts
         .filter((a) => a.active)
         .map((a) => (

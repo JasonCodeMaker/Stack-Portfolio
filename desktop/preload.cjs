@@ -16,6 +16,8 @@ const actions = [
   "account",
   "history",
   "manual",
+  "recordHolding",
+  "rememberListing",
   "preview",
   "commit",
   "compare",

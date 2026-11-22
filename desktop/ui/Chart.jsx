@@ -2,7 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 // Series colours passed the categorical checks together (lightness band, chroma floor,
 // colour-vision separation and contrast on the white card surface).
-export const seriesColors = { portfolio: "#0b7a53", SP500TR: "#2a78d6", XNDX: "#eb6834" };
+export const seriesColors = { portfolio: "#155b49", SP500TR: "#466ca4", XNDX: "#92651d" };
 
 function useWidth(ref) {
   const [width, setWidth] = useState(0);
@@ -62,7 +62,7 @@ export function TimeChart({
   const shade = band?.(shown) || null;
   const values = points.flatMap((p) => shown.map((s) => s.value(p))).filter((v) => v != null);
   const left = 62,
-    gutter = 78,
+    gutter = series.some((s) => s.endName) ? Math.min(170, width * 0.32) : 78,
     top = 12,
     right = Math.max(left + 40, width - gutter),
     bottom = height - 26;
@@ -164,7 +164,7 @@ export function TimeChart({
               )
             }
           >
-            <i className={s.dashed ? "dashed" : ""} style={{ borderTopColor: s.color }} />
+            <i style={{ borderTopColor: s.color, borderTopStyle: s.dotted ? "dotted" : s.dashed ? "dashed" : "solid", borderTopWidth: s.emphasis ? 4 : 2 }} />
             {s.name}
           </button>
         ))}
@@ -265,11 +265,11 @@ export function TimeChart({
                 height={bottom - top}
               />
             )}
-            {shown.map((s) => {
+            {[...shown].sort((a, b) => Number(!!a.emphasis) - Number(!!b.emphasis)).map((s) => {
               const { d, lone } = path(s);
               return (
                 <g key={s.id}>
-                  <path d={d} className="chart-line" stroke={s.color} strokeDasharray={s.dashed ? "6 4" : undefined} />
+                  <path d={d} className="chart-line" stroke={s.color} style={{ strokeWidth: s.emphasis ? 3.8 : 2 }} strokeDasharray={s.dotted ? "1 5" : s.dashed ? "7 5" : undefined} />
                   {lone.map((i) => (
                     <circle key={i} cx={x(i)} cy={y(s.value(points[i]))} r="2.5" fill={s.color} />
                   ))}
@@ -283,7 +283,7 @@ export function TimeChart({
                 ) : null}
                 <circle className="chart-dot" cx={x(e.i)} cy={e.at} r="4" fill={e.s.color} />
                 <text className="chart-end" x={right + 12} y={e.label + 4}>
-                  {format(e.v)}
+                  {e.s.endName ? e.s.endName + " " + axisFormat(e.v) : format(e.v)}
                 </text>
               </g>
             ))}
@@ -322,7 +322,7 @@ export function TimeChart({
             </time>
             {shown.map((s) => (
               <div key={s.id} className="chart-tip-row">
-                <i className={s.dashed ? "dashed" : ""} style={{ borderTopColor: s.color }} />
+                <i style={{ borderTopColor: s.color, borderTopStyle: s.dotted ? "dotted" : s.dashed ? "dashed" : "solid" }} />
                 <span>{s.name}</span>
                 <b>{s.value(reading) == null ? "暂无" : format(s.value(reading))}</b>
               </div>

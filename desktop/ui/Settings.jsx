@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { Database, ExternalLink, Wifi, Link2 } from "lucide-react";
+import { Database } from "lucide-react";
 import { api, aud, Card, Field, Modal, Tabs, Table, Empty, kind } from "./common";
 import { scopedAliasKey } from "../allocation/domain/identifiers";
 import { BookBackups } from "./BookBackups";
-export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
-  const [tab, setTab] = useState(initial.tab || "book"),
+export function Settings({ d, mode, run, initial = {}, workspace, openHome, onPage }) {
+  const [tab, setTab] = useState(initial.tab || "connections"),
     [name, setName] = useState(""),
     [ccy, setCcy] = useState("AUD"),
     [conn, setConn] = useState({ present: {} }),
@@ -68,14 +68,40 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
       />
     </Field>
   );
+  const status = (b) => {
+    if (mode === "demo") return "示例连接";
+    const ready =
+      b === "ibkr"
+        ? conn.query && conn.present["ibkr.flex-token"]
+        : conn.webullKey &&
+          conn.webullId &&
+          conn.present["webull.app-secret"] &&
+          conn.present["webull.access-token"];
+    return ready ? (conn.verified?.[b] ? "已连接" : "待验证") : "待授权";
+  };
+  const brokerStatus = (b) => (
+    <div className="connection-summary">
+      <div>
+        <b>{status(b)}</b>
+        <small>
+          {conn.lastSuccess?.[b]
+            ? "上次成功 " + new Date(conn.lastSuccess[b]).toLocaleString("zh-CN")
+            : "尚无同步记录"}
+        </small>
+      </div>
+      {status(b) !== "待授权" && (
+        <button onClick={() => onPage("imports", { broker: b, sync: true })}>立即更新</button>
+      )}
+    </div>
+  );
   return (
     <>
       <div className="page-controls">
         <Tabs
           items={[
+            ["connections", "连接与更新"],
             ["book", "账本与备份"],
-            ["connections", "券商与行情连接"],
-            ["data", "报价、分类与来源"],
+            ["data", "高级数据设置"],
           ]}
           value={tab}
           onChange={setTab}
@@ -160,98 +186,110 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
       {tab === "connections" && (
         <>
           {mode === "demo" && <div className="notice">正式账本可保存券商授权。示例账本使用随附样例。</div>}
-          <Card title="Interactive Brokers · Activity Flex">
-            <p className="muted">在盈透客户门户打开 Performance &amp; Reports → Flex Queries，点 Flex Web Service Configuration 的齿轮，复制 Current Token。</p>
-            <div className="form-grid">
-              <Field label="Flex Query ID">
-                <input
-                  value={draft["ibkr.flex-query-id"] ?? conn.query ?? ""}
-                  onChange={(e) => change("ibkr.flex-query-id", e.target.value)}
-                />
-              </Field>
-              {secretField("Flex Token", "ibkr.flex-token")}
-            </div>
-            <div className="actions">
-              <button
-                className="primary"
-                disabled={mode === "demo"}
-                onClick={() =>
-                  run(() => saveKeys(["ibkr.flex-query-id", "ibkr.flex-token"]), "IBKR 连接设置已保存")
-                }
-              >
-                保存 IBKR 设置
-              </button>
-              <button disabled={mode === "demo"} onClick={() => setDialog("ibkr")}>
-                断开 IBKR
-              </button>
-            </div>
-          </Card>
-          <Card title="Webull Australia · OpenAPI">
-            <div className="form-grid">
-              <Field label="App Key">
-                <input
-                  value={draft["webull.app-key"] ?? conn.webullKey ?? ""}
-                  onChange={(e) => change("webull.app-key", e.target.value)}
-                />
-              </Field>
-              {secretField("App Secret", "webull.app-secret")}
-            </div>
-            <div className="actions">
-              <button
-                className="primary"
-                disabled={mode === "demo"}
-                onClick={() =>
-                  run(() => saveKeys(["webull.app-key", "webull.app-secret"]), "Webull 设置已保存")
-                }
-              >
-                保存 Webull 设置
-              </button>
-              <button
-                disabled={mode === "demo"}
-                onClick={() =>
-                  run(async () => {
-                    setWeb(await api.connectWebull());
-                    setConn(await api.connections());
-                  }, false)
-                }
-              >
-                连接 / 检查手机授权
-              </button>
-              <button disabled={mode === "demo"} onClick={() => setDialog("webull")}>
-                断开 Webull
-              </button>
-            </div>
-            {web && (
-              <p>
-                {web.status === "PENDING"
-                  ? "在 Webull 手机 App 打开 Menu → Messages → OpenAPI Notifications，选择最新消息，点 Check Now 完成验证，再点击这里的「检查手机授权」。"
-                  : web.status}
+          <Card title="Interactive Brokers">
+            {brokerStatus("ibkr")}
+            <details open={initial.broker === "ibkr" || undefined}>
+              <summary>{status("ibkr") === "待授权" ? "连接 IBKR" : "授权设置"}</summary>
+              <p className="muted">
+                在盈透客户门户打开 Performance &amp; Reports → Flex Queries，点 Flex Web Service Configuration
+                的齿轮，复制 Current Token。
               </p>
-            )}
-            {web?.accounts.length > 0 && (
-              <Field label="Webull 券商账户">
-                <select
-                  value={conn.webullId}
-                  onChange={(e) =>
-                    run(async () => {
-                      await api.saveConnection({ "webull.api-account-id": e.target.value });
-                      setConn(await api.connections());
-                    }, "账户已关联")
+              <div className="form-grid">
+                <Field label="Flex Query ID">
+                  <input
+                    value={draft["ibkr.flex-query-id"] ?? conn.query ?? ""}
+                    onChange={(e) => change("ibkr.flex-query-id", e.target.value)}
+                  />
+                </Field>
+                {secretField("Flex Token", "ibkr.flex-token")}
+              </div>
+              <div className="actions">
+                <button
+                  className="primary"
+                  disabled={mode === "demo"}
+                  onClick={() =>
+                    run(() => saveKeys(["ibkr.flex-query-id", "ibkr.flex-token"]), "IBKR 连接设置已保存")
                   }
                 >
-                  {web.accounts.map((a) => (
-                    <option key={a.accountId} value={a.accountId}>
-                      {a.accountNumber || a.accountId}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            )}
+                  保存 IBKR 设置
+                </button>
+                <button disabled={mode === "demo"} onClick={() => setDialog("ibkr")}>
+                  断开 IBKR
+                </button>
+              </div>
+            </details>
+          </Card>
+          <Card title="Webull Australia">
+            {brokerStatus("webull")}
+            <details open={initial.broker === "webull" || undefined}>
+              <summary>{status("webull") === "待授权" ? "连接 Webull" : "授权与账户"}</summary>
+              <div className="form-grid">
+                <Field label="App Key">
+                  <input
+                    value={draft["webull.app-key"] ?? conn.webullKey ?? ""}
+                    onChange={(e) => change("webull.app-key", e.target.value)}
+                  />
+                </Field>
+                {secretField("App Secret", "webull.app-secret")}
+              </div>
+              <div className="actions">
+                <button
+                  className="primary"
+                  disabled={mode === "demo"}
+                  onClick={() =>
+                    run(() => saveKeys(["webull.app-key", "webull.app-secret"]), "Webull 设置已保存")
+                  }
+                >
+                  保存 Webull 设置
+                </button>
+                <button
+                  disabled={mode === "demo"}
+                  onClick={() =>
+                    run(async () => {
+                      setWeb(await api.connectWebull());
+                      setConn(await api.connections());
+                    }, false)
+                  }
+                >
+                  连接 / 检查手机授权
+                </button>
+                <button disabled={mode === "demo"} onClick={() => setDialog("webull")}>
+                  断开 Webull
+                </button>
+              </div>
+              {web && (
+                <p>
+                  {web.status === "PENDING"
+                    ? "在 Webull 手机 App 打开 Menu → Messages → OpenAPI Notifications，选择最新消息，点 Check Now 完成验证，再点击这里的「检查手机授权」。"
+                    : web.status}
+                </p>
+              )}
+              {web?.accounts.length > 0 && (
+                <Field label="Webull 券商账户">
+                  <select
+                    value={conn.webullId}
+                    onChange={(e) =>
+                      run(async () => {
+                        await api.saveConnection({ "webull.api-account-id": e.target.value });
+                        setConn(await api.connections());
+                      }, "账户已关联")
+                    }
+                  >
+                    <option value="">选择券商账户</option>
+                    {web.accounts.map((a) => (
+                      <option key={a.accountId} value={a.accountId}>
+                        {a.accountNumber || a.accountId}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
+            </details>
           </Card>
           <Card title="行情自动更新">
             <p className="muted">
-              持仓的每日收盘价、美元兑澳元汇率和标普 500、纳斯达克 100 总回报指数来自 Yahoo Finance 与 FRED 的公开数据，无需 API
-              Key。请求只包含证券代码和日期。
+              持仓的每日收盘价、美元兑澳元汇率和标普 500、纳斯达克 100 总回报指数来自 Yahoo Finance 与 FRED
+              的公开数据，无需 API Key。请求只包含证券代码和日期。
             </p>
             <label className="check">
               <input
@@ -259,7 +297,10 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
                 disabled={mode === "demo" || !market}
                 checked={market?.autoUpdate ?? true}
                 onChange={(e) =>
-                  run(async () => setMarket(await api.marketSettings({ autoUpdate: e.target.checked })), "行情更新设置已保存")
+                  run(
+                    async () => setMarket(await api.marketSettings({ autoUpdate: e.target.checked })),
+                    "行情更新设置已保存",
+                  )
                 }
               />
               打开软件和进入策略复盘时自动更新
@@ -276,7 +317,9 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
                       "已更新 " +
                       results.filter((r) => !r.error).length +
                       " 项行情" +
-                      (failed.length ? "；未能更新 " + failed.map((r) => r.name + "（" + r.error + "）").join("、") : "")
+                      (failed.length
+                        ? "；未能更新 " + failed.map((r) => r.name + "（" + r.error + "）").join("、")
+                        : "")
                     );
                   }, true)
                 }
@@ -284,13 +327,17 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
                 立即更新行情
               </button>
               <span className="muted">
-                {market?.last ? "上次更新 " + new Date(market.last).toLocaleString("zh-CN") : "尚未自动更新过"}
+                {market?.last
+                  ? "上次更新 " + new Date(market.last).toLocaleString("zh-CN")
+                  : "尚未自动更新过"}
               </span>
             </div>
           </Card>
-          <Card title="可选数据源">
+          <details className="card">
+            <summary>其他行情来源</summary>
             <p className="muted">
-              Twelve Data 用于盘中报价，以及补齐公开来源没有的历史收盘价；Alpha Vantage 用于部分 ETF 的成分数据。不填也可以正常使用。
+              Twelve Data 用于盘中报价，以及补齐公开来源没有的历史收盘价；Alpha Vantage 用于部分 ETF
+              的成分数据。不填也可以正常使用。
             </p>
             <div className="form-grid">
               {secretField("Twelve Data API Key", "twelvedata.apiKey")}
@@ -333,7 +380,7 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
               />
               有 Twelve Data Key 时，每 5 分钟检查一次 USD/AUD 实时汇率
             </label>
-          </Card>
+          </details>
           <details className="card">
             <summary>重置某个账户的券商同步标记</summary>
             <div className="actions">
@@ -392,7 +439,8 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
               保存报价
             </button>
           </Card>
-          <Card title="ETF 数据源与标识">
+          <details className="card">
+            <summary>手动调整基金数据来源</summary>
             {d.etfData.length ? (
               <>
                 <div className="form-grid">
@@ -449,15 +497,16 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
             ) : (
               <Empty>持有 ETF 后可设置发行商。</Empty>
             )}
-          </Card>
-          <Card title="证券分类与标识映射">
+          </details>
+          <details className="card">
+            <summary>更正证券类别及基金成分匹配</summary>
             <div className="inline-form">
               <Field label="证券">
                 <select value={override} onChange={(e) => setOverride(e.target.value)}>
                   <option value="">选择证券</option>
                   {rows.map((r) => (
                     <option key={r.assetId} value={r.assetId}>
-                      {r.ticker}
+                      {r.name} · {r.ticker} · {r.mic || "上市地待补"} · {r.localCurrency}
                     </option>
                   ))}
                 </select>
@@ -535,7 +584,7 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome }) {
                 </button>
               </p>
             ))}
-          </Card>
+          </details>
         </>
       )}
       {dialog && (

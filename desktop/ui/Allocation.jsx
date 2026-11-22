@@ -1,10 +1,9 @@
 import React, { useState } from "react";
-import { ArrowUpRight, Layers3, SlidersHorizontal } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { buildCoreSatelliteAllocation, buildBreakdownNodes } from "../allocation/domain/visualization";
 import { buildRebalanceModel } from "../allocation/domain/rebalance";
-import { buildComposition, buildPlanRows } from "../allocation/domain/composition";
-import { squarify } from "../allocation/domain/compositionLayout";
-import { api, aud, fmt, pct, num, kind, signedPct, Card, Field, Modal, Tabs, Table, Empty } from "./common";
+import { HoldingEditor } from "./HoldingEditor";
+import { api, aud, fmt, pct, num, kind, Card, Field, Modal, Tabs, Table, Empty } from "./common";
 const labels = {
   "Individual stocks": "个股合计",
   Cash: "现金",
@@ -28,14 +27,13 @@ const status = {
   Missing: "缺少成分",
   Unsupported: "待手工补充",
 };
-function FundData({ d, run }) {
-  const [id, select] = useState(d.etfData[0]?.asset.etfKey || ""),
-    [text, setText] = useState(""),
+function FundData({ d, run, initialFund }) {
+  const [text, setText] = useState(""),
     [date, setDate] = useState(d.date),
     [parsed, setParsed] = useState(null),
     [all, setAll] = useState(false),
     [dialog, setDialog] = useState("");
-  const f = d.etfData.find((e) => e.asset.etfKey === id) || d.etfData[0];
+  const f = d.etfData.find((e) => e.asset.etfKey === initialFund) || d.etfData[0];
   if (!f) return <Empty>所选账户还没有 ETF。</Empty>;
   const key = f.asset.etfKey,
     s = f.snapshot,
@@ -49,26 +47,7 @@ function FundData({ d, run }) {
   }
   return (
     <>
-      <Card
-        title="基金成分与数据来源"
-        action={
-          <select
-            aria-label="选择基金"
-            value={key}
-            onChange={(e) => {
-              select(e.target.value);
-              setParsed(null);
-              setText("");
-            }}
-          >
-            {d.etfData.map((e) => (
-              <option key={e.asset.etfKey} value={e.asset.etfKey}>
-                {e.asset.symbol}
-              </option>
-            ))}
-          </select>
-        }
-      >
+      <Card title="基金成分与数据来源">
         <div className="mini-stats">
           <span>
             <b>{s?.provider || "—"}</b>数据来源
@@ -83,7 +62,7 @@ function FundData({ d, run }) {
             <b>{status[f.status] || f.status}</b>成分状态
           </span>
         </div>
-        <div className="actions">
+        <details><summary>更新或管理成分表</summary><div className="actions">
           <button onClick={() => run(() => api.fundRefresh({ asset: f.asset }), "基金成分已更新")}>
             刷新成分
           </button>
@@ -94,7 +73,7 @@ function FundData({ d, run }) {
           <button disabled={!s} onClick={() => setDialog("disable")}>
             停用成分表
           </button>
-        </div>
+        </div></details>
         <label className="check">
           <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
           展开权重不超过 1% 的成分
@@ -203,288 +182,416 @@ function FundData({ d, run }) {
     </>
   );
 }
-export function Allocation({ d, run, initial = {} }) {
-  const [tab, setTab] = useState(initial.tab || "exposure"),
-    [lens, setLens] = useState("companies"),
-    [chosen, setChosen] = useState(null),
-    [target, setTarget] = useState(null),
-    [tol, setTol] = useState("5"),
-    [q, setQ] = useState(""),
-    [limit, setLimit] = useState(15);
-  const [targetScope, setTargetScope] = useState("strategy");
-  const targetSettings = targetScope === "strategy" ? d.targets : d.instrumentTargets || d.targets;
-  const p = d.portfolio,
-    e = d.exposure,
-    units =
-      targetScope === "strategy"
-        ? buildCoreSatelliteAllocation(p.instrumentAllocation, p.totalAud)
-        : p.instrumentAllocation,
-    reb = buildRebalanceModel(units, p.totalAud, targetSettings),
-    plan = buildPlanRows(reb, p.instrumentAllocation);
-  const slices = buildComposition(e, 12),
-    tiles = squarify(slices, { x: 0, y: 0, w: 900, h: 220 });
-  const nodes =
-    lens === "companies"
-      ? e.rows.map((r) => ({ ...r, valueAud: r.totalAud, weight: r.portfolioWeight }))
-      : buildBreakdownNodes(lens, p.instrumentAllocation, p.holdings, e, p.totalAud);
-  const weights = nodes.filter((r) => r.type === "stock").sort((a, b) => b.valueAud - a.valueAud);
-  const listed = nodes.filter(
-    (n) =>
-      lens !== "companies" || ((n.label || "") + " " + (n.ticker || "")).toLowerCase().includes(q.toLowerCase()),
+function WeightBar({ value, target = false }) {
+  return (
+    <span className={"weight-track" + (target ? " target" : "")} aria-hidden="true">
+      <i style={{ width: Math.max(0, Math.min(100, (value || 0) * 100)) + "%" }} />
+    </span>
   );
-  function startTargets() {
-    setTarget(
-      Object.fromEntries(units.map((r) => [r.key, String((targetSettings.targets[r.key] || 0) * 100)])),
-    );
-    setTol(String(targetSettings.tolerance * 100));
+}
+
+function AllocationLine({ label, note, value, weight, onClick }) {
+  const title = (
+    <>
+      <span>{label}</span>
+      {note && <small>{note}</small>}
+    </>
+  );
+  return (
+    <div className="allocation-line">
+      {onClick ? (
+        <button className="line-title" onClick={onClick}>
+          {title}
+          <ArrowUpRight size={13} />
+        </button>
+      ) : (
+        <div>{title}</div>
+      )}
+      <WeightBar value={weight} />
+      <strong>{pct(weight)}</strong>
+      <span className="allocation-money">{aud(value, 2)}</span>
+    </div>
+  );
+}
+
+const sectorLabel = (s) =>
+  ({
+    Technology: "科技",
+    Financials: "金融",
+    Healthcare: "医疗保健",
+    Materials: "原材料",
+    "Consumer Discretionary": "非必需消费",
+    "Consumer Staples": "必需消费",
+    Industrials: "工业",
+    Energy: "能源",
+    "Real Estate": "房地产",
+    Utilities: "公用事业",
+    "Communication Services": "通信服务",
+    "Health Care": "医疗保健",
+  })[s] ||
+  s ||
+  "行业待分类";
+
+function CompanyView({ d }) {
+  const [query, search] = useState(""),
+    [chosen, choose] = useState(null);
+  const { rows } = d.exposure,
+    total = d.portfolio.totalAud;
+  const weight = (v) => (total > 0 ? v / total : null);
+  const companies = rows.filter((r) => r.type === "stock");
+  const filtered = companies.filter((r) =>
+    (r.label + " " + (r.ticker || "")).toLowerCase().includes(query.trim().toLowerCase()),
+  );
+  const shown = query.trim() ? filtered : filtered.slice(0, 12);
+  const tail = query.trim() ? [] : filtered.slice(12);
+  const sectors = Map.groupBy(tail, (r) => sectorLabel(r.sector));
+  const render = (r) => (
+    <AllocationLine
+      key={r.key}
+      label={r.label}
+      note={r.ticker}
+      value={r.totalAud}
+      weight={weight(r.totalAud)}
+      onClick={() => choose(r)}
+    />
+  );
+  const sourceGroups = Map.groupBy(chosen?.sources || [], (s) =>
+    JSON.stringify([s.accountId, s.etfSymbol || ""]),
+  );
+  return (
+    <Card
+      title="实际投了哪些公司"
+      action={
+        <input
+          aria-label="查找公司"
+          placeholder="查找公司或代码"
+          value={query}
+          onChange={(e) => search(e.target.value)}
+        />
+      }
+    >
+      {shown.map(render)}
+      {!shown.length && <Empty>没有符合条件的公司。</Empty>}
+      {!query.trim() &&
+        rows
+          .filter((r) => r.type !== "stock" && r.type !== "cash")
+          .map((r) => (
+            <AllocationLine
+              key={r.key}
+              label={r.type === "etf" ? r.ticker || "基金" : lab(r.label)}
+              note={r.type === "etf" ? "成分待更新" : kind[r.type]}
+              value={r.totalAud}
+              weight={weight(r.totalAud)}
+              onClick={() => choose(r)}
+            />
+          ))}
+      {!query.trim() && d.cash !== 0 && <div className="allocation-cash">
+        <AllocationLine label="账户现金" value={d.cash} weight={d.cash != null ? weight(d.cash) : null}/>
+      </div>}
+      {!!tail.length && (
+        <details className="company-tail">
+          <summary>
+            其余 {tail.length} 家公司 <span>{pct(weight(tail.reduce((n, r) => n + r.totalAud, 0)))}</span>
+          </summary>
+          {[...sectors].map(([sector, members]) => (
+            <details key={sector}>
+              <summary>
+                {sector} · {members.length} 家
+              </summary>
+              {members.map(render)}
+            </details>
+          ))}
+        </details>
+      )}
+      {chosen && (
+        <Modal
+          title={(chosen.type === "etf" ? chosen.ticker : lab(chosen.label)) + " · 持有来源"}
+          close={() => choose(null)}
+        >
+          <strong>
+            {aud(chosen.totalAud, 2)} · 占组合 {pct(weight(chosen.totalAud))}
+          </strong>
+          <Table head={["账户", "持有方式", ["金额（AUD）", "num"]]}>
+            {[...sourceGroups].map(([key, group]) => (
+              <tr key={key}>
+                <td>{group[0].accountName}</td>
+                <td>{group[0].etfSymbol ? "通过 " + group[0].etfSymbol + " 持有" : "直接持有"}</td>
+                <td className="num">
+                  {aud(
+                    group.reduce((sum, s) => sum + s.amountAud, 0),
+                    2,
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        </Modal>
+      )}
+    </Card>
+  );
+}
+
+function Targets({ d, run }) {
+  const hasStrategy =
+    Object.keys(d.targets.targets).length || Object.keys(d.globalTargets?.strategy.targets || {}).length;
+  const hasIndividual =
+    Object.keys(d.instrumentTargets.targets).length ||
+    Object.keys(d.globalTargets?.instruments.targets || {}).length;
+  const [scope, setScope] = useState(hasStrategy && !hasIndividual ? "strategy" : "instruments");
+  const [editKey, select] = useState(null),
+    [input, setInput] = useState(""),
+    [tolerance, setTolerance] = useState("");
+  const settings = scope === "strategy" ? d.targets : d.instrumentTargets;
+  const global = d.globalTargets?.[scope].targets || {};
+  const accountLabel = d.globalTargets ? d.byAccount.map((a) => a.name).join("、") : "全部账户";
+  const p = d.portfolio;
+  const instruments = [...p.instrumentAllocation];
+  for (const security of d.holdings.securities) {
+    const row = d.rows.find((r) => r.id === security.rowIds[0]);
+    if (!instruments.some((v) => v.key === row.identityKey))
+      instruments.push({
+        key: row.identityKey,
+        label: row.ticker,
+        type: row.type,
+        valueAud: null,
+        weight: null,
+      });
+  }
+  const items = scope === "strategy" ? buildCoreSatelliteAllocation(instruments, p.totalAud) : instruments;
+  if (scope === "strategy") {
+    for (const row of d.rows.filter((r) => r.audValue == null)) {
+      const key = row.type === "etf" ? row.identityKey : row.type === "cash" ? "strategy:cash" :
+        row.type === "stock" ? "strategy:individual-stocks" : "strategy:other";
+      const group = items.find((r) => r.key === key);
+      if (group) group.weight = null;
+      else items.push({ key, label: row.type === "stock" ? "个股合计" : row.type === "cash" ? "现金" : "其他投资", type:row.type, valueAud:null, weight:null });
+    }
+  }
+  for (const key of new Set([...Object.keys(settings.targets), ...Object.keys(global)])) {
+    if (items.some((r) => r.key === key)) continue;
+    const holding = d.rows.find((r) => r.identityKey === key);
+    const label =
+      { "strategy:cash": "现金", "strategy:individual-stocks": "个股合计", "strategy:other": "其他投资" }[
+        key
+      ] ||
+      holding?.ticker ||
+      d.listings.find((a) => "asset:" + a.id === key)?.symbol ||
+      key.split(":").at(-1);
+    items.push({ key, label, valueAud: holding ? null : 0, weight: p.totalAud > 0 && !holding ? 0 : null });
+  }
+  const { rows } = buildRebalanceModel(items, p.totalAud, settings);
+  rows.sort((a, b) => Number(a.type === "cash") - Number(b.type === "cash"));
+  function start(r) {
+    select(r.key);
+    setInput(r.targetWeight == null ? "" : String(Number((r.targetWeight * 100).toFixed(6))));
+    setTolerance(String(settings.tolerance * 100));
+  }
+  const editing = rows.find((r) => r.key === editKey);
+  return (
+    <Card title="配置目标" action={<span className="muted">{accountLabel} · 含现金</span>}>
+      <Tabs
+        items={[
+          ["instruments", "逐只证券"],
+          ["strategy", "按组设置"],
+        ]}
+        value={scope}
+        onChange={setScope}
+      />
+      {!rows.length && <Empty>有持仓后可设置配置目标。</Empty>}
+      {rows.map((r) => (
+        <div className="target-row" key={r.key}>
+          <div>
+            <b>{lab(r.label)}</b>
+            <small>
+              {r.targetWeight != null
+                ? r.drift == null
+                  ? "待估值"
+                  : Math.abs(r.drift) < 0.000001
+                    ? "符合目标"
+                    : (r.drift > 0 ? "高于" : "低于") +
+                      "目标 " +
+                      fmt(Math.abs(r.drift) * 100, 1) +
+                      " 个百分点" +
+                      (r.status === "on-target" ? " · 允许范围内" : "")
+                : "未设当前范围目标"}
+            </small>
+          </div>
+          <div className="paired-bars">
+            <div>
+              实际 <WeightBar value={r.weight} />
+              <b>{pct(r.weight)}</b>
+            </div>
+            {r.targetWeight != null && (
+              <div>
+                目标 <WeightBar value={r.targetWeight} target />
+                <b>{pct(r.targetWeight)}</b>
+              </div>
+            )}
+            {global[r.key] != null && <small>全部账户目标 {pct(global[r.key])}</small>}
+          </div>
+          <button
+            aria-label={lab(r.label) + " · " + (r.targetWeight == null ? "设定目标" : "编辑目标")}
+            onClick={() => start(r)}
+          >
+            {r.targetWeight == null ? "设定目标" : "编辑目标"}
+          </button>
+        </div>
+      ))}
+      {editing && (
+        <Modal title={lab(editing.label) + " · 配置目标"} close={() => select(null)}>
+          <p>
+            {accountLabel} · 实际占比 {pct(editing.weight)}
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const targets = { ...settings.targets };
+              if (input.trim() === "") delete targets[editKey];
+              else targets[editKey] = Number(input) / 100;
+              run(async () => {
+                await api.targets({ scope, ids: d.selected, tolerance: Number(tolerance) / 100, targets });
+                select(null);
+              }, "配置目标已保存");
+            }}
+          >
+            <Field label="目标占总资产（%，留空移除目标）">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="any"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+              />
+            </Field>
+            <details>
+              <summary>允许偏离范围</summary>
+              <Field label="允许偏离（百分点）">
+                <input
+                  type="number"
+                  min=".5"
+                  max="25"
+                  required
+                  step="any"
+                  value={tolerance}
+                  onChange={(e) => setTolerance(e.target.value)}
+                />
+              </Field>
+            </details>
+            <button className="primary">保存目标</button>
+          </form>
+        </Modal>
+      )}
+    </Card>
+  );
+}
+
+export function Allocation({ d, run, initial = {} }) {
+  const [tab, setTab] = useState(initial.tab || "holdings"),
+    [lens, setLens] = useState("sectors");
+  const [chosen, choose] = useState(null),
+    [fund, openFund] = useState(null),
+    [repair, setRepair] = useState(null);
+  const p = d.portfolio,
+    weight = (v) => (v != null && p.totalAud > 0 ? v / p.totalAud : null);
+  const selected = d.holdings.securities.find((g) => g.key === chosen);
+  function open(g) {
+    const row = d.rows.find((r) => g.rowIds.includes(r.id));
+    if (row?.etfKey) openFund(row.etfKey);
+    else choose(g.key);
   }
   return (
     <>
       <div className="page-controls">
         <Tabs
           items={[
-            ["exposure", "穿透与分布"],
+            ["holdings", "我买的证券"],
+            ["companies", "实际投了哪些公司"],
             ["targets", "配置目标"],
-            ["funds", "ETF 成分"],
+            ["breakdown", "其他分布"],
           ]}
           value={tab}
           onChange={setTab}
         />
       </div>
-      {tab === "exposure" && (
-        <>
-          <Card title="组合构成" action={<span className="muted">可穿透资产覆盖率 {pct(e.coverage)}</span>}>
-            {tiles.length ? (
-              <div className="mosaic">
-                {tiles.map((t, i) => (
-                  <button
-                    key={t.key}
-                    className={"tile shade" + (i % 6)}
-                    style={{
-                      left: t.x / 9 + "%",
-                      top: t.y / 2.2 + "%",
-                      width: t.w / 9 + "%",
-                      height: t.h / 2.2 + "%",
-                    }}
-                    title={lab(t.label) + " · " + aud(t.valueAud)}
-                    onClick={() => setChosen(t)}
-                  >
-                    {t.w > 70 && t.h > 25 && (
-                      <>
-                        <strong>{lab(t.ticker || t.label)}</strong>
-                        {t.h > 42 && <small>{aud(t.valueAud)}</small>}
-                      </>
-                    )}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <Empty>没有可估值的持仓。</Empty>
-            )}
-            <div className="legend">
-              <span>面积按已估值金额计算</span>
-              <span>直接持股与各 ETF 贡献可点开查看</span>
-            </div>
-          </Card>
-          <Card
-            title="配置明细"
-            action={
-              <select
-                aria-label="分析维度"
-                value={lens}
-                onChange={(ev) => {
-                  setLens(ev.target.value);
-                  setLimit(15);
-                }}
-              >
-                {Object.entries({
-                  companies: "公司",
-                  holdings: "买入的证券",
-                  sectors: "行业",
-                  countries: "国家",
-                  assets: "资产类别",
-                  accounts: "账户",
-                  currencies: "持仓币种",
-                }).map(([k, l]) => (
-                  <option key={k} value={k}>
-                    {l}
-                  </option>
-                ))}
-              </select>
-            }
-          >
-            {lens === "companies" && (
-              <div className="toolbar">
-                <input
-                  placeholder="筛选公司或证券"
-                  aria-label="筛选公司"
-                  value={q}
-                  onChange={(ev) => setQ(ev.target.value)}
-                />
-                <span className="muted">
-                  前五大公司占组合{" "}
-                  {pct(
-                    p.totalAud ? weights.slice(0, 5).reduce((s, r) => s + r.valueAud, 0) / p.totalAud : null,
-                  )}
-                </span>
-              </div>
-            )}
-            <Table head={["名称", ["直接持有", "num"], ["通过 ETF", "num"], ["合计（AUD）", "num"], ["组合占比", "num"]]}>
-              {listed.slice(0, q ? listed.length : limit).map((r) => (
-                <tr key={r.key}>
-                  <td>
-                    {r.sources ? (
-                      <button className="text-btn" onClick={() => setChosen(r)}>
-                        {lab(r.label)} <ArrowUpRight size={13} />
-                      </button>
-                    ) : (
-                      lab(r.label)
-                    )}
-                  </td>
-                  <td className="num">{aud(r.directAud)}</td>
-                  <td className="num">{aud(r.viaEtfsAud)}</td>
-                  <td className="num">{aud(r.valueAud, 2)}</td>
-                  <td className="num">{pct(p.totalAud == null ? null : r.weight)}</td>
-                </tr>
-              ))}
-            </Table>
-            {!q && listed.length > limit && (
-              <div className="actions">
-                <button onClick={() => setLimit(listed.length)}>显示全部 {listed.length} 项</button>
-                <span className="muted">已列出占比最高的 {limit} 项</span>
-              </div>
-            )}
-          </Card>
-        </>
+      {d.portfolio.totalAud == null && d.rows.length > 0 && (
+        <p className="notice">
+          组合占比需要完整的证券市值和现金余额。{d.issues[0]?.reason || "当前估值有待核对"}。
+        </p>
       )}
-      {tab === "targets" && (
-        <Card
-          title="持仓与目标权重"
-          action={
-            <button className="primary" disabled={!units.length} onClick={startTargets}>
-              <SlidersHorizontal size={15} />
-              编辑目标
-            </button>
-          }
-        >
-          <div className="toolbar">
-            <Tabs
-              items={[
-                ["strategy", "ETF、个股组和现金组"],
-                ["instruments", "逐只证券与现金"],
-              ]}
-              value={targetScope}
-              onChange={setTargetScope}
+      {tab === "holdings" && (
+        <Card title="我买的证券" action={<span className="muted">按市值排序 · AUD</span>}>
+          {d.holdings.securities.map((g) => (
+            <AllocationLine
+              key={g.key}
+              label={g.ticker}
+              note={[g.name, g.mic, g.localCurrency, g.type === "etf" && "查看基金成分"]
+                .filter(Boolean)
+                .join(" · ")}
+              value={g.value}
+              weight={weight(g.value)}
+              onClick={() => open(g)}
             />
-            <span className="muted">允许偏离 ±{pct(targetSettings.tolerance)}</span>
+          ))}
+          {!d.holdings.securities.length && <Empty>当前账户没有证券持仓。</Empty>}
+          <div className="allocation-cash">
+            <AllocationLine label="账户现金" value={d.cash} weight={weight(d.cash)} />
           </div>
-          <Table head={["配置项", ["实际", "num"], ["目标", "num"], ["偏离", "num"], "状态", ["回到目标需要", "num"]]}>
-            {plan.map((r) => {
-              const off = ["underweight", "overweight"].includes(r.status);
-              return (
-                <tr key={r.key}>
-                  <td>
-                    {lab(r.label)}
-                    <small>{r.children.map((x) => lab(x.label)).join(" · ")}</small>
-                  </td>
-                  <td className="num">{pct(r.weight)}</td>
-                  <td className="num">{pct(r.targetWeight)}</td>
-                  <td className={"num " + (off ? "warning" : "")}>{r.drift == null ? "—" : signedPct(r.drift, 1)}</td>
-                  <td>
-                    {
-                      {
-                        underweight: "低于目标",
-                        overweight: "高于目标",
-                        "on-target": "范围内",
-                        unconfigured: "待设置",
-                      }[r.status]
-                    }
-                  </td>
-                  <td className="num">
-                    {r.adjustmentAud == null || !off
-                      ? "—"
-                      : (r.adjustmentAud > 0 ? "买入 " : "卖出 ") + aud(Math.abs(r.adjustmentAud), 2)}
-                  </td>
-                </tr>
-              );
-            })}
-          </Table>
         </Card>
       )}
-      {tab === "funds" && <FundData d={d} run={run} />}
-      {chosen && (
-        <Modal title={lab(chosen.label) + " · 来源"} close={() => setChosen(null)}>
-          <dl>
-            <dt>直接持有</dt>
-            <dd>{aud(chosen.directAud, 2)}</dd>
-            <dt>通过 ETF</dt>
-            <dd>{aud(chosen.viaEtfsAud, 2)}</dd>
-          </dl>
-          <Table head={["账户", "贡献来源", "金额"]}>
-            {chosen.sources.map((s, i) => (
-              <tr key={i}>
-                <td>{s.accountName}</td>
-                <td>{s.kind === "direct" ? "直接持有" : s.path?.join(" → ") || s.etfSymbol || s.reason}</td>
-                <td>{aud(s.amountAud, 2)}</td>
-              </tr>
-            ))}
-          </Table>
+      {tab === "companies" && <CompanyView key={d.selected.join()} d={d} />}
+      {tab === "targets" && <Targets key={d.selected.join()} d={d} run={run} />}
+      {tab === "breakdown" && (
+        <Card
+          title="组合分布"
+          action={
+            <select aria-label="分布维度" value={lens} onChange={(e) => setLens(e.target.value)}>
+              {Object.entries({
+                sectors: "行业",
+                countries: "国家",
+                assets: "资产类别",
+                accounts: "账户",
+                currencies: "币种",
+              }).map(([k, l]) => (
+                <option key={k} value={k}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          }
+        >
+          {buildBreakdownNodes(lens, p.instrumentAllocation, p.holdings, d.exposure, p.totalAud).map((r) => (
+            <AllocationLine
+              key={r.key}
+              label={lens === "sectors" ? sectorLabel(lab(r.label)) : lab(r.label)}
+              value={r.valueAud}
+              weight={weight(r.valueAud)}
+            />
+          ))}
+        </Card>
+      )}
+      {fund && (
+        <Modal
+          wide
+          title={(d.etfData.find((f) => f.asset.etfKey === fund)?.asset.symbol || "ETF") + " · 基金成分"}
+          close={() => openFund(null)}
+        >
+          <FundData d={d} run={run} initialFund={fund} />
         </Modal>
       )}
-      {target && (
-        <Modal title="编辑配置目标" close={() => setTarget(null)}>
-          <div className="form-grid">
-            {units.map((r) => (
-              <Field key={r.key} label={lab(r.label) + " (%)"}>
-                <input
-                  type="number"
-                  min="0"
-                  max="100"
-                  step=".1"
-                  value={target[r.key]}
-                  onChange={(ev) => setTarget({ ...target, [r.key]: ev.target.value })}
-                />
-              </Field>
+      {selected && (
+        <Modal title={selected.ticker + " · 直接持有"} close={() => choose(null)}>
+          {d.rows
+            .filter((r) => selected.rowIds.includes(r.id))
+            .map((r) => (
+              <div className="actions" key={r.id}>
+                <b>{r.accountName}</b> {num(r.quantity)} 股／份 · {aud(r.audValue, 2)}
+                {r.type === "unknown" && <button onClick={() => setRepair(r)}>确认类别</button>}
+              </div>
             ))}
-            <Field label="允许偏离（百分点）">
-              <input
-                type="number"
-                min=".5"
-                max="25"
-                step=".5"
-                value={tol}
-                onChange={(ev) => setTol(ev.target.value)}
-              />
-            </Field>
-          </div>
-          <div className="actions">
-            <b>
-              合计{" "}
-              {fmt(
-                Object.values(target).reduce((n, v) => n + Number(v), 0),
-                1,
-              )}
-              %
-            </b>
-            <button
-              className="primary"
-              onClick={() =>
-                run(async () => {
-                  await api.targets({
-                    scope: targetScope,
-                    schemaVersion: 1,
-                    tolerance: Number(tol) / 100,
-                    targets: Object.fromEntries(Object.entries(target).map(([k, v]) => [k, Number(v) / 100])),
-                  });
-                  setTarget(null);
-                }, "配置目标已保存")
-              }
-            >
-              保存目标
-            </button>
-          </div>
         </Modal>
       )}
+      {repair && <HoldingEditor d={d} run={run} action="type" row={repair} close={() => setRepair(null)} />}
     </>
   );
 }

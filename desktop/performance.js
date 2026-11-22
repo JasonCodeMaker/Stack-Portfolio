@@ -16,6 +16,7 @@ import {
   rate,
 } from "./flows.js";
 import { closingDay, marketFor, shiftDay } from "./marketDays.js";
+import { canonicalIdentity } from "./allocation/domain/identifiers";
 import { benchmarks, reviewDates } from "./reviewMarket.js";
 
 const D = (n) => new Decimal(n);
@@ -65,7 +66,7 @@ function reviewBook(db, ids) {
   const accounts = selected.map((account) => {
     const anchor = book.anchors.get(account.id)?.[0]?.day;
     const firstEvent = events.find((e) => e.accountId === account.id);
-    const first = [anchor, firstEvent && dayOf(firstEvent.date)].filter(Boolean).sort()[0];
+    const first = [anchor, firstEvent && dayOf(firstEvent.date), book.evidence.get(account.id)?.[0]?.day].filter(Boolean).sort()[0];
     // A first deposit can open an empty account during a combined review. A
     // non-zero opening balance cannot appear as an overnight investment gain.
     // Records of the opening day carry no reliable order, so the day counts as funded when
@@ -146,6 +147,8 @@ function valuation(context, date, detail = false) {
       if (detail)
         rows.push({
           account: account.name,
+          assetId: r.assetId,
+          key: r.identityKey || r.assetId,
           symbol: r.ticker,
           quantity: r.rawQuantity,
           currency: r.localCurrency,
@@ -191,6 +194,7 @@ function valuation(context, date, detail = false) {
 }
 
 function dayFlows(context, date) {
+  if (context.book.quantityGaps.some((r) => r.day === date && context.ids.includes(r.account))) return null;
   let deposit = D(0),
     withdrawal = D(0);
   for (const e of context.byDay.get(date) || []) {
@@ -303,10 +307,152 @@ function eventRows(context, from, to) {
         amount: e.amount,
         price: e.unitPrice,
         fee: e.fee,
+        reference: e.sourceRecordId || e.comment || e.id,
         comment: e.comment,
       });
   }
   return rows.reverse();
+}
+
+// A security earns its change in marked value plus its net cash postings, less
+// securities brought in from outside. Start-day trades are in the opening close.
+function periodContributions(context, from, to, gain) {
+  const groups = new Map(),
+    keys = new Map(),
+    cash = new Map();
+  function entry(key, label, kind) {
+    if (!groups.has(key))
+      groups.set(key, {
+        key,
+        label,
+        kind,
+        value: D(0),
+        units: D(0),
+        ending: D(0),
+        known: true,
+        sold: false,
+        events: [],
+      });
+    return groups.get(key);
+  }
+  function add(row, value) {
+    if (value == null) row.known = false;
+    else row.value = row.value.plus(value);
+  }
+  function currencyBalance(code) {
+    if (!cash.has(code)) cash.set(code, { units: D(0), value: D(0), known: true });
+    return cash.get(code);
+  }
+  for (const [date, sign] of [
+    [from, -1],
+    [to, 1],
+  ]) {
+    for (const h of valuation(context, date, true).rows) {
+      const key = JSON.stringify([h.key, h.currency]);
+      const row = h.cash ? currencyBalance(h.currency) : entry(key, h.symbol, "security");
+      if (!h.cash) {
+        keys.set(h.assetId, key);
+        row.listing = [context.book.assets.get(h.assetId)?.mic, h.currency].filter(Boolean).join(" · ");
+        if (sign === 1) row.ending = row.ending.plus(h.quantity);
+      }
+      row.units = row.units.plus(D(h.quantity).mul(sign));
+      add(row, h.value == null ? null : D(h.value).mul(sign));
+    }
+  }
+  const fresh = (q, asset, date) =>
+    q.day >= closingDay(date, asset === "FX" ? "FX" : marketFor(context.book.assets.get(asset)));
+  for (const [date, events] of context.byDay) {
+    if (date <= from || date > to) continue;
+    for (const e of events) {
+      const p = posting(e);
+      if (!p) continue;
+      const fx = rate(context.book, e.currency, date, e.accountId);
+      const convert = (v) => (v.isZero() ? D(0) : fx && fresh(fx, "FX", date) ? v.mul(fx.price) : null);
+      const fees = D(e.fee ?? 0)
+        .abs()
+        .plus(D(e.tax ?? 0).abs());
+      const transfer = e.activityType.startsWith("TRANSFER");
+      const internal = transfer && context.groups.has(e.group) && !e.metadata?.fx;
+      const external = isExternalFlow(e, context.groups);
+      const receipt = {
+        id: e.id,
+        date,
+        account: e.accountId,
+        type: e.activityType,
+        reference: e.sourceRecordId || e.comment || e.id,
+        currency: e.currency,
+        quantity: e.quantity,
+        price: e.unitPrice,
+        amount: e.amount,
+        fee: e.fee,
+        tax: e.tax,
+      };
+      // A paired cash transfer stays in the combined portfolio, including while in transit.
+      const cashPosting = internal && !p.units ? fees.neg() : p.cash;
+      const balance = currencyBalance(e.currency);
+      balance.units = balance.units.minus(cashPosting);
+      const cashAud = convert(cashPosting);
+      add(balance, cashAud == null ? null : cashAud.neg());
+      if (e.assetId) {
+        const a = context.book.assets.get(e.assetId);
+        const key =
+          keys.get(e.assetId) ||
+          JSON.stringify([
+            (a && canonicalIdentity(a).key) || "asset:" + e.assetId,
+            a?.currency || e.currency,
+          ]);
+        const row = entry(key, a?.symbol || e.assetSymbol, "security");
+        row.listing = [a?.mic, a?.currency || e.currency].filter(Boolean).join(" · ");
+        row.events.push(receipt);
+        if (!internal && p.units) row.units = row.units.minus(p.units);
+        if (e.activityType === "SELL") row.sold = true;
+        add(row, cashAud);
+        if (external && p.units) {
+          const flow = flowValue(context.book, e, (q, id) => fresh(q, id, date));
+          add(row, flow == null ? null : flow.neg());
+        }
+      } else {
+        const amount = external || internal ? fees.neg() : cashPosting;
+        if (amount.isZero()) continue;
+        const label = e.metadata?.fx
+          ? "换汇差额及费用"
+          : external || internal
+            ? "划转费用"
+            : e.activityType === "INTEREST"
+              ? "现金利息"
+              : "待归属";
+        const row = entry(label, label, "account");
+        add(row, convert(amount));
+        row.events.push(receipt);
+      }
+    }
+  }
+  for (const [code, balance] of cash) {
+    if (code === "AUD" || !balance.known || !balance.units.abs().lt("0.000001") || balance.value.isZero())
+      continue;
+    add(entry("fx:" + code, code + " 现金汇率变动", "account"), balance.value);
+  }
+  const rows = [...groups.values()]
+    .map((r) => ({
+      key: r.key,
+      label: r.label,
+      listing: r.listing,
+      kind: r.kind,
+      events: r.events,
+      gain: r.known && r.units.abs().lt("0.000001") ? r.value.toNumber() : null,
+      closed: r.sold && r.ending.isZero(),
+    }))
+    .sort((a, b) => (b.gain ?? -Infinity) - (a.gain ?? -Infinity));
+  const remainder = rows.reduce((left, row) => left.minus(row.gain ?? 0), D(gain));
+  if (remainder.abs().gte("0.005"))
+    rows.push({
+      key: "unreconciled",
+      label: "尚待核对的估值或流水差额",
+      kind: "account",
+      events: [],
+      gain: remainder.toNumber(),
+    });
+  return { from, to, rows };
 }
 export function reviewDay(db, { ids, date }) {
   date = day(date);
@@ -437,14 +583,17 @@ export function portfolioReview(db, args) {
       asOf: i < 0 ? null : points[i].date,
     };
   }
+  // A missing intermediate close can prevent a time-weighted return while both
+  // endpoints and every external flow still support an absolute AUD result.
+  const endValue = points.findLastIndex((p) => p.value != null);
   let net = D(0),
-    netKnown = own >= 0;
-  for (const p of points.slice(first + 1, own + 1)) {
+    netKnown = endValue > first;
+  for (const p of points.slice(first + 1, endValue + 1)) {
     if (p.flow == null) netKnown = false;
     else net = net.plus(p.flow);
   }
   const opened = points[first]?.value,
-    closed = own < 0 ? null : points[own].value;
+    closed = endValue < 0 ? null : points[endValue].value;
   const money =
     netKnown && opened != null && closed != null
       ? {
@@ -457,6 +606,7 @@ export function portfolioReview(db, args) {
   const fetchable = /收盘价|汇率|点位/;
   return {
     ids: context.ids,
+    accountNames: Object.fromEntries(context.accounts.map(({account}) => [account.id, account.name])),
     from,
     to,
     requested,
@@ -467,6 +617,7 @@ export function portfolioReview(db, args) {
     points,
     metrics,
     money,
+    contributions: money ? periodContributions(context, origin, points[endValue].date, money.gain) : null,
     // Days after the latest valued close still wait for a quote, an FX rate or an index level.
     needsData: outages.some((o) => o.to >= origin && fetchable.test(o.reason)),
     outages,

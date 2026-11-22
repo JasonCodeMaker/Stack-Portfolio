@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpRight, ChevronRight, Search, TriangleAlert, WalletCards } from "lucide-react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowDown, ArrowUp, ArrowUpRight, ChevronRight, Search, WalletCards } from "lucide-react";
 import {
   api,
   aud,
@@ -9,7 +9,6 @@ import {
   kind,
   types,
   signedAud,
-  signedPct,
   tone,
   Delta,
   Card,
@@ -18,6 +17,7 @@ import {
   Table,
   Empty,
 } from "./common";
+import { HoldingEditor } from "./HoldingEditor";
 import { TimeChart, seriesColors } from "./Chart";
 
 export const periods = [
@@ -64,8 +64,8 @@ function Trend({ d }) {
 // What one account holds, largest first, with the cash it keeps.
 function AccountAssets({ account, total, heading = true }) {
   const rows = [...account.rows].sort(byValue);
-  const listed = rows.reduce((sum, r) => sum + (r.audValue || 0), 0);
-  const difference = account.total == null ? 0 : account.total - listed;
+  const securities = rows.filter((r) => r.type !== "cash");
+  const cash = rows.filter((r) => r.type === "cash");
   return (
     <section className="asset-group">
       {heading && (
@@ -75,36 +75,42 @@ function AccountAssets({ account, total, heading = true }) {
           <strong>{aud(account.total, 2)}</strong>
         </header>
       )}
-      {rows.length ? (
-        <Table head={["资产", ["数量", "num"], ["市值（AUD）", "num"], ["浮动盈亏", "num"]]}>
-          {rows.map((r) => (
+      {securities.length > 0 && (
+        <Table head={["证券", ["股数／份额", "num"], ["市值（AUD）", "num"], ["账面盈亏（AUD）", "num"]]}>
+          {securities.map((r) => (
             <tr key={r.id}>
               <td>
-                <b>{r.type === "cash" ? r.localCurrency + " 现金" : r.ticker}</b>
-                {r.type !== "cash" && <small>{r.name}</small>}
+                <b>{r.ticker}</b>
+                <small>{r.name}</small>
               </td>
-              <td className="num">{r.type === "cash" ? "—" : num(r.quantity)}</td>
+              <td className="num">{num(r.rawQuantity)}</td>
               <td className="num">{aud(r.audValue, 2)}</td>
               <td className="num">
-                {r.type === "cash" ? "—" : <Delta amount={r.gainAud} rate={r.gainRate} digits={0} />}
+                <Delta amount={r.gainAud} rate={r.gainRate} />
               </td>
             </tr>
           ))}
-          {Math.abs(difference) >= 0.5 && (
-            <tr className="adjustment">
-              <td>
-                券商净值调整
-                <small>券商账户净值与按最新报价逐只估值的差额</small>
-              </td>
-              <td className="num">—</td>
-              <td className="num">{signedAud(difference)}</td>
-              <td className="num">—</td>
-            </tr>
-          )}
         </Table>
-      ) : (
-        <p className="muted">这个账户在估值日没有持仓或现金。</p>
       )}
+      {cash.length > 0 && (
+        <div className="cash-balances">
+          <b>现金余额</b>
+          {cash.map((r) => (
+            <span key={r.id}>
+              {r.localCurrency} 现金 {fmt(r.quantity, 2)}
+              {r.localCurrency !== "AUD" && "（" + aud(r.audValue, 2) + "）"}
+            </span>
+          ))}
+        </div>
+      )}
+      {account.valuationSource && (
+        <dl className="valuation-breakdown">
+          <div><dt>券商净值 · {account.valuationSource}</dt><dd>{aud(account.total, 2)}</dd></div>
+          <div><dt>逐项估值（证券＋现金）</dt><dd>{aud(account.itemizedTotal, 2)}</dd></div>
+          <div><dt>待核差额（净值减逐项估值）</dt><dd>{account.valuationDifference == null ? "待补报价或汇率" : signedAud(account.valuationDifference)}</dd></div>
+        </dl>
+      )}
+      {!rows.length && <p className="muted">这个账户在估值日没有持仓或现金。</p>}
     </section>
   );
 }
@@ -166,8 +172,9 @@ const lifetimeColumns = [
   { label: "收益率", cell: (r) => <Delta rate={r.lifetime?.rate} /> },
 ];
 
-export function Overview({ d, onPage }) {
+export function Overview({ d, run, onPage, onPeriod }) {
   const [detail, setDetail] = useState(null);
+  const [repair, setRepair] = useState(null);
   const period = d.result.period,
     life = d.result.lifetime,
     span = periodName(d.period);
@@ -176,125 +183,179 @@ export function Overview({ d, onPage }) {
     setDetail(null);
     onPage(page, init);
   };
-  // Cost and unrealised result of a security held in several accounts are combined.
-  const gains = new Map();
-  for (const r of d.rows) {
-    if (r.type === "cash") continue;
-    const g = gains.get(r.identityKey) || { cost: 0, gain: 0, known: true };
-    if (r.costAud == null || r.gainAud == null) g.known = false;
-    else {
-      g.cost += r.costAud;
-      g.gain += r.gainAud;
-    }
-    gains.set(r.identityKey, g);
+  const { securities, count, gain } = d.holdings;
+  const brokerValued = d.byAccount.some(a => a.valuationSource);
+  const pending = securities.filter((g) => g.gain == null);
+  const selectedGroup = securities.find((g) => g.key === detail?.key);
+  const openPeriod = () => go("performance", { ids: d.selected, from: d.start, to: d.date });
+  const groupRows = (group) => d.rows.filter((r) => group.rowIds.includes(r.id));
+  const need = (r) =>
+    r.price == null ? ["price", "补报价"] : r.fx == null ? ["fx", "补汇率"] : ["cost", "补成本"];
+  function repairGain(group) {
+    const missing = groupRows(group).filter((row) => row.gainAud == null);
+    if (missing.length === 1) {
+      const [row] = missing;
+      setRepair({row, action:need(row)[0]});
+    } else setDetail({kind:"security", key:group.key});
   }
-  const cards = [
-    {
-      id: "total",
-      label: "总资产",
-      value: d.total == null ? aud(d.known, 2) : aud(d.total, 2),
-      caption:
-        d.total == null
-          ? "已估值小计，另有资产待补报价"
-          : "证券 " + aud(d.securities) + " · 现金 " + aud(d.cash),
-    },
-    {
-      id: "invested",
-      label: "累计净投入",
-      value: aud(life?.invested, 2),
-      caption: life ? "自 " + life.since + " 起转入减转出" : "资金流水待核对",
-    },
-    {
-      id: "lifetime",
-      label: "累计盈亏",
-      value: signedAud(life?.gain),
-      direction: tone(life?.gain),
-      caption: life ? "累计收益率 " + signedPct(life.rate) : "现值 − 累计净投入",
-    },
-    {
-      id: "period",
-      label: span + "盈亏",
-      value: signedAud(period?.gain),
-      direction: tone(period?.gain),
-      caption: period
-        ? "收益率 " + signedPct(period.rate) + " · 净入金 " + aud(period.flows)
-        : "待核对估值与资金流水",
-    },
-  ];
   return (
     <>
-      <div className="metrics">
-        {cards.map((c, i) => (
-          <button
-            key={c.id}
-            className={"metric " + (i === 0 ? "hero-metric" : "")}
-            aria-label={c.label + " " + c.value + "，查看明细"}
-            onClick={() => setDetail({ kind: c.id })}
-          >
-            <span>
-              {c.label}
-              <ChevronRight size={15} />
-            </span>
-            <strong className={c.direction || ""}>{c.value}</strong>
-            <small>{c.caption}</small>
-          </button>
-        ))}
-      </div>
-      {d.issues.length > 0 && (
-        <div className="notice">
-          <TriangleAlert size={18} />
-          <div>
-            <b>有 {d.issues.length} 项待核对</b>
-            <small>
-              {d.issues[0].account} · {d.issues[0].reason}
+      <section className="overview-totals" aria-label="当前资产与账面盈亏">
+        <button
+          className="metric hero-metric"
+          aria-label={"总资产 " + aud(d.total ?? d.known, 2) + "，查看明细"}
+          aria-describedby={brokerValued ? "overview-valuation overview-difference" : "overview-valuation"}
+          onClick={() => setDetail({ kind: "total" })}
+        >
+          <span>
+            {d.total == null ? "总资产 · 已估值小计" : "总资产"}
+            <ChevronRight size={16} />
+          </span>
+          <strong>{aud(d.total ?? d.known, 2)}</strong>
+          <small id="overview-valuation">
+            证券市值 {aud(d.securities, 2)}　·　现金 {aud(d.itemizedCash, 2)}
+          </small>
+          {brokerValued && (
+            <small className="valuation-note" id="overview-difference">
+              {d.byAccount.every(a => a.valuationSource) ? "按券商净值" : "含券商净值"} · 逐项估值 {aud(d.itemizedTotal, 2)}
+              {d.valuationDifference == null ? " · 差额待补资料"
+                : Math.abs(d.valuationDifference) >= 0.005 ? " · 待核差额 " + signedAud(d.valuationDifference)
+                : d.byAccount.some(a => Math.abs(a.valuationDifference) >= 0.005) ? " · 分账户差额待核对" : " · 金额吻合"}
             </small>
-          </div>
-          <button onClick={() => onPage("imports", { tab: "check", account: d.issues[0].id })}>
-            查看差异 <ChevronRight size={15} />
+          )}
+        </button>
+        <button className="metric" onClick={() => setDetail({ kind: "gain" })}>
+          <span>
+            {pending.length ? "已知持仓账面盈亏" : "持仓账面盈亏"}
+            <ChevronRight size={16} />
+          </span>
+          <strong className={tone(gain)}>{signedAud(gain)}</strong>
+          <small>
+            {pending.length
+              ? "已计入 " +
+                count +
+                "/" +
+                securities.length +
+                " 只 · " +
+                pending
+                  .slice(0, 2)
+                  .map((r) => r.ticker)
+                  .join("、") +
+                " 待补资料"
+              : "截至 " + d.date + " · " + count + " 只证券"}
+          </small>
+        </button>
+      </section>
+      <Card
+        title="全部证券持仓"
+        action={
+          <button className="text-btn" onClick={() => go("holdings")}>
+            按账户查看 <ArrowUpRight size={15} />
           </button>
-        </div>
+        }
+      >
+        {securities.length ? (
+          <Table
+            head={[
+              "证券",
+              ["股数／份额", "num"],
+              ["市值（AUD）", "num"],
+              ["账面盈亏（AUD）", "num"],
+              ["组合占比", "num"],
+            ]}
+          >
+            {securities.map((g) => (
+              <tr key={g.key}>
+                <td>
+                  <button className="ticker" onClick={() => setDetail({ kind: "security", key: g.key })}>
+                    {g.ticker}
+                  </button>
+                  <small>{[g.name, g.mic, g.localCurrency].filter(Boolean).join(" · ")}</small>
+                </td>
+                <td className="num">{num(g.quantity)}</td>
+                <td className="num">{aud(g.value, 2)}</td>
+                <td className="num">
+                  {g.gain != null ? (
+                    <Delta amount={g.gain} />
+                  ) : (
+                    <button className="text-btn" onClick={() => repairGain(g)}>
+                      {g.value == null ? "补估值资料" : "补成本"}
+                    </button>
+                  )}
+                </td>
+                <td className="num">{pct(d.total > 0 && g.value != null ? g.value / d.total : null)}</td>
+              </tr>
+            ))}
+          </Table>
+        ) : (
+          <Empty>所选账户在估值日没有证券持仓。</Empty>
+        )}
+      </Card>
+      {d.issues.length > 0 && (
+        <details className="card data-issues">
+          <summary>有 {d.issues.length} 项数据待核对</summary>
+          {d.issues.map((issue, i) => {
+            const row = issue.rowId && d.rows.find((r) => r.id === issue.rowId);
+            return (
+              <div key={i}>
+                <span>
+                  {issue.account} · {issue.reason}
+                </span>
+                {row ? (
+                  <button className="text-btn" onClick={() => setRepair({ row, action: issue.action })}>
+                    {issue.action === "fx" ? "补汇率" : "补报价"}
+                  </button>
+                ) : (
+                  <button
+                    className="text-btn"
+                    onClick={() => go("imports", { tab: "check", account: issue.id })}
+                  >
+                    和券商结单核对
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </details>
       )}
       <div className="dashboard-grid">
-        <Card
-          title={"资产走势 · " + span}
-          action={
-            <span className="muted">
-              {d.fromOpening ? "自首笔记录 " : ""}
-              {d.start} 至 {d.date} · AUD
-            </span>
-          }
-        >
+        <Card title="历史表现" action={<Tabs items={periods} value={d.period} onChange={onPeriod} />}>
+          <div className="history-results">
+            <button onClick={openPeriod} aria-label={span + "盈亏 " + signedAud(period?.gain) + "，进入复盘"}>
+              <span>
+                {span}盈亏 <ArrowUpRight size={14} />
+              </span>
+              <Delta amount={period?.gain} />
+            </button>
+            <button onClick={() => setDetail({ kind: "lifetime" })}>
+              <span>
+                自开始记录累计盈亏 <ChevronRight size={14} />
+              </span>
+              <Delta amount={life?.gain} />
+            </button>
+          </div>
           <Trend d={d} />
+          <div className="actions">
+            <span className="muted">
+              {d.start} 至 {d.date}
+            </span>
+            <button className="text-btn" onClick={() => setDetail({ kind: "period" })}>
+              查看期间计算
+            </button>
+            <button className="text-btn" onClick={() => setDetail({ kind: "invested" })}>
+              累计净投入 {aud(life?.invested)}
+            </button>
+          </div>
         </Card>
-        <Card title="账户">
+        <Card title="账户余额">
           <div className="account-list">
-            {d.byAccount.map((a, i) => (
+            {d.byAccount.map((a) => (
               <button key={a.id} onClick={() => setDetail({ kind: "account", account: a.id })}>
-                <span className={"account-emblem c" + (i % 3)}>
-                  <WalletCards size={18} />
-                </span>
+                <WalletCards size={18} />
                 <div>
-                  <header>
-                    <b>{a.name}</b>
-                    <strong>{aud(a.total, 2)}</strong>
-                  </header>
-                  <div className="bar" aria-hidden="true">
-                    <i style={{ width: (d.total && a.total ? (100 * a.total) / d.total : 0) + "%" }} />
-                  </div>
-                  <dl>
-                    <dt>占总资产</dt>
-                    <dd>{a.total == null ? "待核对" : pct(d.total ? a.total / d.total : null)}</dd>
-                    <dt>累计净投入</dt>
-                    <dd>{aud(a.result.lifetime?.invested)}</dd>
-                    <dt>累计盈亏</dt>
-                    <dd>
-                      <Delta amount={a.result.lifetime?.gain} rate={a.result.lifetime?.rate} digits={0} />
-                    </dd>
-                    <dt>{span}盈亏</dt>
-                    <dd>
-                      <Delta amount={a.result.period?.gain} rate={a.result.period?.rate} digits={0} />
-                    </dd>
-                  </dl>
+                  <b>{a.name}</b>
+                  <strong>{aud(a.total, 2)}</strong>
+                  <small>账户记录截至 {a.balanceDate || "暂无记录"}</small>
                 </div>
                 <ChevronRight size={16} />
               </button>
@@ -302,38 +363,37 @@ export function Overview({ d, onPage }) {
           </div>
         </Card>
       </div>
-      <Card
-        title="前五大证券持仓"
-        action={
-          <button className="text-btn" onClick={() => onPage("holdings")}>
-            全部持仓 <ArrowUpRight size={15} />
-          </button>
-        }
-      >
-        <Table head={["证券", "类型", ["市值（AUD）", "num"], ["资产占比", "num"], ["浮动盈亏", "num"]]}>
-          {d.portfolio.instrumentAllocation
-            .filter((r) => r.type !== "cash")
-            .slice(0, 5)
-            .map((r) => {
-              const g = gains.get(r.key);
-              return (
-                <tr key={r.key}>
-                  <td>
-                    <button className="ticker" onClick={() => onPage("holdings", { search: r.label })}>
-                      {r.label}
-                    </button>
-                  </td>
-                  <td>{kind[r.type]}</td>
-                  <td className="num">{aud(r.valueAud, 2)}</td>
-                  <td className="num">{pct(r.weight)}</td>
-                  <td className="num">
-                    {g?.known && g.cost > 0 ? <Delta amount={g.gain} rate={g.gain / g.cost} digits={0} /> : "—"}
-                  </td>
-                </tr>
-              );
-            })}
-        </Table>
-      </Card>
+      {(detail?.kind === "gain" || selectedGroup) && (
+        <Modal
+          wide
+          title={selectedGroup ? selectedGroup.ticker + " · 各账户持仓" : "持仓账面盈亏明细"}
+          close={() => setDetail(null)}
+        >
+          <p className="muted">每只证券的原币市值减去剩余股份的含费买入成本，再按估值汇率折成澳元。</p>
+          <Table
+            head={["证券／账户", ["股数／份额", "num"], ["市值（AUD）", "num"], ["账面盈亏（AUD）", "num"]]}
+          >
+            {(selectedGroup ? groupRows(selectedGroup) : d.rows.filter((r) => r.type !== "cash")).map((r) => (
+              <tr key={r.id}>
+                <td>
+                  {r.ticker}
+                  <small>{r.accountName}</small>
+                </td>
+                <td className="num">{num(r.quantity)}</td>
+                <td className="num">{aud(r.audValue, 2)}</td>
+                <td className="num">
+                  {r.gainAud != null ? (
+                    <Delta amount={r.gainAud} />
+                  ) : (
+                    <button onClick={() => setRepair({ row: r, action: need(r)[0] })}>{need(r)[1]}</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        </Modal>
+      )}
+      {repair && <HoldingEditor {...repair} d={d} run={run} close={() => setRepair(null)} />}
       {detail?.kind === "total" && (
         <Modal wide title={"总资产 · " + aud(d.total ?? d.known, 2)} close={() => setDetail(null)}>
           <p className="muted">估值日 {d.date}，按账户列出持仓和现金。</p>
@@ -377,7 +437,9 @@ export function Overview({ d, onPage }) {
             <button className="primary" onClick={() => go("holdings", { account: account.id })}>
               查看该账户持仓
             </button>
-            <button onClick={() => go("imports", { tab: "history", account: account.id })}>查看资金与交易流水</button>
+            <button onClick={() => go("imports", { tab: "history", account: account.id })}>
+              查看资金与交易流水
+            </button>
           </div>
         </Modal>
       )}
@@ -407,7 +469,7 @@ export function Overview({ d, onPage }) {
           </p>
           <ResultTable d={d} columns={lifetimeColumns} />
           <div className="actions">
-            <button className="primary" onClick={() => go("performance")}>
+            <button className="primary" onClick={openPeriod}>
               与指数比较
             </button>
             <button onClick={() => go("holdings")}>查看各持仓浮动盈亏</button>
@@ -417,8 +479,10 @@ export function Overview({ d, onPage }) {
       {detail?.kind === "period" && (
         <Modal wide title={span + "盈亏 · " + signedAud(period?.gain)} close={() => setDetail(null)}>
           <p className="muted">
-            {d.start} 至 {d.date}。盈亏 = 期末资产 − 期初资产 − 期间净入金；收益率 = 盈亏 ÷（期初资产 + 期间转入的资金）。
-            {d.fromOpening && "所选账户自 " + d.start + " 起才有记录，此前资产为零，此后转入的资金都计入期间净入金。"}
+            {d.start} 至 {d.date}。盈亏 = 期末资产 − 期初资产 − 期间净入金；收益率 = 盈亏 ÷（期初资产 +
+            期间转入的资金）。
+            {d.fromOpening &&
+              "所选账户自 " + d.start + " 起才有记录，此前资产为零，此后转入的资金都计入期间净入金。"}
           </p>
           <ResultTable
             d={d}
@@ -453,7 +517,7 @@ const sorts = {
 function holdingTotal(rows, field) {
   return rows.every((r) => r[field] != null) ? rows.reduce((sum, r) => sum + r[field], 0) : null;
 }
-export function Holdings({ d, initial = {}, onPage }) {
+export function Holdings({ d, initial = {}, onPage, run }) {
   const [q, setQ] = useState(initial.search || ""),
     [filter, setFilter] = useState("all"),
     [account, setAccount] = useState(initial.account || ""),
@@ -461,6 +525,17 @@ export function Holdings({ d, initial = {}, onPage }) {
     [selectedId, select] = useState(null),
     [events, setEvents] = useState(null),
     [error, setError] = useState("");
+  const [repair, setRepair] = useState(null);
+  const returnTo = useRef(null);
+  useLayoutEffect(() => {
+    if (repair || !returnTo.current) return;
+    const id = returnTo.current;
+    returnTo.current = null;
+    const row = document.querySelector('[data-holding-row="' + CSS.escape(id) + '"] .ticker');
+    const target = row || document.querySelector('[aria-label="搜索持仓"]');
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [repair]);
   const row = d.rows.find((r) => r.id === selectedId);
   useEffect(() => {
     if (!row) return;
@@ -494,14 +569,17 @@ export function Holdings({ d, initial = {}, onPage }) {
       return (typeof x === "string" ? x.localeCompare(y) : x - y) * (sort.down ? -1 : 1);
     });
   const securities = scoped.filter((r) => r.type !== "cash");
-  const cash = scoped.filter((r) => r.type === "cash");
+  const cash = account ? d.byAccount.find((a) => a.id === account)?.itemizedCash : d.itemizedCash;
   const cost = securities.length ? holdingTotal(securities, "costAud") : null;
-  const gain = securities.length ? holdingTotal(securities, "gainAud") : null;
+  const known = securities.filter((r) => r.gainAud != null);
+  const gain = known.length ? holdingTotal(known, "gainAud") : null;
+  const knownCost = holdingTotal(known, "costAud");
   const sortable = (key, label) => (
     <button
       type="button"
       className="sort"
       aria-label={"按" + label + "排序"}
+      title={sort.key === key ? (sort.down ? "当前降序" : "当前升序") : "按此列排序"}
       onClick={() => setSort({ key, down: sort.key === key ? !sort.down : key !== "name" })}
     >
       {label}
@@ -517,19 +595,25 @@ export function Holdings({ d, initial = {}, onPage }) {
         </div>
         <div>
           <dt>现金</dt>
-          <dd>{aud(holdingTotal(cash, "audValue"), 2)}</dd>
+          <dd>{aud(cash, 2)}</dd>
         </div>
         <div>
           <dt>持仓成本</dt>
           <dd>{aud(cost, 2)}</dd>
         </div>
         <div>
-          <dt>浮动盈亏</dt>
-          <dd><Delta amount={gain} rate={gain != null && cost > 0 ? gain / cost : null} /></dd>
+          <dt>
+            {known.length === securities.length
+              ? "持仓账面盈亏"
+              : "已知账面盈亏 · " + known.length + "/" + securities.length + " 笔持仓"}
+          </dt>
+          <dd>
+            <Delta amount={gain} rate={gain != null && knownCost > 0 ? gain / knownCost : null} />
+          </dd>
         </div>
       </dl>
       <Card
-        title="持仓与现金"
+        title="按账户查看持仓"
         action={
           <button className="text-btn" onClick={() => onPage("allocation")}>
             配置分析 <ArrowUpRight size={15} />
@@ -570,63 +654,99 @@ export function Holdings({ d, initial = {}, onPage }) {
           </div>
         </div>
         {!rows.length ? (
-          <Empty>没有符合条件的持仓。</Empty>
+          <Empty>没有符合条件的持仓或现金。</Empty>
         ) : (
-          <Table
-            head={[
-              sortable("name", "证券 / 现金"),
-              "账户",
-              ["数量", "num"],
-              ["现价", "num"],
-              ["成本均价", "num"],
-              [sortable("value", "市值（AUD）"), "num"],
-              ["占比", "num"],
-              [sortable("gain", "浮动盈亏"), "num"],
-              [sortable("rate", "盈亏率"), "num"],
-              "报价日期",
-            ]}
-          >
-            {rows.map((r) => (
-              <tr key={r.id} className="clickable" onClick={() => select(r.id)}>
-                <td>
-                  <button className="ticker" onClick={() => select(r.id)}>
-                    {r.ticker}
-                  </button>
-                  <small>{r.type === "cash" ? "现金" : r.name}</small>
-                </td>
-                <td>{r.accountName}</td>
-                <td className="num">{r.type === "cash" ? fmt(r.quantity, 2) : num(r.quantity)}</td>
-                <td className="num">
-                  {r.type === "cash" ? "—" : r.price == null ? "待报价" : r.localCurrency + " " + fmt(r.price, 2)}
-                  {r.type !== "cash" && r.quoteSource && <small>{r.quoteSource}</small>}
-                </td>
-                <td className="num">
-                  {r.averageCost == null ? "—" : r.localCurrency + " " + fmt(r.averageCost, 2)}
-                </td>
-                <td className="num">
-                  {aud(r.audValue, 2)}
-                  {r.localCurrency !== "AUD" && (
-                    <small>
-                      {r.localCurrency} {fmt(r.nativeValue, 2)}
-                    </small>
+          d.byAccount
+            .filter((a) => !account || a.id === account)
+            .map((a) => {
+              const holdings = rows.filter((r) => r.accountId === a.id && r.type !== "cash");
+              const balances = rows.filter((r) => r.accountId === a.id && r.type === "cash");
+              if (!holdings.length && !balances.length) return null;
+              return (
+                <section className="holding-account" key={a.id}>
+                  <header>
+                    <h3>{a.name}</h3>
+                    <small>账户记录截至 {a.balanceDate || "暂无记录"}</small>
+                  </header>
+                  {holdings.length > 0 && (
+                    <Table
+                      head={[
+                        sortable("name", "证券"),
+                        ["股数／份额", "num"],
+                        [sortable("value", "市值（AUD）"), "num"],
+                        ["总成本（AUD）", "num"],
+                        [sortable("gain", "账面盈亏（AUD）"), "num"],
+                        [sortable("rate", "盈亏率"), "num"],
+                        "",
+                      ]}
+                    >
+                      {holdings.map((r) => (
+                        <tr key={r.id} data-holding-row={r.id}>
+                          <td>
+                            <button className="ticker" onClick={() => select(r.id)}>
+                              {r.ticker}
+                            </button>
+                            <small>{[r.name, r.mic, r.localCurrency].filter(Boolean).join(" · ")}</small>
+                            {r.type === "unknown" && (
+                              <button
+                                className="text-btn"
+                                onClick={() => setRepair({ row: r, action: "type" })}
+                              >
+                                确认类别
+                              </button>
+                            )}
+                            {r.evidence && Number(r.evidence.difference) !== 0 && (
+                              <button className="text-btn" onClick={() => select(r.id)}>
+                                股数相差 {num(Math.abs(r.evidence.difference))} 股
+                              </button>
+                            )}
+                          </td>
+                          <td className="num">{num(r.quantity)}</td>
+                          <td className="num">{aud(r.audValue, 2)}</td>
+                          <td className="num">
+                            {r.costAud != null ? aud(r.costAud, 2) : r.costLocal != null ? "待补汇率" : (
+                              <button
+                                className="text-btn"
+                                onClick={() => setRepair({ row: r, action: "cost" })}
+                              >
+                                补成本
+                              </button>
+                            )}
+                          </td>
+                          <td className="num">
+                            <Delta amount={r.gainAud} />
+                          </td>
+                          <td className="num">
+                            <Delta rate={r.gainRate} />
+                          </td>
+                          <td>
+                            <button
+                              className="text-btn"
+                              onClick={() => setRepair({ row: r, action: r.price && !r.fx ? "fx" : "price" })}
+                            >
+                              {r.price && !r.fx ? "补汇率" : "补报价"}
+                            </button>
+                            {r.stale && <small>报价截至 {r.priceUpdatedAt}</small>}
+                          </td>
+                        </tr>
+                      ))}
+                    </Table>
                   )}
-                </td>
-                <td className="num">{pct(d.total && r.audValue != null ? r.audValue / d.total : null)}</td>
-                <td className="num">{r.type === "cash" ? "—" : <Delta amount={r.gainAud} />}</td>
-                <td className="num">{r.type === "cash" ? "—" : <Delta rate={r.gainRate} />}</td>
-                <td>
-                  {r.priceUpdatedAt || "待报价"}
-                  {r.quoteObservedAt && <small>券商快照读取日</small>}
-                  {r.stale && <small className="warning">报价较旧</small>}
-                  {r.issue && <small className="warning">{r.issue}</small>}
-                </td>
-              </tr>
-            ))}
-          </Table>
+                  {balances.length > 0 && (
+                    <div className="cash-balances">
+                      <b>{a.cash == null ? "现金余额 · 待核对" : "现金余额"}</b>
+                      {balances.map((r) => (
+                        <button key={r.id} className="text-btn" onClick={() => select(r.id)}>
+                          {r.localCurrency} {fmt(r.quantity, 2)}
+                          {r.localCurrency !== "AUD" && "（" + aud(r.audValue, 2) + "）"}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              );
+            })
         )}
-        <p className="muted table-note">
-          成本按买入均价计算并含手续费，澳元成本按每笔买入当日汇率折算，因此浮动盈亏包含汇率变动。
-        </p>
       </Card>
       {row && (
         <Modal
@@ -667,11 +787,18 @@ export function Holdings({ d, initial = {}, onPage }) {
                   {row.quoteSource && " · " + row.quoteSource}
                 </dd>
                 <dt>成本均价</dt>
-                <dd>{row.averageCost == null ? "流水不足以计算成本" : row.localCurrency + " " + fmt(row.averageCost, 4)}</dd>
+                <dd>
+                  {row.averageCost == null
+                    ? "流水不足以计算成本"
+                    : row.localCurrency + " " + fmt(row.averageCost, 4)}
+                </dd>
                 <dt>{row.localCurrency} 计价的市值 · 盈亏</dt>
                 <dd>
                   {row.localCurrency} {fmt(row.nativeValue, 2)}
-                  {row.gainLocal != null && " · " + (row.gainLocal > 0 ? "+" : row.gainLocal < 0 ? "−" : "") + fmt(Math.abs(row.gainLocal), 2)}
+                  {row.gainLocal != null &&
+                    " · " +
+                      (row.gainLocal > 0 ? "+" : row.gainLocal < 0 ? "−" : "") +
+                      fmt(Math.abs(row.gainLocal), 2)}
                 </dd>
               </>
             )}
@@ -679,13 +806,36 @@ export function Holdings({ d, initial = {}, onPage }) {
             <dd>{row.priceUpdatedAt || "—"}</dd>
             {row.localCurrency !== "AUD" && (
               <>
-                <dt>兑澳元汇率 · 日期</dt>
+                <dt>{row.type === "cash" ? "现金折算汇率" : "市值与成本折算汇率"}</dt>
                 <dd>
-                  {num(row.fx)} · {row.fxDate || "—"}
+                  {row.fx == null ? "待补汇率" : "1 " + row.localCurrency + " = " + num(row.fx) + " AUD"}
+                  {row.fxSource && " · " + row.fxSource} {row.fxDate}
                 </dd>
               </>
             )}
           </dl>
+          {row.type !== "cash" && (
+            <div className="actions">
+              <button onClick={() => setRepair({ row, action: "cost" })}>补成本</button>
+              <button onClick={() => setRepair({ row, action: "price" })}>补报价</button>
+              {row.localCurrency !== "AUD" && (
+                <button onClick={() => setRepair({ row, action: "fx" })}>补汇率</button>
+              )}
+              <button onClick={() => setRepair({ row, action: "type" })}>更正类别</button>
+            </div>
+          )}
+          {row.costReceipt && (
+            <p className="muted">
+              成本凭据 · {row.costReceipt.day} · {row.costReceipt.reference}
+              {row.costReceipt.historicalAud != null && " · 凭据中的历史澳元成本 " + aud(row.costReceipt.historicalAud, 2)}
+            </p>
+          )}
+          {row.evidence && (
+            <p className="notice">
+              {row.evidence.day} · {row.evidence.quantityReference} 记载 {num(row.evidence.quantity)}{" "}
+              股，账本当日可解释 {num(row.evidence.ledgerQuantity)} 股。
+            </p>
+          )}
           {row.issue && <p className="warning">{row.issue}</p>}
           <h3>关联流水</h3>
           {error ? (
@@ -697,10 +847,16 @@ export function Holdings({ d, initial = {}, onPage }) {
               {events.map((e) => (
                 <tr key={e.id}>
                   <td>{String(e.date).slice(0, 10)}</td>
-                  <td>{e.metadata?.fx ? "换汇" : types[e.activityType] || e.activityType}</td>
+                  <td>{e.metadata?.fx ? "换汇" : types[e.activityType] || e.activityType}
+                    {e.metadata?.ibkrExecution?.fxRateToBase && !e.metadata?.fx && <small>
+                      1 {e.metadata.ibkrExecution.currency} = {num(e.metadata.ibkrExecution.fxRateToBase)} {e.metadata.ibkrExecution.baseCurrency}（成交报表）
+                    </small>}
+                  </td>
                   <td className="num">
                     {e.currency}{" "}
-                    {Number(e.quantity) ? num(e.quantity) + (e.unitPrice != null ? " × " + num(e.unitPrice) : "") : num(e.amount)}
+                    {Number(e.quantity)
+                      ? num(e.quantity) + (e.unitPrice != null ? " × " + num(e.unitPrice) : "")
+                      : num(e.amount)}
                   </td>
                   <td className="num">{Number(e.fee) ? num(e.fee) : "—"}</td>
                 </tr>
@@ -710,6 +866,17 @@ export function Holdings({ d, initial = {}, onPage }) {
             <p className="muted">当前持仓来自期初余额或历史持仓快照，没有逐笔流水。</p>
           )}
         </Modal>
+      )}
+      {repair && (
+        <HoldingEditor
+          d={d}
+          run={run}
+          {...repair}
+          close={(saved) => {
+            if (saved && !selectedId) returnTo.current = repair.row.id;
+            setRepair(null);
+          }}
+        />
       )}
     </>
   );

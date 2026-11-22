@@ -21,7 +21,7 @@ import {
   X,
 } from "lucide-react";
 import { api, Card, Modal, Tabs, Field } from "./common";
-import { Overview, Holdings, periods } from "./Cockpit";
+import { Overview, Holdings } from "./Cockpit";
 import { Performance } from "./Performance";
 import { Imports } from "./Imports";
 import { Allocation } from "./Allocation";
@@ -372,17 +372,9 @@ function Application() {
       <main className="workspace">
         <div className="content">
           <header className="page-head">
-            <div>
-              <p className="crumb">
-                Stock Portfolio <span>/</span> 投资账本
-              </p>
-              <h1>{pages[page][0]}</h1>
-            </div>
+            <h1>{pages[page][0]}</h1>
             {["overview", "holdings", "allocation"].includes(page) && (
               <div className="header-tools">
-                {page === "overview" && (
-                  <Tabs items={periods} value={options.period} onChange={(period) => change({ period })} />
-                )}
                 <button onClick={() => setScope([...d.selected])}>
                   <Wallet size={15} />
                   {accountLabel}
@@ -401,10 +393,10 @@ function Application() {
               </div>
             )}
           </header>
-          {page === "performance" && <Performance d={d} mode={mode} run={run} reload={reload} />}
-          {page === "overview" && <Overview d={d} onPage={onPage} />}
+          {page === "performance" && <Performance initial={initial} d={d} mode={mode} run={run} reload={reload} />}
+          {page === "overview" && <Overview d={d} run={run} onPage={onPage} onPeriod={(period) => change({ period })} />}
           {page === "holdings" && (
-            <Holdings key={JSON.stringify(initial)} d={d} initial={initial} onPage={onPage} />
+            <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} onPage={onPage} />
           )}
           {page === "allocation" && (
             <Allocation key={JSON.stringify(initial)} d={d} run={run} initial={initial} />
@@ -426,6 +418,7 @@ function Application() {
               mode={mode}
               run={run}
               initial={initial}
+              onPage={onPage}
               workspace={workspace}
               openHome={showHome}
             />

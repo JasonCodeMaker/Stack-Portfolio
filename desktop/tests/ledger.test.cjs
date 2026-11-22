@@ -124,6 +124,92 @@ test("holdings, allocation and gains use the latest eligible quote, including in
   assert.equal(unquoted.costLocal, 1174);
 });
 
+test("IBKR enriches a booked fill without changing its cash, uses separate execution and valuation rates, and isolates accounts", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, savePrice, saveBrokerValue } = require("../out/ledger.cjs");
+  const ib = createAccount(db, "IBKR"), other = createAccount(db, "Other");
+  const friday = "2026-11-20", saturday = "2026-11-21";
+  const xml = (evidence) => `<FlexStatement fromDate="20261120" toDate="20261120" baseCurrency="AUD"><Trades>
+    <Trade assetCategory="STK" symbol="XYZ" listingExchange="NYSE" currency="USD" ibExecID="fill1" tradeID="1"
+      buySell="BUY" quantity="2" tradePrice="10" ibCommission="-1" tradeDate="20261120" reportDate="20261120"
+      ${evidence ? 'fxRateToBase="1.5" closePrice="12"' : ''}/>
+    <Trade assetCategory="CASH" symbol="AUD.USD" currency="USD" ibExecID="fx1" buySell="SELL"
+      quantity="-35" tradePrice="0.6" proceeds="21" ibCommission="0" ibCommissionCurrency="AUD" tradeDate="20261120"
+      reportDate="20261120" ${evidence ? 'fxRateToBase="1.5" notes="AFx"' : ''}/></Trades>
+    ${evidence ? '<ConversionRates><ConversionRate reportDate="20261120" fromCurrency="USD" toCurrency="AUD" rate="1.52"/></ConversionRates>' : ''}
+    </FlexStatement>`;
+  for (const account of [ib, other]) {
+    db.prepare("INSERT INTO sp_anchors VALUES(?,?,?,?)").run(account, "2026-11-19", "{}", '{"AUD":"0"}');
+    addManual(db, { account, date: friday, type: "DEPOSIT", currency: "AUD", amount: 40, reference: "funds" });
+  }
+  const run = (source, write = false) => batch(db, ib, "ibkr", detailedIbkr(source), "Flex", write);
+  await run(xml(false), true);
+  const event = () => JSON.parse(db.prepare("SELECT data FROM sp_events WHERE account=? AND json_extract(data,'$.activityType')='BUY'").get(ib).data);
+  const old = event();
+  // A local annotation and stable ID must survive enrichment of a previously imported row.
+  db.prepare("UPDATE sp_events SET data=? WHERE id=?").run(JSON.stringify({ ...old, comment: "local note", isUserModified: true }), old.id);
+  savePrice(db, old.assetId, friday, "13", "Yahoo Finance 日收盘", 12);
+  savePrice(db, "FX:USD/AUD", friday, "1.6", "YAHOO", 10);
+  savePrice(db, "FX:AUD/USD", saturday, "0.625", "Yahoo Finance", 6);
+  const view = (id, date = saturday) => dashboard(db, { ids: [id], date });
+  assert.equal((await view(ib)).holdings.securities[0].cost, 33.6);
+  const preview = await run(xml(true));
+  assert.equal(preview.added, 0);
+  assert.ok(preview.rows.some(r => r.status === "evidence"));
+  assert.equal((await view(ib)).holdings.securities[0].cost, 33.6);
+  await run(xml(true), true);
+  assert.deepEqual([event().id, event().comment, event().isUserModified], [old.id, "local note", true]);
+  assert.deepEqual([event().quantity, event().unitPrice, event().fee], [old.quantity, old.unitPrice, old.fee]);
+  const d = await view(ib), h = d.rows.find(r => r.assetId === old.assetId);
+  assert.deepEqual([h.rawQuantity, h.costAud, h.audValue, h.gainAud, d.cash], ["2", 31.92, 36.48, 4.56, 5]);
+  assert.deepEqual([Number(h.fx), h.fxDate, h.priceUpdatedAt, Number(h.price)], [1.52, friday, friday, 12]);
+  assert.match(h.fxSource, /IBKR/);
+  const exchange = db.prepare("SELECT data FROM sp_events WHERE account=? AND json_extract(data,'$.activityType')='TRANSFER_OUT'").get(ib);
+  assert.equal(JSON.parse(exchange.data).metadata.ibkrExecution.autoFx, true);
+  const again = await run(xml(true), true);
+  assert.deepEqual([again.imported, again.rows.length, again.priceEdits.length], [0, 0, 0]);
+  addManual(db, { account:other, date:friday, type:"BUY", symbol:"XYZ", mic:"XNYS", currency:"USD", quantity:1, price:10, reference:"buy" });
+  const second = (await view(other)).rows.find(r=>r.assetId === old.assetId);
+  assert.deepEqual([Number(second.fx), Number(second.price), second.costAud], [1.6, 13, 16]);
+  saveBrokerValue(db, ib, { date:saturday, base:"AUD", nav:"44", cashTotal:"5", cash:{AUD:"5",USD:"0"},
+    positions:[{symbol:"XYZ",mic:"XNYS",currency:"USD",quantity:"2"}], source:"券商账户页面（手工核对）" });
+  const reconciled = await view(ib);
+  assert.deepEqual([reconciled.total, reconciled.securities, reconciled.itemizedTotal, reconciled.valuationDifference], [44,36.48,41.48,2.52]);
+  // A narrower export in a different base must preserve the verified historical AUD receipt.
+  await run(xml(true).replace('baseCurrency="AUD"', 'baseCurrency="EUR"').replaceAll('fxRateToBase="1.5"', 'fxRateToBase="0.82"'), true);
+  assert.equal(event().metadata.ibkrExecution.fxRateToBase, "1.5");
+  assert.equal((await view(ib)).holdings.securities[0].cost, 31.92);
+  const conflict = xml(true).replace("</ConversionRates>", '<ConversionRate reportDate="20261120" fromCurrency="USD" toCurrency="AUD" rate="1.55"/></ConversionRates>');
+  assert.equal((await run(conflict)).priceWarnings.length, 1);
+  assert.equal(Number((await view(ib)).rows.find(r=>r.assetId===old.assetId).fx), 1.52);
+  await run(conflict, true);
+  assert.equal(Number((await view(ib)).rows.find(r=>r.assetId===old.assetId).fx), 1.5);
+  savePrice(db, "FX:USD/AUD", "2026-11-23", "1.62", "Yahoo Finance", 10);
+  assert.equal(Number((await view(ib, "2026-11-23")).rows.find(r=>r.assetId===old.assetId).fx),1.62);
+});
+
+test("upgrading a book scopes legacy IBKR quotes without sharing them with a second broker", (t) => {
+  const { db, book } = fixture(t);
+  const { createAccount, savePrice, saveBrokerValue } = require("../out/ledger.cjs");
+  const { loadBook, rate } = require("../out/flows.cjs");
+  const ib = createAccount(db, "IBKR"), other = createAccount(db, "other broker");
+  const date = "2026-11-20";
+  saveBrokerValue(db, ib, { source:"IBKR Flex", date, base:"AUD", nav:"10", cash:{AUD:"10"}, positions:[] });
+  savePrice(db, "FX:USD/AUD", date, "1.5", "IBKR 结单汇率", 30);
+  savePrice(db, "FX:USD/AUD", date, "1.6", "Yahoo Finance", 10);
+  db.exec("DROP TABLE sp_broker_prices");
+  db.close();
+  for (let opening = 0; opening < 2; opening++) {
+    const upgraded = createBook(book, key);
+    try {
+      const loaded = loadBook(upgraded);
+      assert.equal(rate(loaded, "USD", date, ib).price, "1.5");
+      assert.equal(rate(loaded, "USD", date, other).price, "1.6");
+      assert.equal(upgraded.prepare("SELECT count(*) AS n FROM sp_broker_prices").get().n, 1);
+    } finally { upgraded.close(); }
+  }
+});
+
 test("Flex repairs a verified cross-midnight date once without changing the fill or overwriting edits", async (t) => {
   const { db } = fixture(t);
   const { createAccount } = require("../out/ledger.cjs");
@@ -504,12 +590,12 @@ test("a broker page NAV requires independently matched cash and holdings and kee
       view.total,
       view.cash,
       view.securities,
-      view.nonCashFromNav,
-      view.holdingsEstimate,
+      view.itemizedTotal,
+      view.valuationDifference,
       view.unrealized,
       view.approximatePnl,
     ],
-    [32, 12, 20, true, 22, -3, true],
+    [32, 12, 22, 34, -2, -3, true],
   );
   assert.equal(accountSnapshot(loadBook(db), { id, currency: "AUD" }, "2025-04-24").valuationSource, null);
 });
@@ -539,4 +625,179 @@ test("manual corrections keep their original identity, evidence and protection a
   assert.equal(e.sourceRecordId, "WB-DEMO-173");
   assert.equal(e.isUserModified, true);
   assert.equal(db.prepare("SELECT reason FROM sp_corrections WHERE event=?").get(row.id).reason, args.reason);
+});
+
+test("dated share evidence reconciles independent fills, retains receipts and never supplies a purchase price", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, savePrice } = require("../out/ledger.cjs");
+  const { recordHolding } = require("../out/services.cjs");
+  const account = createAccount(db, "Broker");
+  const on = "2026-10-16";
+  const holding = {
+    account,
+    date: on,
+    symbol: "IVV",
+    mic: "XASX",
+    currency: "AUD",
+    quantity: "10",
+    reference: "shares-10",
+  };
+  const asset = recordHolding(db, holding);
+  savePrice(db, asset, on, 110, "结单市价");
+  const view = () => dashboard(db, { ids: [account], date: on });
+  let d = await view();
+  assert.equal(d.total, null);
+  assert.deepEqual(
+    [d.securities, d.cash, d.holdings.gain, d.holdings.securities[0].cost],
+    [1100, null, null, null],
+  );
+  addManual(db, {
+    account,
+    type: "DEPOSIT",
+    date: "2026-10-10",
+    currency: "AUD",
+    amount: 1000,
+    reference: "funds",
+  });
+  const buy = { ...holding, type: "BUY", date: "2026-10-12", price: "80" };
+  addManual(db, { ...buy, quantity: 8, reference: "buy-eight" });
+  d = await view();
+  const comparison = { account, date: on, cash: { AUD: 360 }, positions: [{ symbol: "IVV", quantity: 10 }] };
+  assert.equal(d.holdings.securities[0].quantity, "10");
+  assert.equal(d.holdings.securities[0].cost, null);
+  assert.equal(d.quantityReports[0].difference, "2");
+  assert.equal(compareStatement(db, comparison).rows.find((r) => r.symbol === "IVV").delta, "-2");
+  addManual(db, { ...buy, quantity: 2, reference: "buy-two" });
+  d = await view();
+  assert.equal(d.quantityReports[0].difference, "0");
+  assert.deepEqual([d.holdings.securities[0].quantity, d.holdings.gain, d.cash], ["10", 300, 200]);
+  assert.ok(compareStatement(db, { ...comparison, cash: { AUD: 200 } }).ok);
+  const receipt = {
+    ...holding,
+    assetId: asset,
+    costOnly: true,
+    audCost: "810",
+    reference: "documented-cost",
+  };
+  recordHolding(db, receipt);
+  recordHolding(db, receipt);
+  assert.equal((await view()).holdings.gain, 290);
+  assert.equal(db.prepare("SELECT count(*) n FROM sp_holding_evidence").get().n, 2);
+  addManual(db, { ...buy, type: "SELL", date: "2026-10-20", quantity: 10, reference: "sell" });
+  assert.equal((await dashboard(db)).holdings.securities.length, 0);
+  assert.equal((await dashboard(db)).quantityReports[0].reference, "shares-10");
+});
+
+test("a foreign holding needs native cost evidence to translate a legacy AUD-only receipt", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, savePrice } = require("../out/ledger.cjs");
+  const { recordHolding } = require("../out/services.cjs");
+  const account = createAccount(db, "Broker");
+  const holding = { account, date: "2026-11-19", symbol: "ABC", mic: "XNYS", currency: "USD", quantity: "10" };
+  const asset = recordHolding(db, { ...holding, audCost: "140", reference: "historical AUD cost" });
+  const date = "2026-11-20";
+  savePrice(db, asset, date, 10, "close");
+  savePrice(db, "FX:USD/AUD", date, 1.6, "close");
+  const view = () => dashboard(db, { ids: [account], date });
+  const legacy = (await view()).rows.find(r => r.assetId === asset);
+  assert.deepEqual([legacy.audValue, legacy.costAud, legacy.gainAud, legacy.costReceipt.historicalAud],
+    [160, undefined, undefined, "140"]);
+  recordHolding(db, { ...holding, assetId: asset, localCost: "100", costOnly: true, reference: "USD cost on statement" });
+  const d = await view(), row = d.rows.find(r => r.assetId === asset);
+  assert.deepEqual([row.costLocal, row.costAud, row.gainAud, row.gainRate, d.holdings.gain], [100, 160, 0, 0, 0]);
+});
+
+test("coverage counts securities by listing across accounts and does not net unrelated tickers", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, savePrice, resolveAsset, ALLOCATION, putPref } = require("../out/ledger.cjs");
+  const { recordHolding } = require("../out/services.cjs");
+  const { targetScope } = require("../out/flows.cjs");
+  const a = createAccount(db, "IBKR"),
+    b = createAccount(db, "Webull"),
+    date = "2026-10-16";
+  for (const [account, symbol, mic, quantity, cost] of [
+    [a, "ONE", "XASX", 8, 480],
+    [b, "ONE", "XASX", 2, 120],
+    [a, "ONE", "XNYS", 3, 100],
+    [b, "IVV", "XASX", 2, null],
+  ]) {
+    const id = recordHolding(db, {
+      account,
+      date,
+      symbol,
+      mic,
+      currency: "AUD",
+      quantity,
+      audCost: cost,
+      reference: mic + symbol,
+    });
+    savePrice(db, id, date, 100, "statement");
+  }
+  const d = await dashboard(db, { ids: [a, b], date });
+  assert.equal(d.holdings.securities.length, 3);
+  assert.equal(d.holdings.count, 2);
+  assert.equal(d.holdings.gain, 600);
+  assert.equal(d.securities, 1500);
+  const merged = d.holdings.securities.find((r) => r.ticker === "ONE" && r.mic === "XASX");
+  assert.deepEqual([merged.quantity, merged.gain, merged.rowIds.length], ["10", 400, 2]);
+  assert.equal((await dashboard(db, { ids: [a, b], date, period: "ytd" })).holdings.gain, 600);
+  assert.equal(targetScope(db, [b, a]), ALLOCATION);
+  const key = "targets.instruments.v1";
+  putPref(
+    db,
+    ALLOCATION,
+    key,
+    JSON.stringify({ schemaVersion: 1, tolerance: 0.05, targets: { "mic:XASX:IVV": 0.45 } }),
+  );
+  const one = await dashboard(db, { ids: [b], date });
+  assert.equal(one.globalTargets.instruments.targets["mic:XASX:IVV"], 0.45);
+  assert.deepEqual(one.instrumentTargets.targets, {});
+});
+
+test("an ambiguous import is confirmed for that broker record and account only", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, resolveAsset, rememberListing, listingMatch } = require("../out/ledger.cjs");
+  const account = createAccount(db, "IBKR"),
+    account2 = createAccount(db, "IBKR 2");
+  const ny = resolveAsset(db, { symbol: "ABC", exchangeMic: "XNYS", name: "ABC New York" }, "USD");
+  resolveAsset(db, { symbol: "ABC", exchangeMic: "XNAS", name: "ABC Nasdaq" }, "USD");
+  const fill = {
+    broker: "ibkr",
+    brokerRecordId: "trade-123",
+    date: "2026-10-16",
+    activityType: "BUY",
+    currency: "USD",
+    symbol: "ABC",
+    quantity: 1,
+    unitPrice: 80,
+  };
+  const report = { activities: [fill] };
+  const preview = await batch(db, account, "ibkr", report, "Flex");
+  assert.equal(preview.choices[0].candidates.length, 2);
+  await assert.rejects(batch(db, account, "ibkr", report, "Flex", true), /上市证券/);
+  const choice = preview.choices[0];
+  rememberListing(db, { ...choice, assetId: ny });
+  assert.equal(listingMatch(db, { ...choice, account: account2 }).match, undefined);
+  assert.equal(listingMatch(db, { ...choice, source: "webull" }).match, undefined);
+  assert.equal(listingMatch(db, { ...choice, record: "another-fill" }).match, undefined);
+  assert.equal((await batch(db, account, "ibkr", report, "Flex", true)).imported, 1);
+  assert.equal((await batch(db, account, "ibkr", report, "Flex", true)).duplicate, 1);
+  assert.equal(JSON.parse(db.prepare("SELECT data FROM sp_events").get().data).assetId, ny);
+});
+
+test("a priced security keeps its weight when a confirmed broker NAV covers another unpriced security", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, resolveAsset, savePrice } = require("../out/ledger.cjs");
+  const account = createAccount(db, "Portfolio"), date = "2026-10-16";
+  const ids = ["IVV", "ABC"].map((symbol) => resolveAsset(db, { symbol, exchangeMic:"XASX" }, "AUD"));
+  db.prepare("INSERT INTO sp_anchors VALUES(?,?,?,?)").run(account, date,
+    JSON.stringify({[ids[0]]:"10",[ids[1]]:"10"}), JSON.stringify({AUD:"200"}));
+  savePrice(db, ids[0], date, 40, "statement");
+  db.prepare("INSERT INTO sp_broker_values VALUES(?,?,?,?)").run(account, date, "券商结单",
+    JSON.stringify({nav:1000,cash:{AUD:"200"},cashTotal:200,securities:800,
+      positions:["IVV","ABC"].map((symbol) => ({symbol,quantity:"10",currency:"AUD",mic:"XASX"}))}));
+  const d = await dashboard(db,{ids:[account],date});
+  assert.equal(d.portfolio.totalAud,1000);
+  assert.equal(d.portfolio.instrumentAllocation.find((r) => r.label === "IVV").weight,0.4);
+  assert.equal(d.holdings.securities.find((r) => r.ticker === "ABC").value,null);
 });

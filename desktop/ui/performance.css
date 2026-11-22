@@ -106,6 +106,8 @@
 .review-primary b {
   color: #f1f7ee;
 }
+.review-primary .gain { color: #bceccd; }
+.review-primary .loss { color: #ffc7c0; }
 .review-primary small {
   color: #cee0d3;
 }
