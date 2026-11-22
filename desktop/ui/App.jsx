@@ -3,48 +3,25 @@ import { createRoot } from "react-dom/client";
 import {
   ArrowRight,
   ArrowUpRight,
-  BriefcaseBusiness,
   ChartNoAxesCombined,
-  ChartPie,
   CheckCircle2,
   ChevronDown,
   Database,
-  FolderInput,
   Layers3,
-  LayoutDashboard,
-  PanelLeft,
   RefreshCw,
-  Settings2,
-  ShieldCheck,
   Wallet,
-  Waypoints,
   X,
 } from "lucide-react";
-import { api, Card, Modal, Tabs, Field } from "./common";
+import { api, Modal } from "./common";
+import { Mark, Shell } from "./Shell";
 import { Overview, Holdings } from "./Cockpit";
 import { Performance } from "./Performance";
 import { Imports } from "./Imports";
 import { Allocation } from "./Allocation";
 import { Settings } from "./Settings";
 import { BookBackups } from "./BookBackups";
+import "./design.css";
 import "./styles.css";
-const pages = {
-  overview: ["总览", LayoutDashboard],
-  performance: ["策略复盘", ChartNoAxesCombined],
-  holdings: ["持仓", BriefcaseBusiness],
-  allocation: ["配置分析", ChartPie],
-  imports: ["导入与对账", FolderInput],
-  settings: ["数据与设置", Settings2],
-};
-function Mark() {
-  return (
-    <span className="mark" aria-hidden="true">
-      <i />
-      <i />
-      <i />
-    </span>
-  );
-}
 function Welcome({ home, run, enter, onClose }) {
   const [preview, setPreview] = useState(null),
     [source, setSource] = useState(home.sources[0]?.id ?? "file");
@@ -153,7 +130,7 @@ function Welcome({ home, run, enter, onClose }) {
                 有 {preview.counts.invalidFunds} 份基金成分表缺少有效数据，可选择另一份备份或在迁入后补齐。
               </p>
             )}
-            <p className="muted">迁入完成后，请在「数据与设置」中重新连接券商。</p>
+            <p className="muted">迁入完成后，请在「设置」中重新连接券商。</p>
             <button
               className="primary"
               onClick={() =>
@@ -249,7 +226,7 @@ function Application() {
   function onPage(id, init = {}) {
     setPage(id);
     setInitial({ ...init });
-    document.querySelector(".workspace")?.scrollTo(0, 0);
+    document.querySelector(".pane")?.scrollTo(0, 0);
   }
   async function showHome() {
     setHome(await api.home());
@@ -342,94 +319,66 @@ function Application() {
       </>
     );
   return (
-    <div className="shell">
-      <aside>
-        <div className="brand">
-          <Mark />
-          <div>
-            Stock<span>Portfolio</span>
-          </div>
-        </div>
-        <nav>
-          {Object.entries(pages).map(([k, [label, Icon]]) => (
-            <button className={page === k ? "selected" : ""} key={k} onClick={() => onPage(k)}>
-              <Icon size={18} />
-              {label}
-            </button>
-          ))}
-        </nav>
-        <button className="sidebar-account" onClick={showHome}>
-          <span className="app-avatar">
-            <Database size={16} />
-          </span>
-          <span>
-            {mode === "demo" ? "示例账本" : "本地账本"}
-            <small>Stock Portfolio</small>
-          </span>
-          <ChevronDown size={14} />
-        </button>
-      </aside>
-      <main className="workspace">
-        <div className="content">
-          <header className="page-head">
-            <h1>{pages[page][0]}</h1>
-            {["overview", "holdings", "allocation"].includes(page) && (
-              <div className="header-tools">
-                <button onClick={() => setScope([...d.selected])}>
-                  <Wallet size={15} />
-                  {accountLabel}
-                  <ChevronDown size={13} />
-                </button>
-                <label className="date-filter">
-                  <span>估值日</span>
-                  <input
-                    aria-label="估值日期"
-                    type="date"
-                    max={new Date().toLocaleDateString("en-CA")}
-                    value={options.date || d.date}
-                    onChange={(e) => e.target.value && change({ date: e.target.value })}
-                  />
-                </label>
-              </div>
-            )}
-          </header>
-          {page === "performance" && <Performance initial={initial} d={d} mode={mode} run={run} reload={reload} />}
-          {page === "overview" && <Overview d={d} run={run} onPage={onPage} onPeriod={(period) => change({ period })} />}
-          {page === "holdings" && (
-            <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} onPage={onPage} />
-          )}
-          {page === "allocation" && (
-            <Allocation key={JSON.stringify(initial)} d={d} run={run} initial={initial} />
-          )}
-          {page === "imports" && (
-            <Imports
-              key={JSON.stringify(initial)}
-              d={d}
-              mode={mode}
-              run={run}
-              initial={initial}
-              onPage={onPage}
-            />
-          )}
-          {page === "settings" && (
-            <Settings
-              key={JSON.stringify(initial)}
-              d={d}
-              mode={mode}
-              run={run}
-              initial={initial}
-              onPage={onPage}
-              workspace={workspace}
-              openHome={showHome}
-            />
-          )}
-          <footer>
-            <span className="dot" />
-            {mode === "demo" ? "示例数据" : "本机账本"}
-            <span>·</span> 汇总币种 AUD
-          </footer>
-        </div>
-      </main>
+    <>
+      <Shell
+        page={page}
+        onPage={onPage}
+        ledger={{ demo: mode === "demo", accounts: active.length }}
+        onLedger={showHome}
+        filters={
+          ["overview", "holdings", "allocation"].includes(page) && (
+            <>
+              <button className="btn" onClick={() => setScope([...d.selected])}>
+                <Wallet size={15} />
+                {accountLabel}
+                <ChevronDown size={13} />
+              </button>
+              <label className="date-filter">
+                <span>估值日</span>
+                <input
+                  className="btn"
+                  aria-label="估值日期"
+                  type="date"
+                  max={new Date().toLocaleDateString("en-CA")}
+                  value={options.date || d.date}
+                  onChange={(e) => e.target.value && change({ date: e.target.value })}
+                />
+              </label>
+            </>
+          )
+        }
+      >
+        {page === "performance" && <Performance initial={initial} d={d} mode={mode} run={run} reload={reload} />}
+        {page === "overview" && <Overview d={d} run={run} onPage={onPage} onPeriod={(period) => change({ period })} />}
+        {page === "holdings" && (
+          <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} onPage={onPage} />
+        )}
+        {page === "allocation" && (
+          <Allocation key={JSON.stringify(initial)} d={d} run={run} initial={initial} />
+        )}
+        {page === "imports" && (
+          <Imports
+            key={JSON.stringify(initial)}
+            d={d}
+            mode={mode}
+            run={run}
+            initial={initial}
+            onPage={onPage}
+          />
+        )}
+        {page === "settings" && (
+          <Settings
+            key={JSON.stringify(initial)}
+            d={d}
+            mode={mode}
+            run={run}
+            initial={initial}
+            onPage={onPage}
+            workspace={workspace}
+            openHome={showHome}
+          />
+        )}
+      </Shell>
       {scope && (
         <Modal title="账户范围" close={() => setScope(null)}>
           {active.map((a) => (
@@ -471,7 +420,7 @@ function Application() {
         </Modal>
       )}
       {banners}
-    </div>
+    </>
   );
 }
 createRoot(document.getElementById("root")).render(<Application />);

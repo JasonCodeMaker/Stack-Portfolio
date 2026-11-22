@@ -14,7 +14,7 @@ const env = {
 delete env.ELECTRON_RUN_AS_NODE;
 const packaged = process.argv[2];
 async function verifyReview(p) {
-  await p.getByRole("button", { name: "策略复盘", exact: true }).click();
+  await p.getByRole("button", { name: "收益复盘", exact: true }).click();
   const chart = p.getByRole("img", { name: /每日收益曲线/ });
   await chart.waitFor();
   assert.equal(await p.locator(".review-metric").count(), 3);
@@ -229,7 +229,7 @@ async function verifyReview(p) {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
       dialog.showMessageBox = async () => ({ response: 1 });
     }, backup);
-    await p.getByRole("button", { name: "数据与设置", exact: true }).click();
+    await p.getByRole("button", { name: "设置", exact: true }).click();
     await p.getByRole("button",{ name:"账本与备份", exact:true }).click();
     await p.getByRole("button", { name: "备份账本", exact: true }).click();
     await p.getByLabel("备份密码（至少 12 个字符）").fill(password);
@@ -268,7 +268,7 @@ async function verifyReview(p) {
     await clean.getByLabel("备份密码", { exact: true }).fill(password);
     await clean.getByRole("button", { name: "解锁并恢复" }).click();
     await clean.getByText("A$128,400.00", { exact: true }).waitFor();
-    await clean.getByRole("button", { name: "策略复盘", exact: true }).click();
+    await clean.getByRole("button", { name: "收益复盘", exact: true }).click();
     await clean.getByRole("button", { name: /重开区间/ }).click();
     await clean.locator(".review-changed").first().waitFor();
     assert.notDeepEqual(fs.readFileSync(path.join(directory, "ledger-key.v1")), fs.readFileSync(path.join(fresh, "ledger-key.v1")));

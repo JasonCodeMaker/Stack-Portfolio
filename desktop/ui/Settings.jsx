@@ -303,7 +303,7 @@ export function Settings({ d, mode, run, initial = {}, workspace, openHome, onPa
                   )
                 }
               />
-              打开软件和进入策略复盘时自动更新
+              打开软件和进入收益复盘时自动更新
             </label>
             <div className="actions">
               <button
