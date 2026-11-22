@@ -7,6 +7,8 @@ import { getSnapshotStatus } from "./allocation/domain/etf";
 import { loadAllocationSettings, reconcileAccountSelection } from "./allocation/storage/settings";
 import { loadRebalanceSettings } from "./allocation/storage/rebalance";
 import { closingDay, marketFor, shiftDay } from "./marketDays.js";
+import { closeBook, reviewContext, summarizePeriod } from "./periodSummary.js";
+import { applyTodayChange, todayChange } from "./todayChange.js";
 
 const D = (n) => new Decimal(n ?? 0);
 const iso = (d) => d.toISOString().slice(0, 10);
@@ -578,32 +580,6 @@ export function flowList(book, ids, from, to) {
 export function externalFlows(book, ids, from, to) {
   return flowList(book, ids, from, to)?.reduce((sum, f) => sum.plus(f.value), D(0)).toNumber() ?? null;
 }
-// Gain over a period, and that gain as a share of the money at work in it: the opening value
-// plus everything brought in. The whole history read this way gives the lifetime rate, so the
-// two figures agree; a withdrawal cannot inflate either.
-export function periodResult(startValue, endValue, flows) {
-  if (startValue == null || endValue == null || !flows) return null;
-  let net = D(0),
-    capital = D(startValue);
-  for (const f of flows) {
-    net = net.plus(f.value);
-    if (f.value.gt(0)) capital = capital.plus(f.value);
-  }
-  const gain = D(endValue).minus(startValue).minus(net);
-  return {
-    start: Number(startValue),
-    flows: net.toNumber(),
-    gain: gain.toNumber(),
-    rate: capital.gt(0) ? gain.div(capital).toNumber() : null,
-  };
-}
-// The first day on which any of the accounts has a record.
-function firstRecord(book, accounts) {
-  return accounts
-    .flatMap((a) => [book.byAccount, book.anchors, book.archived, book.evidence].map((rows) => rows.get(a.id)?.[0]?.day))
-    .filter(Boolean)
-    .sort()[0];
-}
 // Money brought in and taken out after `from` and up to `to`: external flows, and an opening
 // balance recorded before any activity, which arrives on its own day. Null when one cannot be valued.
 function contributions(book, accounts, from, to) {
@@ -620,11 +596,20 @@ function contributions(book, accounts, from, to) {
   }
   return flows;
 }
+// Opening balances and external flows in, less external flows out, from the first record
+// through `to`. Null unless every account keeps its transactions and they can all be valued.
+function lifetimeFlows(book, accounts, to) {
+  if (accounts.some((a) => a.mode !== "TRANSACTIONS")) return null;
+  if (book.issues.some((issue) => accounts.some((a) => a.id === issue.account) && issue.day <= to)) return null;
+  return contributions(book, accounts, "", to);
+}
+export function netContribution(book, accounts, to) {
+  return lifetimeFlows(book, accounts, to)?.reduce((sum, f) => sum.plus(f.value), D(0)).toNumber() ?? null;
+}
 // Money put in and taken out since tracking began, against what the accounts are worth now.
-// The rate divides the gain by everything ever contributed, so a withdrawal cannot inflate it.
 function lifetimeResult(book, accounts, date, total) {
-  if (total == null || accounts.some((a) => a.mode !== "TRANSACTIONS")) return null;
-  const flows = contributions(book, accounts, "", date);
+  if (total == null) return null;
+  const flows = lifetimeFlows(book, accounts, date);
   if (!flows) return null;
   let contributed = D(0),
     withdrawn = D(0);
@@ -640,7 +625,6 @@ function lifetimeResult(book, accounts, date, total) {
     withdrawn: withdrawn.toNumber(),
     invested: invested.toNumber(),
     gain: gain.toNumber(),
-    rate: contributed.gt(0) ? gain.div(contributed).toNumber() : null,
   };
 }
 const emptyLot = () => ({ units: D(0), local: D(0), aud: D(0), known: true, audKnown: true });
@@ -756,17 +740,6 @@ export function targetScope(db, ids) {
   if (!selected.every((id) => active.includes(id))) throw Error("配置目标的账户范围已改变。");
   return selected.length === active.length ? ALLOCATION : ALLOCATION + ".targets." + JSON.stringify(selected);
 }
-export function periodStart(end, period, earliest) {
-  const e = new Date(end + "T00:00:00Z");
-  if (period === "all") return earliest || end;
-  if (period === "ytd") return [end.slice(0, 4), "01", "01"].join("-");
-  const months = period === "3m" ? 3 : 1,
-    n = e.getUTCDate();
-  e.setUTCDate(1);
-  e.setUTCMonth(e.getUTCMonth() - months);
-  e.setUTCDate(Math.min(n, new Date(Date.UTC(e.getUTCFullYear(), e.getUTCMonth() + 1, 0)).getUTCDate()));
-  return iso(e);
-}
 function asStored(book, accounts, date) {
   let total = D(0);
   for (const a of accounts) {
@@ -796,43 +769,28 @@ export async function dashboard(db, options = {}) {
   const ids = selected.map((a) => a.id),
     date = options.date ? day(options.date) : book.latest,
     period = options.period || "1m";
-  const requested = periodStart(date, period, book.dates[0]);
-  // A period reaching back before the first record, as the whole history does, starts from
-  // nothing on the eve of that record: everything brought in since counts as money put in.
-  const opened = firstRecord(book, selected);
-  const fromOpening = Boolean(opened) && opened <= date && (requested < opened || period === "all");
-  const start = fromOpening ? shiftDay(opened, -1) : requested;
-  const shownFrom = fromOpening ? opened : start;
-  const net = (accounts, to) =>
-    contributions(book, accounts, start, to)?.reduce((sum, f) => sum.plus(f.value), D(0)).toNumber() ?? null;
+  // Period figures come from the engine the return review uses, on daily closes.
+  const closes = ids.length ? closeBook(db) : null;
+  const summarize = (accountIds) =>
+    closes && date ? summarizePeriod(reviewContext(closes, accountIds), { to: date, period, from: options.from }) : null;
+  const summary = summarize(ids);
   const current = combined(book, selected, date, settings);
-  const hasHistory = fromOpening || (book.dates.length > 0 && start >= book.dates[0]);
-  const startValue = hasHistory ? combined(book, selected, start, settings).total : null;
-  const incompleteFlows = book.issues.some((issue) => ids.includes(issue.account) && issue.day <= date);
-  const flows = incompleteFlows ? null : net(selected, date);
-  const pnl =
-    current.total != null && startValue != null && flows != null
-      ? D(current.total).minus(startValue).minus(flows).toNumber()
-      : null;
-  const result = (accounts, total, opening) => {
-    const accountIds = accounts.map((a) => a.id);
-    if (book.issues.some((issue) => accountIds.includes(issue.account) && issue.day <= date))
-      return { period: null, lifetime: null };
-    return {
-      period: periodResult(opening, total, contributions(book, accounts, start, date)),
-      lifetime: lifetimeResult(book, accounts, date, total),
-    };
-  };
-  const overall = result(selected, current.total, startValue);
+  // The period figures stand as of the engine's latest valued close, as on the review page.
+  const result = (accounts, total, s) => ({
+    period:
+      s?.gain == null
+        ? null
+        : { start: s.startValue, flows: s.netFlow, end: s.endValue, gain: s.gain, twr: s.twr, annualised: s.annualised, asOf: s.valuedThrough },
+    lifetime: lifetimeResult(book, accounts, date, total),
+  });
+  const overall = result(selected, current.total, summary);
+  const flows = overall.period?.flows ?? null,
+    pnl = overall.period?.gain ?? null;
   for (const view of current.accounts) {
     const acc = selected.find((a) => a.id === view.id);
     view.balanceDate = [book.byAccount, book.anchors, book.brokerValues, book.evidence, book.archived, book.statements]
       .map((data) => last(data.get(acc.id), date)?.day).filter(Boolean).sort().at(-1) || null;
-    view.result = result(
-      [acc],
-      view.total,
-      hasHistory ? snapshot(book, acc, start, settings.typeOverrides).total : null,
-    );
+    view.result = result([acc], view.total, ids.length > 1 ? summarize([acc.id]) : summary);
     const lots = costBasis(book, acc, date);
     for (const row of view.rows) {
       const l = lots.get(row.assetId);
@@ -853,20 +811,15 @@ export async function dashboard(db, options = {}) {
       }
     }
   }
-  const span = Date.parse(date) - Date.parse(shownFrom),
-    days = Math.max(1, Math.ceil(span / 86400000)),
-    steps = Math.min(52, days);
-  const points = Array.from({ length: steps + 1 }, (_, i) => {
-    const d = iso(new Date(Date.parse(shownFrom) + Math.round((days * i) / steps) * 86400000));
-    const value = hasHistory || d >= book.dates[0] ? combined(book, selected, d, settings).total : null,
-      flow = net(selected, d);
-    const unresolved = book.issues.some((issue) => ids.includes(issue.account) && issue.day <= d);
-    return {
-      date: d,
-      value,
-      basis: startValue == null || flow == null || unresolved ? null : D(startValue).plus(flow).toNumber(),
-    };
+  // Daily closes from the eve of the period, with the opening value plus net flows to date.
+  let basis = null;
+  const points = (summary?.points || []).map((p) => {
+    if (p.date === summary.origin) basis = p.value == null ? null : D(p.value);
+    else if (p.date > summary.origin && basis) basis = p.flow == null ? null : basis.plus(p.flow);
+    return { date: p.date, value: p.value, basis: p.date < summary.origin || !basis ? null : basis.toNumber() };
   });
+  const daily = new Set(["points", "outages", "intervals"]);
+  const periodFigures = summary && Object.fromEntries(Object.entries(summary).filter(([k]) => !daily.has(k)));
   const portfolio = buildPortfolioModel(current.rows, ids);
   // A reconciled same-day broker NAV can supply the denominator even when
   // an individual price is missing. Only fully valued listings get a weight.
@@ -888,6 +841,13 @@ export async function dashboard(db, options = {}) {
     snapshots,
     totalAud: portfolio.totalAud,
     aliases: settings.aliases,
+  });
+  const holdings = summarizeHoldings(current.rows);
+  // 今日变动 on the net-value basis (ADR 0005), for the portfolio, accounts, rows and companies.
+  const today = applyTodayChange(closes && date ? todayChange(closes, ids, date) : null, closes, {
+    accounts: current.accounts,
+    holdings,
+    exposure,
   });
   const etfData = portfolio.etfs.map((asset) => {
     const record = records.find((r) => r.etfKey === asset.etfKey),
@@ -916,18 +876,21 @@ export async function dashboard(db, options = {}) {
       }),
     ),
     date,
-    start: shownFrom,
-    fromOpening,
+    start: summary?.period.from ?? date,
+    fromOpening: summary?.fromOpening ?? false,
     period,
-    startValue,
+    startValue: overall.period?.start ?? null,
     flows,
     pnl,
+    // The shared period summary (see periodSummary.js) without its daily rows.
+    summary: periodFigures,
     result: overall,
     points,
     ...current,
     accounts: book.accounts,
     byAccount: current.accounts,
-    holdings: summarizeHoldings(current.rows),
+    holdings,
+    today,
     quantityReports: [...book.reported].flatMap(([account, assets]) =>
       [...assets].flatMap(([asset, reports]) =>
         reports
