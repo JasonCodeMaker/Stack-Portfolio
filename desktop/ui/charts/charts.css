@@ -1,0 +1,58 @@
+/* Shared chart primitives. Colours come only from the design tokens (spec §1.1, §1.2). */
+
+/* Treemap tokens (prototype allocation page): gain / loss / neutral tile and light-tile text. */
+:root{--tu:#2E7D12;--td:#B42318;--tz:#E4EAE2;--tm-ink:var(--l1)}
+@media (prefers-color-scheme: dark){:root{--tu:#3E9C22;--td:#C9382B;--tz:#222C25;--tm-ink:#fff}}
+
+/* ---------- Line chart ---------- */
+.ch-line{position:relative;width:100%;min-width:0}
+.ch-line svg{display:block;overflow:visible;font-variant-numeric:tabular-nums}
+.ch-grid{stroke:var(--sep)}
+.ch-zero{stroke:var(--l3)}
+.ch-axis{font-size:11px;fill:var(--l3)}
+.ch-series{fill:none;stroke-linejoin:round}
+.ch-end{font-size:12px;fill:var(--l2)}
+.ch-end.strong{font-weight:600;fill:var(--l1)}
+.ch-note{font-size:11px}
+.ch-note.strong{font-weight:600}
+.ch-cross{stroke:var(--l3);stroke-dasharray:3 3}
+.ch-dot{stroke:var(--surface);stroke-width:1.5}
+.ch-tip{position:absolute;z-index:2;pointer-events:none;min-width:140px;padding:8px 10px;border:1px solid var(--sep);border-radius:6px;background:var(--surface);color:var(--l1);font-size:12px;line-height:16px;white-space:nowrap}
+.ch-tip-date{color:var(--l2);margin-bottom:4px}
+.ch-tip-row{display:flex;align-items:center;gap:6px}
+.ch-tip-row+.ch-tip-row{margin-top:2px}
+.ch-tip-row i{width:10px;height:3px;border-radius:2px;flex:none}
+.ch-tip-row span{color:var(--l2)}
+.ch-tip-row b{margin-left:auto;padding-left:12px;font-weight:600}
+
+/* ---------- Inline bars ---------- */
+.ch-bar{position:relative;display:block;height:12px;min-width:0}
+.ch-bar i{position:absolute;top:0;left:0;height:100%;border-radius:2px}
+.ch-stack i:first-child{border-radius:2px 0 0 2px}
+.ch-stack i+i{border-radius:0 2px 2px 0}
+.ch-diverge{position:relative;display:block;height:28px;min-width:0}
+.ch-diverge u{position:absolute;top:0;bottom:0;width:1px;background:var(--l3)}
+.ch-diverge i{position:absolute;top:8px;height:12px;border-radius:2px}
+.ch-rank-row{display:grid;grid-template-columns:minmax(72px,120px) minmax(60px,1fr) 52px;gap:0 12px;align-items:center;min-height:34px;border-top:1px solid var(--sep);font-size:13px}
+.ch-rank-row.muted{color:var(--l2)}
+.ch-rank-row.click{cursor:pointer}
+.ch-rank-row.click:hover{background:var(--surface2)}
+.ch-rank-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ch-rank-value{text-align:right;white-space:nowrap}
+.ch-bullet{position:relative;display:block;height:10px;border-radius:5px;background:var(--surface2);margin:9px 0 7px}
+.ch-bullet i{position:absolute;display:block}
+.ch-bullet-band{top:0;bottom:0;background:color-mix(in srgb,var(--l3) 30%,transparent)}
+.ch-bullet-act{left:0;top:2px;bottom:2px;border-radius:3px;background:var(--s1)}
+.ch-bullet-tick{top:-3px;bottom:-3px;width:2px;margin-left:-1px;background:var(--l1)}
+
+/* ---------- Treemap ---------- */
+.ch-tmap{position:relative;width:100%;min-width:0;border-radius:6px;overflow:hidden}
+.ch-tm{position:absolute;overflow:hidden;border-radius:2px;display:flex;flex-direction:column;justify-content:center;align-items:center;line-height:1.2;white-space:nowrap;cursor:pointer;transition:filter .12s}
+.ch-tm:hover{filter:brightness(1.1)}
+.ch-tm.on{outline:2px solid var(--l1);outline-offset:-2px;z-index:1}
+.ch-tm b{font-weight:650;letter-spacing:-.01em}
+.ch-tm.rest{align-items:flex-start;justify-content:flex-start;padding:4px 6px;box-sizing:border-box;font-size:11px;color:var(--l2);cursor:default;background:var(--tz)}
+.ch-tm.rest:hover{filter:none}
+.ch-tmh{position:absolute;font-size:11px;line-height:18px;color:var(--l2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.ch-tmh b{color:var(--l1);font-weight:600}
+@media (prefers-reduced-motion: reduce){.ch-tm{transition:none}}
