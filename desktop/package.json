@@ -10,7 +10,7 @@
     "build": "node build.mjs",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build && node --test tests/*.test.cjs && vitest run tests/allocation tests/brokers",
+    "test": "npm run build && node --test tests/*.test.cjs && vitest run tests/allocation tests/brokers tests/ui",
     "dist": "npm run build && electron-builder --win nsis --x64"
   },
   "build": {
