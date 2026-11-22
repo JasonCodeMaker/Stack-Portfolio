@@ -5,7 +5,7 @@ import { flowValue, isExternalFlow, posting, rate } from "./flows.js";
 import { canonicalIdentity } from "./allocation/domain/identifiers";
 import { reviewDates } from "./reviewMarket.js";
 import { reviewBook, summarizePeriod, valuation } from "./periodSummary.js";
-import { gainBreakdown } from "./gainBreakdown.js";
+import { attributedAsset, gainBreakdown } from "./gainBreakdown.js";
 
 const D = (n) => new Decimal(n);
 
@@ -71,6 +71,7 @@ export function periodContributions(context, from, to, gain) {
       const row = h.cash ? currencyBalance(h.currency) : entry(key, h.symbol, "security");
       if (!h.cash) {
         keys.set(h.assetId, key);
+        row.assetId = h.assetId;
         row.listing = [context.book.assets.get(h.assetId)?.mic, h.currency].filter(Boolean).join(" · ");
         if (sign === 1) row.ending = row.ending.plus(h.quantity);
       }
@@ -111,15 +112,17 @@ export function periodContributions(context, from, to, gain) {
       balance.units = balance.units.minus(cashPosting);
       const cashAud = convert(cashPosting);
       add(balance, cashAud == null ? null : cashAud.neg());
-      if (e.assetId) {
-        const a = context.book.assets.get(e.assetId);
+      const assetId = attributedAsset(context.book, e);
+      if (assetId) {
+        const a = context.book.assets.get(assetId);
         const key =
-          keys.get(e.assetId) ||
+          keys.get(assetId) ||
           JSON.stringify([
-            (a && canonicalIdentity(a).key) || "asset:" + e.assetId,
+            (a && canonicalIdentity(a).key) || "asset:" + assetId,
             a?.currency || e.currency,
           ]);
         const row = entry(key, a?.symbol || e.assetSymbol, "security");
+        row.assetId ??= assetId;
         row.listing = [a?.mic, a?.currency || e.currency].filter(Boolean).join(" · ");
         row.events.push(receipt);
         if (!internal && p.units) row.units = row.units.minus(p.units);
@@ -155,12 +158,12 @@ export function periodContributions(context, from, to, gain) {
       key: r.key,
       label: r.label,
       listing: r.listing,
+      assetId: r.assetId,
       kind: r.kind,
       events: r.events,
       gain: r.known && r.units.abs().lt("0.000001") ? r.value.toNumber() : null,
       closed: r.sold && r.ending.isZero(),
-    }))
-    .sort((a, b) => (b.gain ?? -Infinity) - (a.gain ?? -Infinity));
+    }));
   const remainder = rows.reduce((left, row) => left.minus(row.gain ?? 0), D(gain));
   if (remainder.abs().gte("0.005"))
     rows.push({
@@ -170,6 +173,7 @@ export function periodContributions(context, from, to, gain) {
       events: [],
       gain: remainder.toNumber(),
     });
+  rows.sort((a, b) => (b.gain ?? -Infinity) - (a.gain ?? -Infinity));
   return { from, to, rows };
 }
 export function reviewDay(db, { ids, date }) {
@@ -207,6 +211,7 @@ export function portfolioReview(db, args) {
     from: period.from,
     to,
     base: period.base,
+    measuredDays: summary.measuredDays,
     requested: period.requested,
     period,
     origin,
@@ -216,7 +221,9 @@ export function portfolioReview(db, args) {
     points,
     metrics,
     money,
+    hasQuarter: summary.hasQuarter,
     drawdownSeries: summary.drawdownSeries,
+    benchmarkDrawdowns: summary.benchmarkDrawdowns,
     contributions: money ? periodContributions(context, origin, summary.valuedThrough, money.gain) : null,
     breakdown: gainBreakdown(context, summary),
     // Days after the latest valued close still wait for a quote, an FX rate or an index level.

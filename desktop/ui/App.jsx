@@ -350,7 +350,7 @@ function Application() {
         }
       >
         {page === "performance" && (
-          <Performance d={d} mode={mode} run={run} reload={reload} filters={filters} onFilters={changeFilters} />
+          <Performance d={d} mode={mode} run={run} reload={reload} filters={filters} onFilters={changeFilters} onPage={onPage} />
         )}
         {page === "overview" && <Overview d={d} run={run} onPage={onPage} filters={filters} onFilters={changeFilters} />}
         {page === "holdings" && (

@@ -122,13 +122,13 @@ export function PeriodControl({ filters, range, valuationDate, custom = false, d
         )}
       </span>
       {ranged && custom ? (
-        <span className="period-range" key={filters.from + filters.to}>
+        <span className="period-range">
           <input
             className="btn"
             type="date"
             aria-label="期间起点"
-            defaultValue={filters.from}
-            max={valuationDate}
+            value={filters.from}
+            max={filters.to}
             onChange={(e) => onChange(chooseRange(filters, e.target.value, filters.to, valuationDate))}
           />
           <span className="cap">至</span>
@@ -136,7 +136,8 @@ export function PeriodControl({ filters, range, valuationDate, custom = false, d
             className="btn"
             type="date"
             aria-label="期间终点"
-            defaultValue={filters.to}
+            value={filters.to}
+            min={filters.from}
             max={valuationDate}
             onChange={(e) => onChange(chooseRange(filters, filters.from, e.target.value, valuationDate))}
           />

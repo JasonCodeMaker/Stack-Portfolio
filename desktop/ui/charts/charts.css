@@ -56,3 +56,13 @@
 .ch-tmh{position:absolute;font-size:11px;line-height:18px;color:var(--l2);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .ch-tmh b{color:var(--l1);font-weight:600}
 @media (prefers-reduced-motion: reduce){.ch-tm{transition:none}}
+
+.ch-selectable {
+  cursor: crosshair;
+  touch-action: pan-y;
+}
+.ch-selection {
+  fill: var(--accent);
+  opacity: .12;
+  pointer-events: none;
+}
