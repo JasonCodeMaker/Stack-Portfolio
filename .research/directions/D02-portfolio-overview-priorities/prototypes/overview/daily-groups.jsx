@@ -29,10 +29,11 @@ export function dailyParts(layout) {
 export function DailyGroups({ d, parts }) {
   return <div className="d02-groups">
     <section className="card d02-group d02-assets" aria-label="账户资产">
-      <div className="d02-balance-column">
+      <div className="d02-balance-summary">
         <NativePart node={parts.total}/>
         <AssetComposition d={d} onDetails={() => parts.total.click()}/>
       </div>
+      <NativePart node={parts.trend}/>
       <NativePart node={parts.accounts}/>
     </section>
     <section className="card d02-group d02-positions" aria-label="持仓表现">
@@ -45,10 +46,7 @@ export function DailyGroups({ d, parts }) {
       <div className="d02-period-metrics">
         <NativePart node={parts.periodGain}/><NativePart node={parts.rate}/><NativePart node={parts.flow}/>
       </div>
-      <div className="d02-period-charts">
-        <NativePart node={parts.trend}/>
-        <div className="d02-period-details"><NativePart node={parts.breakdown}/><NativePart node={parts.fx}/></div>
-      </div>
+      <div className="d02-period-details"><NativePart node={parts.breakdown}/><NativePart node={parts.fx}/></div>
     </section>
   </div>;
 }

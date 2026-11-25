@@ -129,12 +129,16 @@ function Screen({ mode, d, state, update }) {
         <time dateTime={d.date}>{d.date} · AUD</time>
       </div>
     </header>
-    <div className="d02-scroll" ref={scrollRef}><div className="d02-page">
-      <div hidden={Boolean(holdings)}>
-        <OverviewPage d={d} mode={mode} filters={filters} onFilters={f => update({period:f.period})} onPage={navigate} run={readOnly}/>
+    {/* The original fits its chart to the scrolling pane. The candidates fit it
+        to the full overview, allowing the native chart to use its full height. */}
+    <div className={mode === "current" ? "d02-scroll pane" : "d02-scroll"} ref={scrollRef}>
+      <div className={mode === "current" ? "d02-page" : "d02-page pane"}>
+        <div hidden={Boolean(holdings)}>
+          <OverviewPage d={d} mode={mode} filters={filters} onFilters={f => update({period:f.period})} onPage={navigate} run={readOnly}/>
+        </div>
+        {holdings && <Holdings d={d} initial={holdings} run={readOnly}/>}
       </div>
-      {holdings && <Holdings d={d} initial={holdings} run={readOnly}/>}
-    </div></div>
+    </div>
     {readOnlyNotice && <Modal title="只读示例账本" close={() => setReadOnlyNotice(false)}>
       <p>三个布局共用固定的账本快照，本次编辑仅供预览。</p>
     </Modal>}
