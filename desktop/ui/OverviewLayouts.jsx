@@ -1,5 +1,6 @@
 import React from "react";
 import { useI18n } from "./i18n";
+import { Icon } from "./icons";
 import { AssetComposition, CloseDrivers } from "./DailyOverviewDetails";
 
 export function ClassicOverviewLayout({ wide, panels }) {
@@ -48,7 +49,7 @@ export function DailyOverviewLayout({ d, wide, panels, openAssets }) {
         </section>
         <section className="card daily-group daily-positions" aria-label={t("overview.daily.positions")}>
           <header className="daily-group-head">
-            <h2>{t("overview.daily.positions")}</h2>
+            <h2 className="overview-icon-heading"><Icon name="holdings" />{t("overview.daily.positions")}</h2>
             <div className="daily-native-part">
               {panels.holdingsGain}
             </div>
@@ -63,7 +64,7 @@ export function DailyOverviewLayout({ d, wide, panels, openAssets }) {
         {wide && <div className="card daily-group daily-wide-accounts"><div className="daily-native-part">{panels.accounts}</div></div>}
         <section className="card daily-group daily-period" aria-label={t("overview.daily.period")}>
           <header className="daily-group-head">
-            <h2>{t("overview.daily.period")}</h2>
+            <h2 className="overview-icon-heading"><Icon name="periodReturn" />{t("overview.daily.period")}</h2>
           </header>
           <div className="daily-period-metrics">
             <div className="daily-native-part">

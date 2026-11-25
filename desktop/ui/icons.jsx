@@ -1,4 +1,4 @@
-// Sidebar icons, drawn on a 24 box with a 1.8 stroke (prototypes/_kit/kit.js).
+// App icons, drawn on a 24 box with a 1.8 stroke (prototypes/_kit/kit.js).
 import React from "react";
 const paths = {
   overview: (
@@ -47,6 +47,18 @@ const paths = {
       <ellipse cx="12" cy="5" rx="8" ry="3" />
       <path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5" />
       <path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3" />
+    </>
+  ),
+  wallet: (
+    <>
+      <path d="M19 8V4H6a2 2 0 0 0 0 4h14a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H6a2 2 0 0 1-2-2V6" />
+      <path d="M21 12h-4a2 2 0 0 0 0 4h4" />
+    </>
+  ),
+  periodReturn: (
+    <>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M7 3v4m10-4v4M3 10h18M8 17v-2m4 2v-4m4 4v-3" />
     </>
   ),
 };

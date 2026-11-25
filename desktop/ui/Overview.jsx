@@ -9,6 +9,7 @@ import { FxCard, FxPanel, RecentCloseDates } from "./MarketQuotes";
 import { isCustom, periodLabel } from "./filters.js";
 import { periodPresets } from "../periods.js";
 import { useI18n } from "./i18n.jsx";
+import { Icon } from "./icons";
 import { ClassicOverviewLayout, DailyOverviewLayout } from "./OverviewLayouts";
 import "./overview.css";
 import "./overview-daily.css";
@@ -53,7 +54,7 @@ function AssetTrend({ points, view, onViewChange, daily }) {
   return (
     <section className="card overview-trend" aria-label={t("overview.trendTitle")}>
       <div className="row">
-        <h2>{t("overview.trendTitle")}</h2>
+        <h2 className="overview-icon-heading"><Icon name="performance" />{t("overview.trendTitle")}</h2>
         <div className="seg" role="group" aria-label={t("overview.trendViewAria")}>
           {[["value", t("overview.trendValueLabel")], ["gain", t("overview.trendGainLabel")]].map(([key, label]) => (
             <button
@@ -184,7 +185,7 @@ function Accounts({ accounts, total, live }) {
   const { aspect } = useShell();
   return (
     <section className="card overview-accounts" aria-label={t("overview.accountsTitle")}>
-      <div className="row"><h2>{t("overview.accountsTitle")}</h2><span className="cap">{live ? t("overview.recentCloseChange") : t("overview.closeChange")}</span></div>
+      <div className="row"><h2 className="overview-icon-heading"><Icon name="wallet" />{t("overview.accountsTitle")}</h2><span className="cap">{live ? t("overview.recentCloseChange") : t("overview.closeChange")}</span></div>
       {!accounts.length && <Empty>{t("overview.accountsEmpty")}</Empty>}
       {!!accounts.length && (
         <div className="overview-account-list" role="group" aria-label={t("overview.accountListAria")}
