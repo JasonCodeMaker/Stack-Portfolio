@@ -76,13 +76,12 @@ export function Screenshots({ images, paired = false }) {
     [open, setOpen] = useState(false);
   if (!images?.length) return null;
   const photo = images[index] || images[0],
-    english = photo.lang === "en",
     named = images.length > 1 && images.every((i) => i.label);
-  const view = english ? "View full screenshot" : "查看完整截图";
+  const view = "查看完整截图";
   return (
-    <figure className="ob-real-figure" lang={photo.lang}>
+    <figure className="ob-real-figure">
       {named && !paired && (
-        <div className="ob-shot-tabs" role="group" aria-label="Screenshot detail">
+        <div className="ob-shot-tabs" role="group" aria-label="选择截图中的控件">
           {images.map((item, i) => (
             <button type="button" key={item.label} aria-pressed={i === index} onClick={() => setIndex(i)}>
               {item.label}
@@ -115,7 +114,7 @@ export function Screenshots({ images, paired = false }) {
       </button>
       <figcaption>
         <strong>
-          {paired ? "After selecting both options, scroll down and select Save." : photo.caption}
+          {paired ? "两项都勾选后，滚动到弹窗底部，点「Save」。" : photo.caption}
         </strong>
         <div className="ob-figure-tools">
           <button className="ob-open-shot" type="button" onClick={() => setOpen(true)}>
@@ -134,7 +133,7 @@ export function Screenshots({ images, paired = false }) {
               <button aria-label="上一张截图" disabled={!index} onClick={() => setIndex(index - 1)}>
                 <ChevronLeft size={15} />
               </button>
-              {index + 1} / {images.length}
+              图 {index + 1} / {images.length}
               <button
                 aria-label="下一张截图"
                 disabled={index === images.length - 1}
@@ -147,7 +146,7 @@ export function Screenshots({ images, paired = false }) {
         </div>
       </figcaption>
       {open && (
-        <Modal title={english ? "Full screenshot" : "完整截图"} close={() => setOpen(false)} wide>
+        <Modal title="完整截图" close={() => setOpen(false)} wide>
           <div className="ob-viewer">
             <Frame photo={photo} full marks={paired ? images : [photo]} />
           </div>

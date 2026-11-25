@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { BookOpen, ChevronDown } from "lucide-react";
-import { StepNotes, Translation, FieldSource } from "./StepNotes";
+import { StepNotes, FieldSource } from "./StepNotes";
 import { Modal } from "../common";
 import { brokerNames, brokerGuides, accountChapter, importChapter } from "./brokerGuide";
 import { Screenshots } from "./Screenshots";
@@ -44,16 +44,13 @@ function Tutorial({ initialBroker, initialStep, close }) {
                 aria-controls={"guide-section-" + index}
                 onClick={() => setExpanded(open ? -1 : index)}
               >
-                <span className="ob-chapter-number">{String(index + 1).padStart(2, "0")}</span>
-                <strong lang={chapter.lang}>{chapter.title}</strong>
+                <strong>{chapter.title}</strong>
                 <ChevronDown size={16} />
               </button>
               <div id={"guide-section-" + index} hidden={!open} className="ob-chapter-content">
                 {open && (
                   <>
-                    {chapter.location && <small lang="en">{chapter.location}</small>}
-                    <p lang={chapter.lang}>{chapter.body}</p>
-                    <Translation chapter={chapter} />
+                    <p>{chapter.body}</p>
                     {chapter.visual === "phone" ? (
                       <PhoneGuide />
                     ) : (

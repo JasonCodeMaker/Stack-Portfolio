@@ -10,7 +10,6 @@ export function PhoneGuide() {
     <figure className="ob-phone-guide">
       <div className="ob-phone-caption">
         <span>Webull 澳洲 App · 脱敏交互示例</span>
-        <b>{stage + 1} / 3</b>
       </div>
       <div className="ob-phone-screen">
         <div className="ob-phone-header">

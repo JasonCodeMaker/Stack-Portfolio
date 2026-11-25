@@ -1,16 +1,15 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, ChevronRight, Layers3, PanelLeft, WalletCards } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronRight, Layers3, WalletCards } from "lucide-react";
 import { api, Field } from "../common";
 import { Mark } from "../Shell";
 import { brokerNames, brokerGuides } from "./brokerGuide";
-import { FieldSource, StepNotes, Translation } from "./StepNotes";
+import { FieldSource, StepNotes } from "./StepNotes";
 import { TutorialLauncher } from "./Tutorial";
 import { PhoneGuide } from "./PhoneGuide";
 import { Screenshots } from "./Screenshots";
 import "./wizard.css";
 import "./studio.css";
 
-const phases = ["welcome", "broker", "guide", "account", "bound"];
 const headings = {
   welcome: "现在添加第一个账户吗？",
   broker: "这个账户在哪家券商？",
@@ -25,6 +24,35 @@ const descriptions = {
 };
 const errorText = (e) =>
   String(e.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
+
+function AccountProgress({ page, broker, step }) {
+  if (page === "welcome" || page === "bound") return null;
+  const guide = brokerGuides[broker];
+  const visual = guide[step].visual;
+  const current = page === "broker" ? 1 : step + (page === "account" ? 3 : 2);
+  // Webull tells us whether phone verification is needed only after it checks the credentials.
+  let total;
+  if (page === "account") total = current;
+  else if (page === "guide" && (broker === "ibkr" || visual === "phone")) total = guide.length + 2;
+
+  let location = "Stock Portfolio";
+  if (page === "guide" && visual === "portal") {
+    location = broker === "ibkr" ? "IBKR 网页" : "Webull 澳洲网页";
+  }
+  if (page === "guide" && visual === "phone") location = "Webull 手机 App";
+  const label = total ? `第 ${current} 步，共 ${total} 步` : `第 ${current} 步`;
+  return (
+    <div className="ob-studio-progress">
+      <div className="ob-drawer-label">
+        <b>{label}</b>
+        <span>{location}</span>
+      </div>
+      {total && (
+        <progress aria-label="添加此账户的进度" aria-valuetext={label} value={current} max={total} />
+      )}
+    </div>
+  );
+}
 
 export function AccountWizard({
   initialPage = "welcome",
@@ -56,8 +84,12 @@ export function AccountWizard({
     isKeys = chapter.visual === "credentials",
     phone = chapter.visual === "phone";
   const last = added.at(-1);
+  let backLabel = "上一步";
+  if (page === "broker") {
+    if (last) backLabel = "返回已添加的账户";
+    else backLabel = initialPage === "broker" ? "取消添加" : "返回欢迎页";
+  }
   const known = [...existing.filter((b) => !added.some((a) => a.id === b.id)), ...added];
-  const english = page === "guide" && chapter.lang === "en";
   const illustrated = page === "guide" && (phone || chapter.images?.length > 0);
   const showAccounts = known.length > 0 && (page === "broker" || page === "bound");
   const hasContext = illustrated || showAccounts;
@@ -130,8 +162,7 @@ export function AccountWizard({
       setPage(last ? "bound" : "welcome");
     } else if (page === "account") {
       setPage("guide");
-      setStep(brokerGuides[broker].findIndex((item) => item.visual === "credentials"));
-      setTicket("");
+      if (!phone) setTicket("");
     } else if (step === 0) setPage("broker");
     else {
       setStep(step - 1);
@@ -163,45 +194,14 @@ export function AccountWizard({
       </header>
       <main className={"ob-studio-main" + (page === "welcome" ? " is-welcome" : "")}>
         <section className={"ob-studio-card" + (hasContext ? "" : " single-column")}>
-          <div
-            className="ob-studio-progress"
-            role="progressbar"
-            aria-label="设置面板"
-            aria-valuemin={1}
-            aria-valuemax={5}
-            aria-valuenow={phases.indexOf(page) + 1}
-          >
-            <div className="ob-drawer-label">
-              <span>
-                <PanelLeft size={15} /> 设置面板
-              </span>
-              <b>{phases.indexOf(page) + 1} / 5</b>
-            </div>
-            <div className="ob-track">
-              {phases.map((p, i) => (
-                <i key={p} className={i <= phases.indexOf(page) ? "on" : ""} />
-              ))}
-            </div>
-          </div>
+          <AccountProgress page={page} broker={broker} step={step} />
           <div className="ob-studio-copy">
-            <div className="ob-kicker">
-              {page === "guide"
-                ? (english
-                    ? chapter.location
-                    : (isKeys ? "Stock Portfolio" : brokerNames[broker]) + " · 图文教程") +
-                  " · " +
-                  (step + 1) +
-                  " / " +
-                  brokerGuides[broker].length
-                : "账户设置"}
-            </div>
-            <h1 ref={head} tabIndex={-1} lang={english ? "en" : undefined}>
+            <h1 ref={head} tabIndex={-1}>
               {page === "guide" ? chapter.title : headings[page]}
             </h1>
-            <p className="ob-lead" lang={english ? "en" : undefined}>
+            <p className="ob-lead">
               {page === "guide" ? chapter.body : descriptions[page]}
             </p>
-            {page === "guide" && <Translation key={step} chapter={chapter} />}
           </div>
           <div className="ob-studio-action">
             {page === "welcome" && (
@@ -278,9 +278,7 @@ export function AccountWizard({
                           ? ib
                             ? "验证 IBKR 账户"
                             : "发起 Webull 授权"
-                          : english
-                            ? "Next"
-                            : "下一步"}{" "}
+                          : "下一步"}{" "}
                     <ArrowRight size={16} />
                   </button>
                 </div>
@@ -389,11 +387,13 @@ export function AccountWizard({
             {["guide", "broker", "account"].includes(page) && (
               <div className="ob-help">
                 <button disabled={busy} onClick={click(back)}>
-                  <ArrowLeft size={15} /> {english ? "Back" : "上一步"}
+                  <ArrowLeft size={15} /> {backLabel}
                 </button>
-                <button disabled={busy} onClick={leave}>
-                  {english ? "Set up later" : "稍后设置"}
-                </button>
+                {(page !== "broker" || last || initialPage !== "broker") && (
+                  <button disabled={busy} onClick={leave}>
+                    稍后设置
+                  </button>
+                )}
               </div>
             )}
           </div>

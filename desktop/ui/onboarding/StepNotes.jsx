@@ -4,11 +4,11 @@ import { Screenshots } from "./Screenshots";
 
 export function StepNotes({ chapter }) {
   return (
-    <div className="ob-step-notes" lang={chapter.lang}>
+    <div className="ob-step-notes">
       <div className="ob-expected">
         <Eye size={17} aria-hidden="true" />
         <div>
-          <strong>{chapter.lang === "en" ? "What to look for" : "下一步会看到"}</strong>
+          <strong>操作后会看到</strong>
           <p>{chapter.check}</p>
         </div>
       </div>
@@ -21,16 +21,6 @@ export function StepNotes({ chapter }) {
         <p>{chapter.recovery}</p>
       </details>
     </div>
-  );
-}
-export function Translation({ chapter }) {
-  return (
-    chapter.zh && (
-      <details className="ob-translation" lang="zh-CN">
-        <summary>中文说明</summary>
-        <p>{chapter.zh}</p>
-      </details>
-    )
   );
 }
 export function FieldSource({ field, label, id }) {
