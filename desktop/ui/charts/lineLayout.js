@@ -5,6 +5,7 @@ import { tMain } from "../../i18n/index.js";
 // points are spaced evenly by index (one per trading day), the value range is the data
 // (plus 0 when a zero line is drawn) padded by 8%, and series are labelled at their ends.
 export const MARGIN = { left: 52, right: 96, rightBare: 12, top: 10, bottom: 24 };
+export const LABEL_GAP = 8;
 const END_LABEL_GAP = 14;
 const RIGHT_AXIS_GUTTER = 62;
 const DAY = 864e5;
@@ -45,13 +46,14 @@ function verticalScale(series, plot, zero, lo, hi, flatPad = 1) {
  * @param o.lo, o.hi         force the bottom / top of the range (no padding on that side)
  * @param o.labels           false drops line-end labels and narrows the right margin
  * @param o.padLeft          left margin for the rendered value labels
- * @param o.padRight         override the right margin (review charts use 104)
+ * @param o.padRight         space for series names, measured by the renderer
+ * @param o.rightAxisWidth   additional space for the right-hand tick labels
  */
-export function lineLayout({ width, height, series, dates, zero = false, lo, hi, labels = true, padLeft = MARGIN.left, padRight, formatAxisDate }) {
+export function lineLayout({ width, height, series, dates, zero = false, lo, hi, labels = true, padLeft = MARGIN.left, padRight, rightAxisWidth = RIGHT_AXIS_GUTTER, formatAxisDate }) {
   const n = Math.max(0, ...series.map((s) => s.values.length));
   const rightSeries = series.filter((s) => s.axis === "right");
   const hasRightAxis = rightSeries.some((s) => s.values.some(Number.isFinite));
-  const rightGutter = hasRightAxis ? RIGHT_AXIS_GUTTER : 0;
+  const rightGutter = hasRightAxis ? rightAxisWidth : 0;
   const plot = {
     left: padLeft,
     right: width - (padRight ?? (labels ? MARGIN.right : MARGIN.rightBare)) - rightGutter,
@@ -95,7 +97,7 @@ export function lineLayout({ width, height, series, dates, zero = false, lo, hi,
     for (let k = 1; k < order.length; k++)
       if (ends[order[k]] - ends[order[k - 1]] < END_LABEL_GAP) ends[order[k]] = ends[order[k - 1]] + END_LABEL_GAP;
     endLabels = series
-      .map((s, i) => ({ name: s.name, x: plot.right + rightGutter + 8, y: ends[i] + 4, strong: s.width != null, series: i }))
+      .map((s, i) => ({ name: s.name, x: plot.right + rightGutter + LABEL_GAP, y: ends[i] + 4, strong: s.width != null, series: i }))
       .filter((l) => ends[l.series] != null);
   }
 

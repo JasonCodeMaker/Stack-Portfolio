@@ -15,6 +15,49 @@ const env = {
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
+async function verifyEnglishLayout(app, page) {
+  await page.evaluate(() => window.portfolio.setLanguage({ language: "en" }));
+  await page.reload();
+  const chart = page.locator(".overview-trend svg[role=img]");
+  const picker = page.locator(".overview-layout-picker select");
+  const errors = [];
+  for (const [width, height] of [[1024, 650], [1920, 1080], [3440, 1440]]) {
+    await resizeContent(app, page, width, height);
+    for (const layout of ["classic", "daily"]) {
+      await picker.selectOption(layout);
+      for (const mode of ["Assets & Net Inflows", "Investment Gain"]) {
+        await page.getByRole("button", { name: mode, exact: true }).click();
+        await chart.locator(".ch-end").first().waitFor();
+        const issue = await chart.evaluate((svg) => {
+          const bounds = svg.getBoundingClientRect();
+          const names = [...svg.querySelectorAll(".ch-end")];
+          const ticks = [...svg.querySelectorAll('.ch-axis:not([text-anchor])')];
+          const tickRight = Math.max(...ticks.map(tick => tick.getBoundingClientRect().right));
+          return names.filter(label => {
+            const { left, right } = label.getBoundingClientRect();
+            return right > bounds.right || left < tickRight + 2;
+          }).map(label => label.textContent).join(", ");
+        });
+        if (issue) errors.push(`${width} ${layout}: line labels overflow or overlap the scale (${issue})`);
+      }
+      const blocks = page.locator(".overview-account-list .account-block");
+      const rows = await blocks.evaluateAll(cards => cards.map(card =>
+        [card, ...[".account-name b", ".account-balance b", ".account-share", ".account-change > b"].map(s => card.querySelector(s))]
+          .map(el => el.getBoundingClientRect().top)));
+      if (layout === "daily" && width >= 1920) {
+        assert.equal(rows.length, 2);
+        assert.ok(Math.abs(rows[0][0] - rows[1][0]) < 1, "the two sample accounts are side by side");
+        if (rows[0].some((v, i) => Math.abs(v - rows[1][i]) > 1))
+          errors.push(`${width} ${layout}: account rows differ (${rows[0]} vs ${rows[1]})`);
+      }
+    }
+  }
+  assert.deepEqual(errors, []);
+  await picker.selectOption("classic");
+  await page.evaluate(() => window.portfolio.setLanguage({ language: "zh-CN" }));
+  await page.reload();
+}
+
 async function verifyLayoutChoice(app, page) {
   const picker = page.getByRole("combobox", { name: "总览布局" });
   const scope = page.locator(".header-tools .account-scope");
@@ -213,6 +256,7 @@ async function verifyLayoutChoice(app, page) {
     await australia.getByText("澳股 11/24 15:11").waitFor();
     assert.match(await australia.innerText(), /\+A\$55\.50.*\+1\.57%.*股价.*纯澳元 · 无汇兑/s);
     assert.match(await america.innerText(), /美股 11\/24 07:00.*\+A\$84\.80.*股价.*\+60\.00.*汇率.*\+24\.80/s);
+    await verifyEnglishLayout(app, page);
     assert.match(await america.locator(".close-badge").getAttribute("title"), /布里斯班时间 · 按当前持仓和现金计算/);
     assert.match(await fx.innerText(), /最近收盘汇率变动.*\+A\$24\.80.*\+1\.33%.*US\$ 1,240\.00.*±A\$18\.85/s);
     await fx.getByRole("button", { name: /分账户明细/ }).click();

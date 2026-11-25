@@ -1,12 +1,11 @@
 import React, { useId, useLayoutEffect, useRef, useState } from "react";
 import { area, curveLinear, curveStepAfter, line } from "d3-shape";
-import { dateLabeler, lineLayout, MARGIN } from "./lineLayout.js";
+import { dateLabeler, LABEL_GAP, lineLayout, MARGIN } from "./lineLayout.js";
 import { useWidth } from "./useWidth.js";
 import { useI18n } from "../i18n.jsx";
 import "./charts.css";
 
 const identity = (v) => String(v);
-const TICK_LABEL_GAP = 8;
 
 /**
  * Shared line chart (prototype kit `K.line`, plus the hover crosshair and tooltip from spec §1.5).
@@ -53,8 +52,8 @@ export function LineChart({
   const [hover, setHover] = useState(null);
   const [keyboardIndex, setKeyboardIndex] = useState(null);
   const [drag, setDrag] = useState(null);
-  const [padLeft, setPadLeft] = useState(MARGIN.left);
-  const axisRef = useRef(null);
+  const [margins, setMargins] = useState({});
+  const svgRef = useRef(null);
   const dragStart = useRef(null);
   const navigable = Boolean(dates?.length);
   const selectable = navigable && Boolean(onSelect || onZoom);
@@ -64,13 +63,16 @@ export function LineChart({
   let svg = null,
     tip = null,
     announcement = "",
-    tickText = "";
+    labelKey = "";
   if (width > 0 && series.length) {
     const axisDate = formatAxisDate ?? (dates?.length ? dateLabeler(dates[0], dates[dates.length - 1], t) : undefined);
-    const l = lineLayout({ width, height, series, dates, zero, lo, hi, labels, padLeft, padRight, formatAxisDate: axisDate });
+    const l = lineLayout({ width, height, series, dates, zero, lo, hi, labels,
+      padLeft: margins.left, padRight: margins.right == null ? padRight : Math.max(padRight ?? 0, margins.right),
+      rightAxisWidth: margins.rightAxis, formatAxisDate: axisDate });
     const { plot, x, y } = l;
     const tickLabels = l.ticks.map(({ value }) => formatAxis(value));
-    tickText = tickLabels.join("\n");
+    const rightTickLabels = l.rightTicks.map(({ value }) => formatRightAxis(value));
+    labelKey = JSON.stringify([tickLabels, rightTickLabels, l.endLabels.map(e => [e.name, e.strong])]);
     const defined = (v) => Number.isFinite(v);
     const pathOf = (s) =>
       line()
@@ -171,6 +173,7 @@ export function LineChart({
     const hx = shown != null && shown < l.count ? x(shown) : null;
     svg = (
       <svg
+        ref={svgRef}
         width={width}
         height={height}
         role="img"
@@ -192,20 +195,20 @@ export function LineChart({
         onBlur={navigable ? clearTip : undefined}
       >
         {defs.length > 0 && <defs>{defs}</defs>}
-        <g ref={axisRef}>
+        <g className="ch-left-ticks">
           {l.ticks.map((t, i) => (
             <g key={t.value}>
               <line className="ch-grid" x1={plot.left} x2={plot.right} y1={t.y} y2={t.y} />
-              <text className="ch-axis" x={plot.left - TICK_LABEL_GAP} y={t.y + 4} textAnchor="end">
+              <text className="ch-axis" x={plot.left - LABEL_GAP} y={t.y + 4} textAnchor="end">
                 {tickLabels[i]}
               </text>
             </g>
           ))}
         </g>
-        {l.rightTicks.map((t) => (
+        {l.rightTicks.map((t, i) => (
           <g key={t.value}>
             <line className="ch-grid" x1={plot.right} x2={plot.right + 5} y1={t.y} y2={t.y} />
-            <text className="ch-axis" x={plot.right + 8} y={t.y + 4}>{formatRightAxis(t.value)}</text>
+            <text className="ch-axis ch-right-tick" x={plot.right + LABEL_GAP} y={t.y + 4}>{rightTickLabels[i]}</text>
           </g>
         ))}
         {l.zeroY != null && <line className="ch-zero" x1={plot.left} x2={plot.right} y1={l.zeroY} y2={l.zeroY} />}
@@ -308,11 +311,16 @@ export function LineChart({
   }
 
   useLayoutEffect(() => {
-    if (!axisRef.current) return;
-    const labels = axisRef.current.querySelectorAll("text");
-    const widest = Math.max(0, ...Array.from(labels, (label) => label.getBBox().width));
-    setPadLeft(Math.max(MARGIN.left, Math.ceil(widest) + TICK_LABEL_GAP + 4));
-  }, [tickText]);
+    const svg = svgRef.current;
+    if (!svg) return;
+    const widest = selector => Math.ceil(Math.max(0, ...Array.from(
+      svg.querySelectorAll(selector), label => label.getBBox().width)));
+    setMargins({
+      left: Math.max(MARGIN.left, widest(".ch-left-ticks text") + LABEL_GAP + 4),
+      rightAxis: widest(".ch-right-tick") + LABEL_GAP,
+      right: Math.max(MARGIN.rightBare, widest(".ch-end") + LABEL_GAP + 4),
+    });
+  }, [labelKey]);
 
   return (
     <div ref={ref} className="ch-line" style={{ height }}>
