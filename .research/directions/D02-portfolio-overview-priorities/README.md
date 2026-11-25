@@ -26,6 +26,8 @@
 
 ## 范围和完成证据
 
+对于现版之外的信息，日常查账最值得先测试总资产中的现金，再测试收盘变动的主要来源。两项可以分别在现有金额附近验证；完整的配置与收益分析已有对应页面。[资产信息的首屏优先级与示例](research/overview-asset-information.md)
+
 研究覆盖多账户、本位币 AUD、当前与历史估值、跨市场收盘、期间资金流、缺价格和缺成本状态，以及常规和超宽桌面布局。沿用本地账本及既有收益口径。前次确认的汇率卡、走势、持仓明细等是验证基线；原型对其层级的调整应由任务结果支持。[总览前次改版](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/36) · [收益口径](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/81f32167a576ef4d373e2a081a2326691be09e04/docs/adr/0002-portfolio-benchmark-returns.md)
 
 对照研究先让目标用户回忆一次真实访问，再用同一套合成账本比较阅读顺序。观察用户能否辨认「增资但亏损」、识别「小计和成本待补」、解释两个市场不同的收盘日，并在已清仓证券和 ETF 重叠案例中找到正确页面。依据每题正确率、误读类型与正确作答耗时决定保留或调整哪一层。[验证任务与判读方式](research/overview-options.md#怎样知道用户读对了)
