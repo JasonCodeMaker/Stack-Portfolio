@@ -90,6 +90,7 @@ export function AccountWizard({
     else backLabel = initialPage === "broker" ? "取消添加" : "返回欢迎页";
   }
   const known = [...existing.filter((b) => !added.some((a) => a.id === b.id)), ...added];
+  const previewPhone = page === "guide" && broker === "webull" && isKeys;
   const illustrated = page === "guide" && (phone || chapter.images?.length > 0);
   const showAccounts = known.length > 0 && (page === "broker" || page === "bound");
   const hasContext = illustrated || showAccounts;
@@ -193,7 +194,7 @@ export function AccountWizard({
         </div>
       </header>
       <main className={"ob-studio-main" + (page === "welcome" ? " is-welcome" : "")}>
-        <section className={"ob-studio-card" + (hasContext ? "" : " single-column")}>
+        <section className={"ob-studio-card" + (hasContext || previewPhone ? "" : " single-column")}>
           <AccountProgress page={page} broker={broker} step={step} />
           <div className="ob-studio-copy">
             <h1 ref={head} tabIndex={-1}>
@@ -203,6 +204,15 @@ export function AccountWizard({
               {page === "guide" ? chapter.body : descriptions[page]}
             </p>
           </div>
+          {previewPhone && (
+            <section className="ob-studio-context ob-phone-preview" aria-labelledby="ob-phone-preview-title">
+              <div>
+                <h2 id="ob-phone-preview-title">在手机上确认授权</h2>
+                <p>发起授权后，如需手机确认，打开 Webull App 的「Menu」，在「Messages」里点「OpenAPI Notice」，再点最新通知的「Check Now」。</p>
+              </div>
+              <PhoneGuide preview />
+            </section>
+          )}
           <div className="ob-studio-action">
             {page === "welcome" && (
               <div className="ob-actions">

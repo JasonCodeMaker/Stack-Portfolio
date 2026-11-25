@@ -56,7 +56,7 @@ export const brokerGuides = {
     {
       title: "在桌面发起连接",
       visual: "credentials",
-      body: "在下方填写刚生成的 App Key 和 App Secret，点「发起 Webull 授权」。按提示打开手机；如果券商已认可此次授权，会直接进入账户选择。",
+      body: "你可以先预览手机确认的操作。准备好后，在桌面端填写 App Key 和 App Secret，点「发起 Webull 授权」。已有有效授权时，会直接进入账户选择。",
       check: "如果需要授权，桌面提示去手机确认。已连接并看到券商账户列表时可直接核对账户。",
       problem: "收不到授权通知？",
       recovery: "收不到通知时，核对 App Key 和 App Secret 属于同一个已获批的澳洲应用，再重新发起授权。",

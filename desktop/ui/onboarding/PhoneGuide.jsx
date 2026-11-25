@@ -4,7 +4,7 @@ import { SourceLink } from "./Screenshots";
 import sources from "./guide-sources.json";
 
 const steps = ["在 Messages 点 OpenAPI Notice", "在最新的验证通知点 Check Now", "回电脑检查授权结果"];
-export function PhoneGuide() {
+export function PhoneGuide({ preview = false }) {
   const [stage, setStage] = useState(0);
   return (
     <figure className="ob-phone-guide">
@@ -73,7 +73,9 @@ export function PhoneGuide() {
         <strong>{steps[stage]}</strong>
         <p>
           {stage === 2
-            ? "回到 Stock Portfolio，点「检查授权结果」，核对券商返回的账户。"
+            ? preview
+              ? "图解已看完。准备好后，在本页点「发起 Webull 授权」。"
+              : "回到 Stock Portfolio，点「检查授权结果」，核对券商返回的账户。"
             : "只确认自己刚在桌面发起的连接。这里的操作仅用于练习。"}{" "}
           <SourceLink url={sources.webullVerification}>澳洲官方说明 ↗</SourceLink>
         </p>

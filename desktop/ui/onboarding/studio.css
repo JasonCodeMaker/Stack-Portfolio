@@ -297,6 +297,20 @@
   display: grid;
   gap: 16px;
 }
+.ob-phone-preview {
+  align-self: start;
+  gap: 10px;
+}
+.ob-phone-preview h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+.ob-phone-preview > div > p {
+  margin: 0;
+  color: var(--sub);
+  font-size: 14px;
+  line-height: 1.7;
+}
 .ob-studio-accounts {
   overflow: hidden;
   border: 1px solid var(--edge);

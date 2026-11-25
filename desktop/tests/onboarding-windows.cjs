@@ -127,6 +127,7 @@ async function choose(page, broker, inspect = false) {
     await button(page, "下一步").click();
     await button(page, "下一步").click();
     await expectStep(page, 4);
+    await page.getByRole("region", { name: "在手机上确认授权", exact: true }).waitFor();
     return;
   }
   const chapters = [
@@ -225,10 +226,18 @@ async function main() {
     await button(page, "继续添加账户").click();
     await choose(page, "webull");
     await shots(page, "webull");
+    const preview = page.getByRole("region", { name: "在手机上确认授权", exact: true });
+    assert.ok(await button(page, "发起 Webull 授权").isDisabled());
+    await button(preview, /OpenAPI Notice/).click();
+    await button(preview, "Check Now").click();
+    await preview.getByText(/图解已看完/).waitFor();
+    await expectStep(page, 4);
     await page.getByLabel("App Key", { exact: true }).fill("test-key");
     await page.getByLabel("App Secret", { exact: true }).fill("test-secret");
     await button(page, "发起 Webull 授权").click();
     await expectStep(page, 5, 6);
+    await page.getByRole("heading", { name: "在手机上确认授权", level: 1 }).waitFor();
+    await button(page, /OpenAPI Notice/).waitFor();
     await button(page, "检查授权结果").click();
     await page
       .getByRole("alert")
@@ -250,6 +259,8 @@ async function main() {
     await page.getByLabel("App Secret", { exact: true }).fill("test-secret");
     await button(page, "发起 Webull 授权").click();
     await expectStep(page, 5, 5);
+    await page.getByRole("heading", { name: "确认要绑定的账户", level: 1 }).waitFor();
+    assert.equal(await button(page, "检查授权结果").count(), 0);
     await page.getByLabel("券商返回的账户", { exact: true }).selectOption("TEST-WA");
     await page.getByLabel("本地账户名称", { exact: true }).fill("Second Webull");
     await button(page, "绑定此账户").click();
