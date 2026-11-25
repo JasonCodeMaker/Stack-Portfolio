@@ -1,0 +1,32 @@
+# [DRAFT] [D02] Portfolio Overview Priorities
+
+创建于 2026-11-25 · Proposal status: DRAFT · [方向记录 #43](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/43)
+
+## Objective
+
+让投资者打开桌面总览后，能读对所选账户的资产金额、日期和完整性，分清资金进出与投资结果，并在需要时进入能解释该数字的页面。研究产出是有证据的信息优先级、首屏阅读顺序，以及与现版对照的任务结果。对照结果也可以支持保留现版。
+
+## Research Question
+
+投资者打开总览的首要问题是「现在合计值多少，这个数我能信到什么程度」，还是「这个期间赚亏多少，为什么」？当某项数据不完整时，怎样让用户准确限定自己的判断，并继续使用其余有效信息？
+
+## Motivation
+
+现有示例账本同时显示总资产 **A$127,400**、最近一次可计算的收盘盈亏 **+A$280** 和所选期间盈亏 **+A$3,200**。其中一个持仓缺少成本，持仓盈亏显示「待补」，资产仍然可以估值。现版已经提供这些答案；需要验证的是用户能否将每个答案对应到正确的问题。首屏在两种实测窗口下还能露出不同的持仓信息。[运行截图与现状核查](research/overview-options.md#从同一本账读出三个答案)
+
+产品先例给出了两条可信路线。Wealthfolio 以组合价值组织首页，Sharesight 着重解释所选期间的收益来源；Stock Portfolio 则另外设有收益复盘、配置分析与持仓页。Apple Stocks 的区间选择和逐层查看可以帮助组织交互。公开产品与视觉研究提供候选设计依据，访问动机和理解效果仍需在本产品中观察。[产品研究](research/product-decisions.md) · [UI 研究](research/visual-attention.md)
+
+## 拟优先验证的设计
+
+**先试「日常查账」，以「期间复盘优先」和现版对照。** 日常查账版以账户范围、估值、时点为一组；需要时就地声明可估值小计。下一组用同一期间的投资盈亏与净外部资金流解释变化。更深的问题沿现有入口查看，包含收益归因、汇率、账户明细、直接持仓与穿透后的公司敞口。复盘优先版交换前两组的主次，数据、定义和入口保持可比。[候选方案、取舍与示例](research/overview-options.md#比较三种阅读顺序)
+
+> [!WARNING]
+> **[DRAFT — NEEDS CLARIFICATION BEFORE DIRECTION CONFIRMATION]**
+>
+> 主场景决定哪组数字获得首屏最高优先级。建议选择「日常查账」，并用「期间复盘」挑战这个选择；如果你的实际打开习惯相反，则应调换优先级。[待决定的问题 #44](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/44)
+
+## 范围和完成证据
+
+研究覆盖多账户、本位币 AUD、当前与历史估值、跨市场收盘、期间资金流、缺价格和缺成本状态，以及常规和超宽桌面布局。沿用本地账本及既有收益口径。前次确认的汇率卡、走势、持仓明细等是验证基线；原型对其层级的调整应由任务结果支持。[总览前次改版](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/36) · [收益口径](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/81f32167a576ef4d373e2a081a2326691be09e04/docs/adr/0002-portfolio-benchmark-returns.md)
+
+方向确认后，最小的下一项研究是让目标用户回忆一次真实访问，再用同一套合成账本比较阅读顺序。观察用户能否辨认「增资但亏损」、识别「小计和成本待补」、解释两个市场不同的收盘日，并在已清仓证券和 ETF 重叠案例中找到正确页面。依据每题正确率、误读类型与正确作答耗时决定保留或调整哪一层。当前交付给出了问题、证据和可判分用例；原型对照及用户结果属于后续研究。[验证任务与判读方式](research/overview-options.md#怎样知道用户读对了)
