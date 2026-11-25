@@ -1,6 +1,8 @@
-# [DRAFT] [D02] Portfolio Overview Priorities
+# [D02] Portfolio Overview Priorities
 
-创建于 2026-11-25 · Proposal status: DRAFT · [方向记录 #43](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/43)
+创建并确认于 2026-11-25 · Proposal status: CONFIRMED · Research status: ACTIVE · [方向记录 #43](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/43)
+
+研究者在本次对话确认「确认这版 D02 提案，正式立项」。确认范围包括主目标「日常查账：总额与完整性」，以及用现版和期间复盘版对照验证的研究路线。[确认时审阅的版本](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/2367aa021842cd4ebad739787d724f02ac7e37e8/.research/directions/D02-portfolio-overview-priorities/README.md)
 
 ## Objective
 
