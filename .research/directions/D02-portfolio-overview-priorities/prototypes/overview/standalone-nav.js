@@ -19,5 +19,15 @@
     };
     nav.append(button);
   }
+  const tools = document.createElement("button");
+  tools.type = "button";
+  tools.className = "d02-tools-button";
+  tools.textContent = "示例与核对";
+  tools.setAttribute("aria-expanded", "false");
+  tools.onclick = () => {
+    const opened = root.toggleAttribute("data-tools");
+    tools.setAttribute("aria-expanded", String(opened));
+  };
+  nav.append(tools);
   root.prepend(nav);
 })();

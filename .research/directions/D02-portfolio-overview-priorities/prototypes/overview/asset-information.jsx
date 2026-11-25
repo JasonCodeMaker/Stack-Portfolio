@@ -12,21 +12,17 @@ export function AssetComposition({ d, onDetails }) {
   const reconciled = total > 0 && Number.isFinite(cash) && Number.isFinite(d.securities)
     && Math.abs(cash + d.securities - total) < 0.005;
   const cashShare = reconciled ? cash / total : null;
-  const showBar = reconciled && cash >= 0 && securities >= 0;
   const amounts = [
-    { name: "现金", value: cash, share: cashShare, type: "cash" },
+    { name: "现金", value: cash, share: cashShare },
     { name: missingPrice ? "已计价证券（含 ETF）" : "证券持仓（含 ETF）", value: securities,
-      share: reconciled ? securities / total : null, type: "securities" },
+      share: reconciled ? securities / total : null },
   ];
-  return <section className="card d02-composition" aria-label="资产构成">
-    <div className="row"><h2>资产构成</h2><span className="sp" />
-      <button type="button" className="overview-all" onClick={onDetails}>金额明细 ›</button>
-    </div>
-    {showBar && <div className="d02-mix-bar" aria-hidden="true"><i style={{width:pct(cashShare)}}/></div>}
-    <dl>{amounts.map(row => <div key={row.type}>
-      <dt><i className={"d02-key " + row.type} aria-hidden="true"/>{row.name}</dt>
+  return <section className="d02-composition" aria-label="资产构成">
+    <dl>{amounts.map(row => <div key={row.name}>
+      <dt>{row.name}</dt>
       <dd><strong>{amount(row.value)}</strong>{row.share != null && <small>{pct(row.share)}</small>}</dd>
     </div>)}</dl>
+    <button type="button" className="overview-all" onClick={onDetails}>金额明细 ›</button>
   </section>;
 }
 
@@ -45,10 +41,10 @@ export function CloseDrivers({ today }) {
   const rows = rankedContributions(today);
   const peak = Math.abs(rows?.[0]?.change ?? 0);
   const losses = rows?.some(row => row.change < 0);
-  return <section className="card d02-close-drivers" aria-label="收盘涨跌来源">
-    <div className="d02-close-heading"><h2>收盘涨跌来源</h2>
-      {today?.previous && today?.date && <small>{today.previous} 至 {today.date}</small>}
-    </div>
+  const net = Number.isFinite(today?.change) ? signedAud(today.change, digits(today.change)) : "待核对";
+  return <details className="d02-close-drivers">
+    <summary><span>收盘涨跌来源</span><strong>{net}</strong></summary>
+    {today?.previous && today?.date && <small>{today.previous} 至 {today.date}</small>}
     {rows?.length ? <table aria-label="各项对最近收盘变动的贡献"><tbody>
       {rows.map(row => <tr key={row.key}>
         <th scope="row">{row.label}</th>
@@ -58,5 +54,5 @@ export function CloseDrivers({ today }) {
         <td className={"d02-impact-amount " + (row.change < 0 ? "loss" : "gain")}>{signedAud(row.change, digits(row.change))}</td>
       </tr>)}
     </tbody></table> : <p className="cap">{rows ? "各项收盘变动均为零。" : "缺少可核对的收盘数据。"}</p>}
-  </section>;
+  </details>;
 }

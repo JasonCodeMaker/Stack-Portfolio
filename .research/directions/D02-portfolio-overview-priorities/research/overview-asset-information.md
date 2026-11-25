@@ -1,25 +1,25 @@
 # 除了账户总额，日常查账还应该看到什么？
 
-**日常查账优先测试两个问题。总资产中有多少现金？最近一次收盘涨跌由哪些持仓带动？** 第一版把答案放在总额卡。研究者反馈两项挤在一起难读，也指出 ETF 本身就是持仓。当前原型把现金和涨跌来源各放一张卡，持仓榜按直接持有的证券排列。公司集中度、目标偏离、基准表现和未来分红各有用途，但访问它们的时机不同。以下判断以研究者选定的「日常查账」为主场景，沿用现版五项指标、五个内容区和全部入口。
+**日常查账优先测试两个问题。总资产中有多少现金？最近一次收盘涨跌由哪些持仓带动？** 第一版把答案放在总额卡。研究者反馈两项挤在一起难读，也指出 ETF 本身就是持仓。第二版将两项各放一张卡。研究者体验后指出独立卡片过多。当前原型将现金并入账户资产，收盘涨跌来源并入持仓表现，期间指标和走势放在同一区。公司集中度、目标偏离、基准表现和未来分红各有用途，但访问它们的时机不同。以下判断以研究者选定的「日常查账」为主场景，沿用现版五项指标、五个内容区和全部入口。
 
 ## 两个值得上总览的候选
 
-在同一示例账本上切换账户，可以同时观察资产构成与收盘贡献如何变化。窄侧栏先展示资产构成，再展示收盘涨跌来源，宽屏上收盘涨跌来源靠近走势图。[日常查账交互原型](../prototypes/overview/index.html)
+在同一示例账本上切换账户，可以同时观察资产构成与收盘贡献如何变化。宽屏并排展示总资产和各账户余额，窄侧栏按同一顺序上下排列。持仓表现区默认显示收盘合计，展开后可见逐项贡献。[日常查账交互原型](../prototypes/overview/index.html)
 
 | 用户看到账户时会问什么 | 现版能看到什么 | 建议放在哪里，怎样读 |
 | --- | --- | --- |
-| **这笔钱里有多少是现金？** | 现金计入总资产，点开总额可查证券与现金。前五大持仓图把剩余持仓与现金合为一项，不能据此单独读出现金。 | **资产构成卡**并列两行金额与占比。示例中现金是 A$13,040（10.2%），证券持仓（含 ETF）是 A$114,360（89.8%）。点「金额明细」可核对分账户现金。占比用所选账户、同一估值日的完整总额作分母。若分母未知或非正，只给可确认的金额；现金数本身未知时显示待核实。 |
-| **这次收盘变动主要来自哪里？** | 主卡给组合收盘变动，账户区和前五大持仓表有各自的数字。前五名按当前市值排序，可能漏掉影响更大的小仓位或已经卖清的证券。 | **收盘涨跌来源卡**注明相邻收盘日期，按贡献绝对值排序。示例中 IVV 对 +A$280 的收盘变动贡献了 +A$150。按同一范围、同一收盘口径的澳元贡献比较，不按证券涨幅排名。相反方向大额抵消时并列主要正负项；明细无法解释总数时保留原数字，避免给出单一主因。 |
+| **这笔钱里有多少是现金？** | 现金计入总资产，点开总额可查证券与现金。前五大持仓图把剩余持仓与现金合为一项，不能据此单独读出现金。 | **账户资产区**在总额下并列现金与证券的金额和占比。示例中现金是 A$13,040（10.2%），证券持仓（含 ETF）是 A$114,360（89.8%）。点「金额明细」可核对分账户现金。占比用所选账户、同一估值日的完整总额作分母。若分母未知或非正，只给可确认的金额；现金数本身未知时显示待核实。 |
+| **这次收盘变动主要来自哪里？** | 主卡给组合收盘变动，账户区和前五大持仓表有各自的数字。前五名按当前市值排序，可能漏掉影响更大的小仓位或已经卖清的证券。 | **持仓表现区的「收盘涨跌来源」**可展开查看相邻收盘日期和按绝对值排序的贡献。示例中 IVV 对 +A$280 的收盘变动贡献了 +A$150。按同一范围、同一收盘口径的澳元贡献比较，不按证券涨幅排名。相反方向大额抵消时并列主要正负项；明细无法解释总数时保留原数字，避免给出单一主因。 |
 
 示例取自 2026-10-30 的全部账户。现金由 IBKR 的 A$6,000 和 Webull Australia 的 A$7,040 相加得到，10.2% 的分母是 A$127,400。切到 IBKR 单账户，同一行应读作 A$6,000（7.2%）。历史收盘变动由 IVV +A$150、A200 +A$80、AAPL +A$50、BHP A$0 构成。期间投资盈亏是另一读数。对当前行情模式，需按既有的最近收盘、价格及汇率口径分别核对；现金汇兑、费用或无法归属的项目也可能解释变动。[示例快照](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/.research/directions/D02-portfolio-overview-priorities/prototypes/overview/index.html) · [原有现金明细与持仓榜](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/desktop/ui/Overview.jsx#L89) · [历史收盘贡献](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/desktop/todayChange.js#L152) · [当前收盘计算](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/desktop/liveQuotes.js#L68)
 
-**产品依据。** IBKR 首页分别列出已结算现金和购买力，持仓页也能查看现金余额，这说明「有多少现金」可以是首页任务，但本账本能报告的是折合澳元的账面现金。买入额度、可提现额需要券商的结算及保证金信息。Sharesight 让用户在所选期间查看各持仓的贡献；IBKR 的报告也将贡献者单列。这些先例支持区分「持有多少」和「带来多少变动」。贡献解释移到独立卡片后，用户能否把它和所选期间的投资盈亏区分开来，仍要通过体验观察。[IBKR 组合首页与余额](https://www.interactivebrokers.com/support/faq/content/see-portfolio-client-portal-35810035) · [Sharesight 贡献分析](https://help.sharesight.com/au/contribution-analysis-report/) · [IBKR 按证券查看贡献](https://www.ibkrguides.com/reportingreference/reportguide/performancebysymbol.htm)
+**产品依据。** IBKR 首页分别列出已结算现金和购买力，持仓页也能查看现金余额，这说明「有多少现金」可以是首页任务，但本账本能报告的是折合澳元的账面现金。买入额度、可提现额需要券商的结算及保证金信息。Sharesight 让用户在所选期间查看各持仓的贡献；IBKR 的报告也将贡献者单列。这些先例支持区分「持有多少」和「带来多少变动」。贡献解释移到持仓区后，用户能否把它和所选期间的投资盈亏区分开来，仍要通过体验观察。[IBKR 组合首页与余额](https://www.interactivebrokers.com/support/faq/content/see-portfolio-client-portal-35810035) · [Sharesight 贡献分析](https://help.sharesight.com/au/contribution-analysis-report/) · [IBKR 按证券查看贡献](https://www.ibkrguides.com/reportingreference/reportguide/performancebysymbol.htm)
 
 ## 其他资产信息放在哪里
 
 | 资产问题 | 现有信息及建议位置 | 何时值得提到总览 |
 | --- | --- | --- |
-| 我的资产分布在哪些账户、证券和币种？ | **保留现有卡**。账户金额、占比和变动已有账户区；前五大直接持仓已有权重与集中度；汇率卡已有美元净敞口、期间汇率盈亏和敏感度。若想知道股票、ETF、现金的整体比例，可进入配置分析。 | 美元敞口与汇率损益要分开读。示例有 US$53,800 净敞口，期间汇率盈亏为 A$0，两者可以同时成立。该例无须再造一张敞口或汇率卡。[总览账户与持仓](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/desktop/ui/Overview.jsx#L123) · [汇率卡字段](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/desktop/ui/MarketQuotes.jsx#L55) · [Wealthfolio 总览与配置分析](https://wealthfolio.app/docs/guide/dashboards/) |
+| 我的资产分布在哪些账户、证券和币种？ | **保留现有字段**。账户金额、占比和变动已有账户区；前五大直接持仓已有权重与集中度；汇率卡已有美元净敞口、期间汇率盈亏和敏感度。若想知道股票、ETF、现金的整体比例，可进入配置分析。 | 美元敞口与汇率损益要分开读。示例有 US$53,800 净敞口，期间汇率盈亏为 A$0，两者可以同时成立。该例无须再造一张敞口或汇率卡。[总览账户与持仓](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/desktop/ui/Overview.jsx#L123) · [汇率卡字段](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/desktop/ui/MarketQuotes.jsx#L55) · [Wealthfolio 总览与配置分析](https://wealthfolio.app/docs/guide/dashboards/) |
 | 我对同一家公司的实际敞口有多大？ | **配置分析承载穿透明细**。示例直接持有 A$31,200 的 Apple，同时持有 A$46,500 的 IVV。按示例成分表的 7%，至少还可识别 A$3,255 的间接持有，合计 A$34,455，约占组合 27.0%。这些权重仅用于示例。 | 研究者指出 ETF 本身也属于持仓。原型据此移除了持仓榜上的公司敞口入口。配置分析可分别解释直接持有、ETF 中的间接持有和成分未知部分。IBKR 同时提供基金穿透前后的集中度，正好对应这两种任务。[示例成分权重](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/desktop/demo.js#L72) · [IBKR 集中度说明](https://www.ibkrguides.com/clientportal/performanceandstatements/pa_viewingaccountperformance.htm) |
 | 我的配置偏离既定目标了吗？ | **有个人目标才有偏离量**。项目的配置页已支持目标比例和容差。 | 只有该范围已设目标、估值可比且超过自设容差时，才值得测试从总览提示，例如「股票高于自设目标 4 个百分点」。没有目标时，保留实际分布即可。[本地目标编辑](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/desktop/ui/Allocation.jsx#L772) · [IBKR 配置目标](https://ibkrguides.com/clientportal/performanceandstatements/allocation-goals.htm) |
 | 资产增长来自投入还是投资收益？同期表现如何？ | **先读总览已有的期间净投入和期间投资盈亏**，再从收益复盘追溯金额最大的证券贡献、已卖出证券和同期基准差。 | 入金和亏损同时出现时，并排的两个已有数字尤其重要。基准差需要同期间、同币种的比较对象。最大回撤要从剔除外部资金流影响的收益序列寻找峰值到谷值的跌幅。两者更适合复盘，总览保留现有收益率和走势。[本地收益贡献口径](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/138d101ed34fe2106658b14b58662bae3156282e/docs/adr/0003-portfolio-review-contributions.md) · [IBKR 风险与表现分析](https://www.ibkrguides.com/clientportal/performanceandstatements/pa_viewingaccountperformance.htm) |

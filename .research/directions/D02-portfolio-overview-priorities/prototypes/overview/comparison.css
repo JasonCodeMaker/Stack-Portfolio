@@ -23,6 +23,8 @@
 .d02-header-actions select { font-size: 13px; max-width: 160px; padding: 5px 8px; }
 .d02-scroll { height: clamp(455px,58vw,690px); overflow: auto; scrollbar-gutter: stable; overscroll-behavior: contain; }
 :host-context([data-standalone]) .d02-scroll { height: max(460px, calc(100dvh - 164px)); }
+:host-context([data-standalone]:not([data-tools])) .experiment-controls { display: none; }
+:host-context([data-standalone]:not([data-tools])) .d02-scroll { height: max(360px, calc(100dvh - 112px)); }
 .d02-page { padding: clamp(12px,2.1%,28px); container-type: inline-size; }
 .d02-page .period-row { margin: 0 0 12px; gap: 8px; flex-wrap: wrap; }
 .d02-page .period-row .seg { max-width: 100%; flex-wrap: wrap; }
@@ -34,78 +36,108 @@
   grid-template-columns: minmax(0, 1.27fr) repeat(2, minmax(0,1fr));
   gap: 0; padding: 4px; border: 1px solid var(--sep); border-radius: 11px; background: var(--surface);
 }
-[data-reading="balance"] .overview-main > .kpis { grid-template-areas: "total gain rate" "total flow holding"; }
+
 [data-reading="performance"] .overview-main > .kpis { grid-template-areas: "gain rate total" "gain flow holding"; }
-[data-reading]:not([data-reading="current"]) .kpis > .kpi {
+[data-reading="performance"] .kpis > .kpi {
   display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
   min-width: 0; min-height: 0; margin: 0; padding: 12px clamp(12px,1.5cqw,23px); border: 0; border-radius: 0;
   background: transparent; color: var(--l1); text-align: left;
 }
-[data-reading]:not([data-reading="current"]) .kpis > .kpi:nth-child(1) { grid-area: total; }
-[data-reading]:not([data-reading="current"]) .kpis > .kpi:nth-child(2) { grid-area: holding; }
-[data-reading]:not([data-reading="current"]) .kpis > .kpi:nth-child(3) { grid-area: gain; }
-[data-reading]:not([data-reading="current"]) .kpis > .kpi:nth-child(4) { grid-area: rate; }
-[data-reading]:not([data-reading="current"]) .kpis > .kpi:nth-child(5) { grid-area: flow; }
-[data-reading]:not([data-reading="current"]) .kpi .k { font-weight: 500; font-size: 13px; color: var(--l2); opacity: 1; width: 100%; }
-[data-reading]:not([data-reading="current"]) .kpi .v { font-size: clamp(19px,2cqw,27px); line-height: 1.3; margin: 4px 0 2px; }
-[data-reading]:not([data-reading="current"]) .kpi .d { font-size: 12px; color: var(--l2); font-weight: 400; }
-[data-reading]:not([data-reading="current"]) .kpis > :nth-child(2),
-[data-reading]:not([data-reading="current"]) .kpis > :nth-child(5) { border-top: 1px solid var(--sep); }
-[data-reading="balance"] .kpis > .kpi.overview-total,
+[data-reading="performance"] .kpis > .kpi:nth-child(1) { grid-area: total; }
+[data-reading="performance"] .kpis > .kpi:nth-child(2) { grid-area: holding; }
+[data-reading="performance"] .kpis > .kpi:nth-child(3) { grid-area: gain; }
+[data-reading="performance"] .kpis > .kpi:nth-child(4) { grid-area: rate; }
+[data-reading="performance"] .kpis > .kpi:nth-child(5) { grid-area: flow; }
+[data-reading="performance"] .kpi .k { font-weight: 500; font-size: 13px; color: var(--l2); opacity: 1; width: 100%; }
+[data-reading="performance"] .kpi .v { font-size: clamp(19px,2cqw,27px); line-height: 1.3; margin: 4px 0 2px; }
+[data-reading="performance"] .kpi .d { font-size: 12px; color: var(--l2); font-weight: 400; }
+[data-reading="performance"] .kpis > :nth-child(2),
+[data-reading="performance"] .kpis > :nth-child(5) { border-top: 1px solid var(--sep); }
 [data-reading="performance"] .kpis > .kpi:nth-child(3) {
   background: var(--hero-bg); color: var(--hero-text); border-radius: 8px;
   align-items: stretch; padding: clamp(16px,2.2cqw,30px);
 }
-[data-reading="balance"] .kpis > .kpi.overview-total :is(.k,.d,.cap),
 [data-reading="performance"] .kpis > .kpi:nth-child(3) :is(.k,.d,.delta,.cap) { color: var(--hero-text); opacity: 1; }
-[data-reading="balance"] .kpis > .kpi.overview-total .v,
 [data-reading="performance"] .kpis > .kpi:nth-child(3) .v { font-size: clamp(25px,3.5cqw,52px); line-height: 1.15; letter-spacing: -.035em; margin: 9px 0 7px; }
 [data-reading="performance"] .overview-total :is(.delta, .cap) { color: var(--l2); opacity: 1; }
 [data-reading="performance"] .overview-primary .overview-breakdown { order: -1; }
 .d02-subtotal { margin-top: 8px; font-size: 12px; line-height: 1.45; font-weight: 500; }
-[data-aspect="16:9"] [data-reading="balance"] .overview-layout {
-  grid-template-areas: "metrics metrics" "drivers mix" "primary rail";
+/* In the daily prototype each surface answers one question. Native controls stay
+   in document order within their group, including when the columns stack. */
+[data-aspect="16:9"] [data-reading="balance"] .overview-layout { display: block; }
+[data-reading="balance"] .overview-layout > :is(.overview-main,.overview-rail) { display: none; }
+.d02-groups { display: grid; gap: clamp(16px,1.6cqw,24px); }
+.d02-group { min-width: 0; padding: clamp(16px,2.2cqw,28px); }
+.d02-native-part { min-width: 0; }
+.d02-group .d02-native-part > .card {
+  margin: 0; padding: 0; background: transparent; color: var(--l1); border: 0; border-radius: 0;
 }
-.d02-composition { grid-area: mix; }
-.d02-close-drivers { grid-area: drivers; }
-.d02-composition, .d02-close-drivers { min-width: 0; align-self: stretch; }
-.d02-composition > .row, .d02-close-heading { margin-bottom: 10px; }
-.d02-mix-bar {
-  display: flex; height: 6px; overflow: hidden; border-radius: 3px;
-  background: var(--s2);
-}
-.d02-mix-bar i, .d02-key.cash { background: var(--s1); }
-.d02-key.securities { background: var(--s2); }
-.d02-composition dl, .d02-composition dd { margin: 0; }
-.d02-composition dl > div {
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 2px 10px; flex-wrap: wrap; padding-top: 7px;
-}
+.d02-group-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 14px; }
+.d02-group .d02-group-head h2 { margin: 0; font-size: 20px; line-height: 1.35; }
+.d02-assets { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 20px clamp(20px,4cqw,64px); }
+.d02-assets > .d02-native-part { border-inline-start: 1px solid var(--sep); padding-inline-start: clamp(20px,3cqw,40px); }
+.d02-assets .overview-accounts .row { margin-bottom: 8px; }
+.d02-assets .account-block:first-child { border-top: 0; padding-top: 0; }
+.d02-balance-column { min-width: 0; }
+.d02-assets .overview-total { width: 100%; }
+.d02-assets .overview-total .overview-total-label { font-size: 15px; font-weight: 600; }
+.d02-assets .overview-total time { font-weight: 400; color: var(--l2); }
+.d02-assets .overview-total :is(.k,.cap) { color: var(--l1); opacity: 1; }
+.d02-assets .overview-total .v { display: block; font-size: clamp(32px,4cqw,56px); line-height: 1.15; margin: 6px 0 5px; letter-spacing: -.035em; color: var(--accent); }
+.d02-assets .overview-total .up { color: var(--up); }
+.d02-assets .overview-total .down { color: var(--down); }
+.d02-assets .overview-total .cap { color: var(--l2); margin-inline-start: 4px; }
+.d02-assets .overview-total:hover .v { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 5px; }
+.d02-composition { margin-top: 16px; border-top: 1px solid var(--sep); padding-top: 11px; }
+.d02-composition dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px 16px; margin: 0 0 6px; }
 .d02-composition dt { color: var(--l2); font-size: 13px; }
-.d02-key { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 6px; }
-.d02-composition dd { display: flex; align-items: baseline; gap: 8px; margin-left: auto; }
-.d02-composition dd strong { font-size: 14px; }
-.d02-composition dd small { min-width: 4ch; text-align: right; color: var(--l2); }
-.d02-close-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; }
-.d02-close-heading small { color: var(--l2); }
-.d02-close-drivers table { width: 100%; border-collapse: collapse; }
+.d02-composition dd { display: flex; gap: 2px 8px; align-items: baseline; flex-wrap: wrap; margin: 2px 0 0; }
+.d02-composition dd strong { font-size: 16px; }
+.d02-composition dd small, .d02-close-drivers > small { color: var(--l2); }
+.d02-group .overview-all { min-height: 26px; font-size: 13px; }
+.d02-positions .kpi { display: flex; gap: 4px 10px; flex-wrap: wrap; align-items: baseline; }
+.d02-positions .kpi .v { font-size: 18px; margin: 0; }
+.d02-positions .kpi .d { color: var(--l2); font-size: 12px; }
+.d02-close-drivers { margin-bottom: 16px; border-block: 1px solid var(--sep); }
+.d02-close-drivers > summary {
+  display: flex; align-items: center; gap: 10px; min-height: 42px; color: var(--l1); cursor: pointer; list-style: none;
+}
+.d02-close-drivers > summary::-webkit-details-marker { display: none; }
+.d02-close-drivers > summary::before { content: ""; width: 6px; height: 6px; border: solid var(--l2); border-width: 1.5px 1.5px 0 0; transform: rotate(45deg); }
+.d02-close-drivers[open] > summary::before { transform: rotate(135deg); }
+.d02-close-drivers > summary strong { margin-inline-start: auto; font-size: 14px; }
+.d02-close-drivers > summary:hover span { text-decoration: underline; }
+.d02-close-drivers table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
 .d02-close-drivers :is(td,th) { border: 0; padding: 3px 0; }
 .d02-close-drivers th { text-align: left; width: 24%; font-size: 13px; font-weight: 500; }
 .d02-close-drivers .d02-impact-cell { padding-inline: 10px 16px; }
-.d02-impact-track { position: relative; display: block; width: 100%; height: 5px; }
-.d02-impact-track.split-axis::before {
-  content: ""; position: absolute; left: 50%; top: -3px; height: 11px; border-left: 1px solid var(--l3);
-}
+.d02-impact-track { position: relative; display: block; width: 100%; height: 4px; }
+.d02-impact-track.split-axis::before { content: ""; position: absolute; left: 50%; top: -3px; height: 10px; border-left: 1px solid var(--l3); }
 .d02-impact-track i { position: absolute; height: 100%; border-radius: 2px; }
 .d02-impact-track .rise { left: 0; background: var(--up); }
 .d02-impact-track.split-axis .rise { left: 50%; }
 .d02-impact-track .fall { right: 50%; background: var(--down); }
 .d02-close-drivers .d02-impact-amount { text-align: right; white-space: nowrap; width: 1%; font-weight: 600; }
-.d02-close-drivers .cap { margin-block: 4px 0; }
-@container (max-width: 820px) {
-  [data-aspect="16:9"] [data-reading="balance"] .overview-layout {
-    grid-template-areas: "metrics" "mix" "drivers" "primary" "rail";
-  }
+.d02-close-drivers .cap { margin: 0 0 10px; }
+.d02-period-metrics { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px 18px; padding-bottom: 16px; margin-bottom: 16px; border-bottom: 1px solid var(--sep); }
+.d02-period-metrics .kpi .v { font-size: clamp(18px,2cqw,25px); }
+.d02-period-charts { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); gap: 24px; }
+.d02-period-details { min-width: 0; }
+.d02-period-details > .d02-native-part + .d02-native-part { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--sep); }
+.d02-period-details .overview-breakdown dl { display: block; }
+.d02-period-details .overview-breakdown dl > div { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 4px 0; gap: 2px 8px; border: 0; }
+.d02-period-details .breakdown-track { grid-column: 1 / -1; margin: 0; }
+@container (min-width: 780px) {
+  .d02-positions .holding-list tr { grid-template-columns: minmax(0,1fr) max-content minmax(0,1fr); gap: 16px; }
+  .d02-positions .holding-result { grid-column: auto; }
+}
+@container (max-width: 750px) {
+  .d02-assets, .d02-period-charts { grid-template-columns: minmax(0,1fr); gap: 18px; }
+  .d02-assets > .d02-native-part { border-inline-start: 0; border-top: 1px solid var(--sep); padding: 14px 0 0; }
+}
+@container (max-width: 420px) {
+  .d02-period-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .d02-positions .d02-group-head { display: grid; }
 }
 [data-reading]:not([data-reading="current"]) .overview-total-label { align-items: baseline; flex-wrap: wrap; }
 [data-reading]:not([data-reading="current"]) .overview-total-label time { font-size: 11px; font-weight: 400; }
@@ -122,10 +154,9 @@
 .d02-body .overview-primary, .d02-body .overview-rail { min-width: 0; }
 @container (max-width: 640px) {
   [data-reading]:not([data-reading="current"]) .overview-main > .kpis { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  [data-reading="balance"] .overview-main > .kpis { grid-template-areas: "total total" "gain rate" "flow holding"; }
   [data-reading="performance"] .overview-main > .kpis { grid-template-areas: "gain gain" "total rate" "holding flow"; }
-  [data-reading]:not([data-reading="current"]) .kpis > .kpi { padding: 10px 12px; }
-  [data-reading="balance"] .kpis > .kpi.overview-total, [data-reading="performance"] .kpis > .kpi:nth-child(3) { padding: 16px; }
+  [data-reading="performance"] .kpis > .kpi { padding: 10px 12px; }
+  [data-reading="performance"] .kpis > .kpi:nth-child(3) { padding: 16px; }
 }
 @container (max-width: 430px) {
   .d02-page .overview-main .kpis { grid-template-columns: repeat(2,minmax(0,1fr)); }

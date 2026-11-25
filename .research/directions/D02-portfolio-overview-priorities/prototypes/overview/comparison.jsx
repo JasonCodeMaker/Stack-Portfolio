@@ -7,7 +7,7 @@ import { Holdings } from "@desktop/ui/Cockpit";
 import { I18nProvider } from "@desktop/ui/i18n";
 import { Modal, aud } from "@desktop/ui/common";
 import { periodLabels } from "@desktop/ui/filters.js";
-import { AssetComposition, CloseDrivers } from "./asset-information";
+import { DailyGroups, dailyParts } from "./daily-groups";
 import "@desktop/ui/design.css";
 import "@desktop/ui/styles.css";
 import "./comparison.css";
@@ -69,11 +69,12 @@ function OverviewPage({ d, mode, filters, onFilters, onPage, run }) {
 
   useLayoutEffect(() => {
     const page = rootRef.current;
+    const layout = page.querySelector(".overview-layout");
     setTargets({
       total: page.querySelector(".overview-total"),
-      layout: page.querySelector(".overview-layout"),
+      layout, parts: daily ? dailyParts(layout) : null,
     });
-  }, []);
+  }, [daily]);
 
   useLayoutEffect(() => {
     if (!showSubtotal || !targets) return;
@@ -91,12 +92,7 @@ function OverviewPage({ d, mode, filters, onFilters, onPage, run }) {
     {showSubtotal && targets && createPortal(
       <span id={descriptionId} className="d02-subtotal">可估值小计 {money(coverage.amount)} · {coverage.missing.join("、")} 缺报价</span>, targets.total
     )}
-    {daily && targets && createPortal(
-      <>
-        <AssetComposition d={d} onDetails={() => targets.total.click()}/>
-        <CloseDrivers today={d.today}/>
-      </>, targets.layout
-    )}
+    {daily && targets && createPortal(<DailyGroups d={d} parts={targets.parts}/>, targets.layout)}
   </div>;
 }
 
