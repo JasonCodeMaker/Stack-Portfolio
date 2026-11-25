@@ -4,6 +4,8 @@ Stock Portfolio 是一款本地 Windows 投资组合应用。它支持持仓估�
 
 [Windows 安装包](https://github.com/JasonCodeMaker/Stack-Portfolio/releases) · [使用与构建说明](desktop/README.md)
 
+首次添加券商账户请参阅 [IBKR 图文教程](docs/onboarding/ibkr.md) 或 [Webull Australia 图文教程](docs/onboarding/webull-au.md)。
+
 ## 本地开发
 
 在仓库根目录执行以下命令。开发环境需要 Node.js 22.15 或更高版本。

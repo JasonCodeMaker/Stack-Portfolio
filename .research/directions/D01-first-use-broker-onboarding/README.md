@@ -1,8 +1,12 @@
-# [DRAFT] [D01] First-Use Broker Onboarding
+# [D01] First-Use Broker Onboarding
 
 Date: 2026-11-25
 
-Proposal status: DRAFT
+Proposal status: CONFIRMED
+
+Research status: ACTIVE
+
+2026-11-25，项目负责人确认了[按账户逐个绑定的提案](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/34779b019fe30436d7930d75fe7374e3e376035a/.research/directions/D01-first-use-broker-onboarding/README.md)，并要求每家券商分别提供清晰的逐步教程，优先使用图文。[确认记录](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/40#issuecomment-7150057011)。
 
 ## Objective
 
@@ -24,6 +28,15 @@ Proposal status: DRAFT
 4. **绑定成功后立即问「还要继续添加账户吗？」** 「继续添加」回到券商选择，刚选过的券商仍可选。「完成添加」结束循环。只绑一个账户就可以完成；有多个账户时由用户决定何时结束。[流程决策](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/41#issuecomment-7150091822)。
 5. **引导首次使用数据。** 有已绑定账户时，引导用户为所选账户拉取数据，预览入账目标并确认，然后去总览、持仓或交易流水查看结果。将「账户已绑定」「已拉取数据」「已确认入账」分别展示。若没有新记录，解释查询范围及下一步。[现有导入预览](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/4b5c31f6e6eccabeb679e0d811ce3e2c4fbbc20b/desktop/ui/ImportPreview.jsx)。
 
+## 每家券商的图文教程
+
+用户选定券商后，应该只看到这一家的教程。每步写清在哪里操作、点哪个控件、何时返回 Stock Portfolio，以及怎样判断已成功。需要切换设备或查找凭据的步骤优先配图；图旁保留按钮原名。凭据输入框配图使用空白或示例数据。
+
+- [IBKR 账户添加指南](../../../docs/onboarding/ibkr.md)展示如何为指定账户创建 Activity Flex Query、取得 Token、填写桌面端连接信息，以及核对首次导入。
+- [Webull Australia 账户添加指南](../../../docs/onboarding/webull-au.md)展示如何申请 API、等待批准、生成密钥、完成手机授权，并核对券商账户与本地账户。
+
+这两份教程按当前桌面版 1.3.2 编写。应用内逐账户向导上线时，需用该版本的实际操作入口替换截图，并验证两条教程均可从「添加账户」进入。
+
 ## 需要验证的产品能力
 
 当前桌面端读取一组 IBKR Flex 连接设置和一个当前选中的 Webull 账户 ID。IBKR 解析器会拒绝包含多个账户的 Flex 报表，并提示每个账户使用单独的查询和映射。因此，同一家券商的第二个账户能否与第一个同时保留、分别拉取和入账，需要用两份可区分的账户数据验证。后续设计应查清哪些凭据可以复用，以及每个绑定需要独立保存哪些账户信息。[连接设置](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/4b5c31f6e6eccabeb679e0d811ce3e2c4fbbc20b/desktop/main.cjs#L505) · [拉取账户的代码](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/4b5c31f6e6eccabeb679e0d811ce3e2c4fbbc20b/desktop/services.js#L854) · [IBKR 多账户报表检查](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/4b5c31f6e6eccabeb679e0d811ce3e2c4fbbc20b/desktop/brokers/ibkrFlex.ts#L251)。
@@ -38,8 +51,8 @@ Proposal status: DRAFT
 | 使用不同券商的账户 | 先添加 IBKR，再添加 Webull Australia，或反向添加。每次成功后都出现同一个继续添加提示，用户能看清总览当前包含哪些账户。 |
 | 授权等待、中断或没有新记录 | 用户知道是去手机完成授权、回到应用重试，还是查看查询范围。中途退出再继续时，之前成功绑定的账户仍然可用。 |
 
-验收时从全新用户状态开始，记录首次使用者在哪一步需要提示，并用已知持仓或流水核对入账账户。账户绑定和首次导入分别验收。
+验收时让首次使用者分别只看对应券商的教程，记录在哪一步需要提示。核对图中的菜单、按钮和授权状态是否与当时的界面一致，并用已知持仓或流水核对入账账户。账户绑定和首次导入分别验收。
 
 ## 相关记录
 
-项目负责人已确定按账户逐个绑定的流程。本文为待整体确认的 Direction 提案；实现、券商界面核对和新用户试用属于后续交付。[Direction 主记录](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/40) · [准备决策](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/41) · [本地账本设计](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/main/docs/adr/0001-independent-portfolio-ledger.md)。
+项目负责人已确认本 Direction。账户绑定向导的实现、真实账户的端到端验证和新用户试用属于后续交付。[Direction 主记录](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/40) · [准备决策](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/41) · [本地账本设计](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/main/docs/adr/0001-independent-portfolio-ledger.md)。
