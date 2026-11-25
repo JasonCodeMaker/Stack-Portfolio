@@ -1,0 +1,573 @@
+/* The wizard uses the same theme as the rest of the desktop window. */
+.ob.theme-D {
+  --sheet: var(--surface);
+  --soft: var(--surface2);
+  --edge: var(--sep);
+  --ink: var(--l1);
+  --sub: var(--l2);
+  --shadow: light-dark(#17221c20, #0005);
+  font-family: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+}
+.theme-D h1,
+.theme-D h2 {
+  font-family: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+}
+.theme-D .ob-primary,
+.theme-D .ob-primary:hover {
+  color: var(--on-accent);
+}
+.theme-D .ob-top {
+  background: var(--sheet);
+  min-height: 70px;
+  padding-inline: clamp(22px, 5vw, 80px);
+}
+.theme-D .mark {
+  background: var(--soft);
+}
+.theme-D .mark i {
+  background: var(--accent);
+}
+.ob-studio-brand {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.ob-studio-brand > span {
+  padding-left: 20px;
+  border-left: 1px solid var(--edge);
+  color: var(--sub);
+  font-size: 14px;
+}
+.theme-D .ob-manual-button {
+  background: var(--sheet);
+  color: var(--accent);
+  font-size: 14px;
+  padding-inline: 15px;
+  border-color: var(--edge);
+}
+.ob-studio-main {
+  width: min(1250px, 100%);
+  margin: auto;
+  padding: clamp(36px, 8vh, 76px) clamp(22px, 4.5vw, 68px) 94px;
+}
+.ob-studio-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  grid-template-areas: "progress context" "copy context" "action context";
+  grid-template-rows: auto auto 1fr;
+  gap: 0 clamp(30px, 4vw, 66px);
+  background: var(--sheet);
+  padding: clamp(26px, 3.6vw, 53px);
+  border-radius: 22px;
+  border: 1px solid var(--edge);
+  box-shadow: 0 12px 32px -23px var(--shadow);
+}
+.ob-studio-progress {
+  grid-area: progress;
+}
+.ob-studio-progress .ob-drawer-label {
+  color: var(--accent);
+  font-weight: 600;
+}
+.ob-studio-progress .ob-drawer-label b {
+  font-variant-numeric: tabular-nums;
+}
+.ob-studio-progress .ob-track {
+  margin: 11px 0 clamp(28px, 4.2vh, 42px);
+}
+.ob-studio-progress .ob-track i:not(.on) {
+  background: var(--edge);
+}
+.ob-studio-copy {
+  grid-area: copy;
+  min-width: 0;
+}
+.theme-D .ob-studio-copy .ob-kicker {
+  margin: 0 0 12px;
+  font-size: 13px;
+  letter-spacing: 0;
+}
+.ob-studio-copy h1 {
+  font-size: clamp(30px, 3vw, 45px);
+  letter-spacing: -0.05em;
+}
+.is-welcome .ob-studio-copy h1 {
+  font-size: clamp(37px, 4vw, 61px);
+}
+.ob-studio-copy h1 span {
+  display: block;
+}
+.theme-D .ob-studio-copy .ob-lead {
+  margin: 16px 0 20px;
+  line-height: 1.8;
+}
+.ob-studio-action {
+  grid-area: action;
+  align-self: start;
+  min-width: 0;
+}
+.theme-D .ob-studio-action > .ob-actions:first-child {
+  margin-top: 4px;
+}
+.theme-D .ob-studio-action > .field:first-child,
+.theme-D .ob-studio-action > .ob-checkpoint:first-child {
+  margin-top: 0;
+}
+.theme-D .ob-studio-action .ob-broker-picks button {
+  border-color: var(--edge);
+}
+.theme-D .ob-studio-action .ob-broker-picks button:hover {
+  background: var(--soft);
+  border-color: var(--accent);
+}
+.ob-studio-context {
+  grid-area: context;
+  align-self: center;
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+}
+.ob-studio-accounts {
+  overflow: hidden;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+}
+.ob-studio-accounts .ob-register-head {
+  background: var(--soft);
+}
+.theme-D dialog {
+  color: var(--ink);
+  background: var(--sheet);
+}
+.theme-D dialog:has(.ob-manual-chapters) {
+  width: min(690px, 94vw);
+  max-height: min(83vh, 790px);
+}
+.theme-D dialog:has(.ob-manual-chapters) .modal-inner {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  gap: 0;
+  max-height: min(82vh, 785px);
+}
+.theme-D dialog:has(.ob-manual-chapters) .modal-inner > header {
+  padding: 18px 23px 9px;
+}
+.theme-D .ob-manual-brokers {
+  display: flex;
+  gap: 6px;
+  padding: 5px 23px 14px;
+  border-bottom: 1px solid var(--edge);
+}
+.theme-D .ob-manual-brokers button {
+  min-height: 36px;
+  padding: 6px 15px;
+  font-size: 14px;
+}
+.theme-D .ob-manual-brokers button[aria-pressed="true"] {
+  background: var(--soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.theme-D .ob-manual-chapters {
+  overflow-y: auto;
+  list-style: none;
+  padding: 8px 23px;
+  overscroll-behavior: contain;
+}
+.ob-manual-chapters li + li {
+  border-top: 1px solid var(--edge);
+}
+.theme-D .ob-chapter-title {
+  display: flex;
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 12px 5px;
+  border: 0;
+  background: var(--sheet);
+  min-height: 48px;
+}
+.theme-D .ob-chapter-title:focus-visible {
+  outline-offset: -3px;
+}
+.ob-chapter-number {
+  color: var(--accent);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ob-chapter-title strong {
+  font-size: 15px;
+}
+.ob-chapter-title svg {
+  margin-left: auto;
+  color: var(--sub);
+}
+.ob-chapter-title[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+.ob-chapter-content {
+  padding: 0 7px 17px 34px;
+}
+.ob-chapter-content > p {
+  color: var(--sub);
+  font-size: 14px;
+  line-height: 1.75;
+  margin-bottom: 11px;
+}
+.ob-account-example {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: var(--soft);
+  border-radius: 9px;
+  padding: 12px 15px;
+}
+.ob-account-example small {
+  display: block;
+}
+.ob-manual-footer {
+  border-top: 1px solid var(--edge);
+  padding: 11px 23px;
+  display: flex;
+  justify-content: flex-end;
+}
+@media (max-width: 780px) {
+  .ob-studio-main {
+    padding: 20px 18px 88px;
+  }
+  .ob-studio-card {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "progress" "copy" "context" "action";
+    padding: 24px;
+  }
+  .ob-studio-context {
+    margin-bottom: 16px;
+  }
+  .ob-studio-brand {
+    gap: 10px;
+  }
+  .ob-studio-brand > span {
+    display: none;
+  }
+}
+
+.ob-head-tools,
+.ob-theme-select,
+.ob-figure-tools,
+.ob-image-pages,
+.ob-phone-caption {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.ob-head-tools {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.ob-theme-select {
+  color: var(--sub);
+  gap: 3px;
+}
+.theme-D .ob-theme-select select {
+  font-size: 13px;
+  padding: 5px;
+  min-height: 36px;
+  background: var(--sheet);
+}
+.theme-D .ob-studio-card {
+  border-radius: 16px;
+}
+.theme-D .ob-broker-mark.ibkr {
+  background: light-dark(#f7e8e3, #422c27);
+  color: light-dark(#983d30, #ff9685);
+}
+.theme-D .ob-broker-mark.webull {
+  background: light-dark(#e2edf9, #233648);
+  color: light-dark(#26629f, #99c7ef);
+}
+.theme-D .ob-register-head,
+.theme-D .ob-record,
+.theme-D .ob-success {
+  color: var(--ink);
+}
+.theme-D .ob-dock {
+  background: light-dark(#273c30, #202a23);
+  color: #f3f7f3;
+}
+.theme-D .ob-dock .ob-variants {
+  border-color: #58665d;
+}
+.theme-D .ob-dock button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.theme-D .ob-dock .ob-pick,
+.theme-D .ob-dock button:hover {
+  background: #485e50;
+  color: white;
+}
+.theme-D .ob-dock button:focus-visible {
+  outline-color: #b4e9c8;
+}
+.theme-D dialog {
+  border-color: var(--edge);
+}
+.theme-D dialog::backdrop {
+  background: #07110ccd;
+}
+.theme-D .ob-troubleshoot {
+  margin: 10px 0;
+  color: var(--sub);
+  font-size: 14px;
+}
+.ob-troubleshoot summary {
+  cursor: pointer;
+  color: var(--accent);
+  width: max-content;
+}
+.ob-troubleshoot p {
+  margin-top: 5px;
+}
+.theme-D .ob-real-figure,
+.theme-D .ob-phone-guide {
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--sheet);
+}
+.theme-D button.ob-screenshot {
+  width: 100%;
+  padding: 10px;
+  position: relative;
+  border: 0;
+  border-radius: 0;
+  background: var(--soft);
+  cursor: zoom-in;
+  display: block;
+}
+.ob-screenshot picture,
+.ob-real-figure img,
+.ob-viewer img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.ob-screenshot img {
+  object-fit: contain;
+  max-height: 315px;
+}
+.ob-screenshot > span {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 5px;
+  padding: 2px 7px;
+  background: var(--sheet);
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  font-size: 11px;
+}
+.ob-real-figure figcaption,
+.ob-phone-guide figcaption {
+  padding: 12px 14px;
+}
+.ob-real-figure figcaption strong,
+.ob-phone-guide figcaption strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.ob-figure-tools {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-top: 5px;
+}
+.theme-D a.ob-source {
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ob-figure-tools small {
+  font-size: 12px;
+}
+.theme-D .ob-image-pages {
+  font-size: 12px;
+  gap: 6px;
+}
+.theme-D .ob-image-pages button {
+  min-height: 30px;
+  padding: 3px 5px;
+}
+.ob-viewer {
+  overflow: auto;
+  max-height: 61vh;
+  background: var(--soft);
+}
+.ob-viewer.original img {
+  width: auto;
+  max-width: none;
+  max-height: none;
+}
+.theme-D dialog:has(.ob-viewer) {
+  width: min(1120px, 96vw);
+  max-height: 90vh;
+}
+.ob-phone-caption {
+  justify-content: space-between;
+  background: var(--soft);
+  padding: 9px 13px;
+  font-size: 12px;
+  color: var(--sub);
+}
+.ob-phone-screen {
+  max-width: 328px;
+  margin: 15px auto;
+  background: #101627;
+  color: #eef1fa;
+  border-radius: 15px;
+  overflow: hidden;
+  border: 1px solid #273247;
+  font:
+    15px/1.45 "Segoe UI",
+    sans-serif;
+}
+.ob-phone-header {
+  padding: 13px 17px;
+  border-bottom: 1px solid #293145;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 650;
+}
+.ob-phone-screen h3 {
+  color: #eef1fa;
+  font-size: 20px;
+  margin: 15px 15px 6px;
+}
+.ob-phone-screen .ob-phone-row {
+  display: flex;
+  align-items: center;
+  text-align: left;
+  gap: 10px;
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid #263044;
+  border-radius: 0;
+  min-height: 46px;
+  padding: 9px 14px;
+  background: #101627;
+  color: #eef1fa;
+}
+.ob-phone-row i,
+.ob-message-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  color: #ecf4ff;
+  background: #2958c8;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+.ob-phone-screen .ob-phone-row.muted {
+  color: #a8b4c8;
+  font-size: 13px;
+}
+.ob-phone-screen .ob-phone-row.target {
+  background: #1c2a44;
+}
+.ob-phone-row > svg {
+  margin-left: auto;
+}
+.ob-phone-screen .ob-phone-row small {
+  color: #b7c3d6;
+  display: block;
+  font-size: 12px;
+}
+.ob-phone-nav {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 13px;
+  color: #83b4ff;
+  font-size: 12px;
+}
+.ob-phone-thread {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 17px 11px 24px;
+}
+.ob-phone-bubble {
+  background: #1e263a;
+  border-radius: 3px 12px 12px;
+  color: #e8edf8;
+  flex: 1;
+  overflow: hidden;
+}
+.ob-phone-bubble strong,
+.ob-phone-bubble p {
+  display: block;
+  padding: 10px 13px;
+  font-size: 14px;
+}
+.ob-phone-bubble p {
+  line-height: 1.5;
+  padding-top: 0;
+}
+.ob-phone-screen .ob-phone-bubble button,
+.ob-phone-screen .ob-phone-finish button,
+.ob-phone-screen .ob-phone-header button {
+  background: #1e263a;
+  color: #84b7ff;
+  border: 0;
+  border-top: 1px solid #34405a;
+  width: 100%;
+  border-radius: 0;
+  min-height: 38px;
+}
+.ob-phone-screen .ob-phone-header button {
+  width: 24px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  min-height: 26px;
+}
+.ob-phone-screen button:focus-visible {
+  outline: 2px solid #96c7ff;
+  outline-offset: -3px;
+}
+.ob-phone-finish {
+  padding: 18px;
+  display: grid;
+  gap: 9px;
+}
+.ob-phone-finish p,
+.ob-phone-guide figcaption p {
+  font-size: 13px;
+}
+.ob-phone-guide figcaption p {
+  margin-top: 5px;
+  color: var(--sub);
+}
+@media (max-width: 640px) {
+  .ob-head-tools {
+    gap: 4px;
+  }
+  .ob-theme-select > svg {
+    display: none;
+  }
+  .ob-studio-context {
+    order: 0;
+  }
+  .theme-D .ob-top {
+    gap: 8px;
+  }
+}

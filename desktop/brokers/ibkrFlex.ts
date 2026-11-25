@@ -32,6 +32,7 @@ export interface IbkrFlexAudit {
 }
 
 export interface IbkrFlexReport {
+  brokerAccountId?: string;
   activities: BrokerActivity[];
   audit: IbkrFlexAudit;
 }
@@ -271,7 +272,7 @@ function cashImportRevision(row: Record<string, string>, type: BrokerActivity["a
   return undefined;
 }
 
-function assertSingleBrokerAccount(xml: string): void {
+function singleBrokerAccount(xml: string): string | undefined {
   const accountIds = new Set([
     ...elements(xml, "FlexStatement"),
     ...elements(xml, "AccountInformation"),
@@ -281,11 +282,11 @@ function assertSingleBrokerAccount(xml: string): void {
   if (accountIds.size > 1) {
     throw new Error("IBKR Flex response must contain exactly one broker account. Create a separate Query and mapping for each account.");
   }
+  return [...accountIds][0];
 }
 
 function parseIbkrActivities(xml: string, baseCurrency?: string): BrokerActivity[] {
   if (!/<FlexStatement\b/i.test(xml)) throw new Error("IBKR response is not an Activity Flex XML statement.");
-  assertSingleBrokerAccount(xml);
   const activities: BrokerActivity[] = [];
   const tradeRows = elements(xml, "Trade");
   const taxedTradeIds = new Set(tradeRows
@@ -389,6 +390,7 @@ function flexDay(value?: string): string | undefined {
 }
 
 export function parseIbkrFlexReport(xml: string): IbkrFlexReport {
+  const brokerAccountId = singleBrokerAccount(xml);
   const statement = elements(xml, "FlexStatement")[0] ?? {};
   const account = elements(xml, "AccountInformation")[0] ?? {};
   const baseCurrency = (statement.baseCurrency || account.currency)?.toUpperCase() || undefined;
@@ -433,6 +435,7 @@ export function parseIbkrFlexReport(xml: string): IbkrFlexReport {
 
   return {
     activities,
+    brokerAccountId,
     audit: {
       period: from && to ? { from, to } : undefined,
       baseCurrency,

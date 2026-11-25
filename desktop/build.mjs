@@ -30,6 +30,8 @@ await Promise.all([
     platform: "browser",
     target: "chrome130",
     outfile: path.join(output, "app.js"),
+    loader: { ".png":"file", ".jpg":"file" },
+    assetNames: "guide-images/[name]-[hash]",
     minify: true,
     legalComments: "eof",
     define: { "process.env.NODE_ENV": '"production"' },

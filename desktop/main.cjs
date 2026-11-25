@@ -1,4 +1,6 @@
-const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net, screen, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net, screen, nativeTheme, shell } = require("electron");
+const guideLinks = Object.values(require("./ui/onboarding/guide-sources.json"));
+const {bindings,bindingFor,credentialsFor,savedWebullToken,saveBinding,disconnectBinding} = require("./brokerBindings");
 const path = require("node:path"),
   fs = require("node:fs"),
   { pathToFileURL } = require("node:url");
@@ -49,6 +51,7 @@ const {
   amendEvent,
   brokerReport,
   connectWebull,
+  authorizeWebull,
   resetSync,
   refreshFund,
   network,
@@ -63,6 +66,7 @@ if (process.env.STACK_PORTFOLIO_TEST_DIR) app.setPath("userData", process.env.ST
 else app.setPath("userData", path.join(app.getPath("appData"), "Stack Portfolio"));
 let db,
   mode,
+  setupDraft,
   win,
   stagedSource,
   selectedBackup,
@@ -161,6 +165,7 @@ async function activate(m) {
   db?.close();
   db = next;
   mode = m;
+  setupDraft=null;
   previews.clear();
   previewRequests.clear();
   displayedReview = null;
@@ -261,6 +266,29 @@ function sourcePreview(file) {
   return { counts, token: stagedSource.token, name: path.basename(file) };
 }
 const portableBackup = [{ name: "密码加密的账本备份", extensions: ["spbackup"] }];
+function expireAccountPreviews(id) {
+  for (const broker of ["ibkr","webull"]) previewRequests.delete(JSON.stringify([broker,id]));
+  for (const [key,preview] of previews) if (preview.account === id) previews.delete(key);
+}
+function draftFor(ticket) {
+  if(!setupDraft || setupDraft.ticket!==ticket || Date.now()>setupDraft.expires) throw Error("验证已过期，请返回凭据步骤重新连接。");
+  return setupDraft;
+}
+function allowSetup(){
+  if(mode==="demo" || (!db && fs.existsSync(fileFor("real")))) throw Error("请先打开正式账本。");
+}
+async function verifyDraft(draft) {
+  if(draft.broker==="ibkr"){
+    const report=await brokerReport(db,"ibkr",secrets,draft.credentials);
+    if(!report.brokerAccountId) throw Error("报表没有可核对的账户编号。请在 Activity Flex Query 加入 Account Information 后重试。");
+    draft.accounts=[{accountId:report.brokerAccountId,accountNumber:report.brokerAccountId}];
+  }else{
+    const result=await authorizeWebull(draft.credentials,value=>{draft.credentials.accessToken=value;});
+    draft.accounts=result.accounts;
+    if(result.status==="已连接" && !draft.accounts.length) throw Error("授权成功，但券商没有返回可绑定的账户。请核对 OpenAPI 权限。");
+  }
+  return {ticket:draft.ticket,accounts:draft.accounts};
+}
 const nativeBackup = [{ name: "投资账本备份", extensions: ["spbackup", "sqlite", "db"] }];
 const handlers = {
   displayState: () => syncDisplay(),
@@ -279,8 +307,36 @@ const handlers = {
       mode: mode || null,
       theme: nativeTheme.themeSource,
       hasReal: fs.existsSync(fileFor("real")),
+      onboardingSeen: Boolean(readPreferences().onboardingSeen),
       sources: knownSources(originalDir()).map((p, i) => ({ id: i, label: path.relative(originalDir(), p) })),
     };
+  },
+  async beginAccountSetup({broker,queryId,token,appKey,appSecret}) {
+    allowSetup();
+    if(!["ibkr","webull"].includes(broker)) throw Error("未知券商。");
+    const credentials=broker==="ibkr"?{queryId,token}:{appKey,appSecret};
+    if(Object.values(credentials).some(v=>typeof v!=="string" || !v.trim() || v.length>4096)) throw Error("请填写完整的券商凭据。");
+    if (broker === "webull" && db) credentials.accessToken = savedWebullToken(db, safeStorage, credentials);
+    setupDraft={broker,credentials,accounts:[],ticket:randomUUID(),expires:Date.now()+20*60_000};
+    return verifyDraft(setupDraft);
+  },
+  async checkAccountSetup({ticket}) { allowSetup();return verifyDraft(draftFor(ticket)); },
+  async bindAccount({ticket,...args}) {
+    allowSetup();
+    const draft=draftFor(ticket);
+    if(!draft.accounts.some(a=>a.accountId===args.remoteId)) throw Error("请先验证要绑定的账户。");
+    if(!db){await activate("real");setupDraft=draft;}
+    const result=saveBinding(db,safeStorage,draft,args);
+    expireAccountPreviews(result.id);
+    setupDraft=null;
+    writePreferences({onboardingSeen:true});
+    return result;
+  },
+  leaveAccountSetup() {setupDraft=null;writePreferences({onboardingSeen:true});},
+  disconnectAccount({id}) {
+    if(mode!=="real") throw Error("请打开正式账本。");
+    disconnectBinding(requireBook(),id);
+    expireAccountPreviews(id);
   },
   setTheme({ theme }) {
     if (!themes.includes(theme)) throw Error("请选择有效的主题。");
@@ -417,12 +473,14 @@ const handlers = {
     const request = randomUUID();
     previewRequests.set(requestKey, request);
     let report, source;
+    const binding=bindingFor(book,a.id);
+    if(binding && binding.broker!==broker) throw Error("入账账户与券商不匹配，请重新选择。");
     if (args.source === "live") {
       if (mode === "demo") throw Error("请在正式账本中连接券商。");
       try {
-        report = await brokerReport(book, broker, secrets);
+        report = await brokerReport(book, broker, secrets,binding ? credentialsFor(book,a.id,safeStorage) : null);
       } catch (error) {
-        if (db === book) putPref(book, BROKER, "verified." + broker, null);
+        if (db === book && !binding) putPref(book, BROKER, "verified." + broker, null);
         throw error;
       }
       source = broker.toUpperCase() + " 在线同步";
@@ -446,14 +504,17 @@ const handlers = {
       }
       report = broker === "ibkr" ? detailedIbkr(text) : parseWebullCsv(text);
     }
+    if(binding && broker==="ibkr" && report.brokerAccountId!==binding.remoteId) throw Error("报表中的券商账户与当前绑定不符，请检查报表和入账账户。");
     if (db !== book) throw Error("账本已切换，请重新同步。");
+    if (!binding && broker === "ibkr" && report.brokerAccountId && bindings(book).some(b => b.broker === broker && b.remoteId === report.brokerAccountId))
+      throw Error("这份报表已绑定到其他本地账户，请选择对应的入账账户。");
     const summary = await batch(book, a.id, broker, report, source),
       token = randomUUID();
     if (db !== book) throw Error("账本已切换，请重新同步。");
     if (previewRequests.get(requestKey) !== request) throw Error("已重新读取该券商记录。");
     for (const [old, preview] of previews) if (preview.broker === broker && preview.account === a.id) previews.delete(old);
     putPref(db, BROKER, "local-account." + broker, a.id);
-    if (args.source === "live") {
+    if (args.source === "live" && !binding) {
       putPref(db, BROKER, "last-success." + broker, new Date().toISOString());
       putPref(db, BROKER, "verified." + broker, "1");
     }
@@ -557,6 +618,7 @@ const handlers = {
     );
     return {
       present,
+      bindings: bindings(db),
       lastSuccess: Object.fromEntries(["ibkr", "webull"].map((id) => [id, preference(db, BROKER, "last-success." + id)])),
       verified: Object.fromEntries(["ibkr", "webull"].map((id) => [id, preference(db, BROKER, "verified." + id) === "1"])),
       query: preference(db, BROKER, "ibkr.flex-query-id") || "",
@@ -700,6 +762,10 @@ const handlers = {
             try { safeStorage.decryptString(Buffer.from(value, "base64")); }
             catch { putPref(next, "credentials", name, null); }
           }
+          for (const binding of bindings(next).filter(b => b.authorized)) {
+            try { credentialsFor(next, binding.id, safeStorage); }
+            catch { disconnectBinding(next, binding.id); }
+          }
         } finally {
           next.close();
         }
@@ -833,7 +899,10 @@ function createWindow() {
       console.error("Unable to save interface zoom:", error.message);
     }
   });
-  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.setWindowOpenHandler(({url}) => {
+    if(guideLinks.includes(url)) void shell.openExternal(url).catch(()=>{});
+    return {action:"deny"};
+  });
   contents.on("will-navigate", (e, url) => {
     if (url !== page) e.preventDefault();
   });

@@ -46,7 +46,7 @@ function Fold({ title, children }) {
 const securityLabel = (r) =>
   [r.name || r.ticker, r.ticker, marketNames[r.mic] || r.mic || "上市地待补", r.localCurrency].join(" · ");
 
-export function Settings({ d, mode, theme = "system", onThemeChange, userScale = 1, onUserScaleChange, run, initial = {}, workspace, openHome, onPage }) {
+export function Settings({ d, mode, theme = "system", onThemeChange, userScale = 1, onUserScaleChange, run, initial = {}, workspace, openHome, onPage, onSetup }) {
   const demo = mode === "demo";
   const { cols } = useShell();
   const [tab, setTab] = useState(initial.tab || "connections"),
@@ -57,6 +57,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
     [web, setWeb] = useState(null),
     [market, setMarket] = useState(null),
     [dialog, setDialog] = useState("");
+  const [disconnect, setDisconnect] = useState(null);
   const [asset, setAsset] = useState("fx"),
     [price, setPrice] = useState(""),
     [date, setDate] = useState(d.date),
@@ -654,6 +655,25 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
         )}
       </div>
       {tab === "connections" && demo && <div className="notice">正式账本可保存券商授权。示例账本使用随附样例。</div>}
+      {tab === "connections" && !demo && (
+        <Panel title="按账户连接券商" action={<button className="btn pri" onClick={onSetup}>添加或重新授权账户</button>}>
+          <p className="muted">每个账户单独保存授权。选择 IBKR 或 Webull AU 后，可跟随图文教程完成绑定。</p>
+          {conn?.bindings?.map(a => <div className="row binding-row" key={a.id}>
+            <strong>{a.name}</strong><span className="cap">{a.broker === "ibkr" ? "IBKR" : "Webull AU"} ···· {a.suffix} · {a.authorized ? "已保存授权" : "需重新授权"}</span>
+            <span className="sp" />
+            {a.authorized && <><button className="btn sm" onClick={() => onPage("imports", {broker:a.broker, account:a.id, sync:true})}>预览同步</button>
+              <button className="btn sm" onClick={() => setDisconnect(a)}>断开授权</button></>}
+          </div>)}
+          <p className="cap">下方的通用连接供尚未单独绑定的账户使用。</p>
+        </Panel>
+      )}
+      {disconnect && <Modal title={"断开「" + disconnect.name + "」的授权"} close={() => setDisconnect(null)}>
+        <p>此账户下次在线同步前需要重新授权。已导入的流水可继续查看。</p>
+        <div className="acts"><button className="btn" onClick={() => setDisconnect(null)}>取消</button>
+          <button className="btn pri" onClick={() => run(async () => {
+            await api.disconnectAccount({id:disconnect.id}); setDisconnect(null); setConn(await api.connections());
+          }, "已断开此账户的授权")}>确认断开</button></div>
+      </Modal>}
       {cols === 1 ? (
         <div className="stack">{keys.map((k) => <React.Fragment key={k}>{cards[k]}</React.Fragment>)}</div>
       ) : (

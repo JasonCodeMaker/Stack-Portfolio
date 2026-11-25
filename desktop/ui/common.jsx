@@ -82,6 +82,7 @@ export function Modal({ title, children, close, wide = false }) {
       className={wide ? "wide" : ""}
       aria-label={title}
       onCancel={(e) => {
+        e.stopPropagation();
         e.preventDefault();
         close();
       }}

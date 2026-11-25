@@ -20,7 +20,8 @@ import { dashboardQuery, defaultFilters, rememberedFilters, restoreFilters } fro
 import "./design.css";
 import "./styles.css";
 import "./settings.css";
-function Welcome({ home, run, enter, onClose }) {
+import { AccountWizard } from "./onboarding/AccountWizard";
+function Welcome({ home, run, enter, onClose, onSetup }) {
   const [preview, setPreview] = useState(null),
     [source, setSource] = useState(home.sources[0]?.id ?? "file");
   async function migrate() {
@@ -93,6 +94,7 @@ function Welcome({ home, run, enter, onClose }) {
           </section>
         </div>
         <div className="wf">
+          {!home.hasReal && !home.mode && <button className="lnk" onClick={onSetup}>添加券商账户</button>}
           {!home.hasReal && (
             <button className="lnk" onClick={() => enter("newBook")}>
               建立空白账本
@@ -192,6 +194,8 @@ function Application() {
   }, [display.aspect]);
   const [home, setHome] = useState(null),
     [welcome, setWelcome] = useState(false),
+    [wizard, setWizard] = useState(null),
+    [bindings, setBindings] = useState([]),
     [d, setD] = useState(null),
     [mode, setMode] = useState(null),
     [page, setPage] = useState("overview"),
@@ -213,6 +217,7 @@ function Application() {
     setHome(h);
     if (h.storageError) setFatal(h.storageError);
     setMode(h.mode);
+    if (!h.mode && !h.hasReal && !h.storageError && !h.onboardingSeen) setWizard("welcome");
     if (h.mode) {
       await refresh();
       setWelcome(false);
@@ -279,13 +284,30 @@ function Application() {
     setHome(await api.home());
     setWelcome(true);
   }
+  async function updateBindings() {
+    const info = await api.connections();
+    setBindings(info.bindings);
+  }
+  function openSetup() {
+    run(async () => {
+      if (mode === "real") await updateBindings();
+      else setBindings([]);
+      setWizard("broker");
+    }, false);
+  }
+  async function closeSetup(account) {
+    await api.leaveAccountSetup();
+    await workspace();
+    setWizard(null);
+    if (account) onPage("imports", { broker: account.broker, account: account.id, sync: true });
+  }
   const shown = useRef(page);
   shown.current = page;
   const reload = useCallback(() => refresh().catch(() => {}), [refresh]);
   // Closes, FX and index levels are fetched in the background; the page keeps what it shows meanwhile.
   // The check belongs to the open book, so moving between pages never drops a result on its way.
   useEffect(() => {
-    if (mode !== "real" || welcome || !d) return;
+    if (mode !== "real" || welcome || wizard || !d) return;
     let active = true,
       checking = false,
       retry;
@@ -313,7 +335,7 @@ function Application() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", check);
     };
-  }, [mode, welcome, !!d, reload]);
+  }, [mode, welcome, wizard, !!d, reload]);
   // Fund holdings are checked when the allocation page opens.
   useEffect(() => {
     if (mode !== "real" || welcome || !d || page !== "allocation") return;
@@ -356,10 +378,14 @@ function Application() {
         <Mark /> 正在打开 Stock Portfolio…{banners}
       </div>
     );
+  if (wizard)
+    return <><AccountWizard initialPage={wizard} accounts={d?.accounts || []} existing={bindings}
+      theme={home.theme} onTheme={changeTheme} onLeave={() => closeSetup()} onImport={closeSetup}
+      onBound={() => run(async () => { await workspace(); await updateBindings(); }, false)} />{banners}</>;
   if (welcome || !d)
     return (
       <>
-        <Welcome home={home} run={run} enter={enter} onClose={mode ? () => setWelcome(false) : null} />
+        <Welcome home={home} run={run} enter={enter} onSetup={openSetup} onClose={mode ? () => setWelcome(false) : null} />
         {banners}
       </>
     );
@@ -385,6 +411,9 @@ function Application() {
           <Performance d={d} mode={mode} run={run} reload={reload} filters={filters} onFilters={changeFilters} onPage={onPage} />
         )}
         {page === "overview" && <Overview d={d} run={run} onPage={onPage} filters={filters} onFilters={changeFilters} />}
+        {page === "overview" && mode === "real" && !active.length && (
+          <button className="btn pri" onClick={openSetup}>添加券商账户</button>
+        )}
         {page === "holdings" && (
           <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} />
         )}
@@ -415,6 +444,7 @@ function Application() {
             onPage={onPage}
             workspace={workspace}
             openHome={showHome}
+            onSetup={openSetup}
           />
         )}
       </Shell>

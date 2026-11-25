@@ -52,6 +52,9 @@ async function withDesktop(directory, verify) {
     p = await app.firstWindow();
     p.setDefaultTimeout(10000);
     p.on("pageerror", (error) => errors.push(error.message));
+    const home = await p.evaluate(() => window.portfolio.home());
+    if (!home.mode && !home.hasReal && !home.onboardingSeen)
+      await button(p, "暂时跳过").click();
     await verify(app, p);
     assert.deepEqual(errors, []);
   } catch (error) {
@@ -244,7 +247,7 @@ async function verifyAdaptiveDisplay(app, p, profile) {
   await resize(app, p, 1920, 1080);
   assert.equal(await p.locator("html").getAttribute("data-aspect"), "16:9");
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(profile, "workspace.json"), "utf8")),
-    { mode: "demo", uiScaleMultiplier: 0.85, theme: "dark" });
+    { mode: "demo", uiScaleMultiplier: 0.85, theme: "dark", onboardingSeen:true });
 }
 
 async function verifyHoldingCost(app, p) {

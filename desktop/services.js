@@ -985,14 +985,13 @@ export function recordAccountValue(db, args, withinTransaction = false) {
   };
   return withinTransaction ? save() : transaction(db, save);
 }
-export async function brokerReport(db, broker, secrets) {
+export async function brokerReport(db, broker, secrets, bound) {
   if (broker === "ibkr") {
-    const queryId = preference(db, BROKER, "ibkr.flex-query-id"),
-      token = await secrets.get("ibkr.flex-token");
+    const {queryId, token} = bound || {queryId: preference(db, BROKER, "ibkr.flex-query-id"), token: await secrets.get("ibkr.flex-token")};
     if (!queryId || !token) throw Error("请先保存 IBKR Query ID 和 Flex Token。");
     return withIbkrStatement(await fetchIbkrFlexReport(network, { queryId, token }, "australia"));
   }
-  const { appKey, appSecret, accessToken, accountId } = await webullCredentials(db, secrets);
+  const { appKey, appSecret, accessToken, accountId } = bound || await webullCredentials(db, secrets);
   if (!appKey || !appSecret || !accessToken || !accountId) throw Error("请先连接并选择 Webull AU 券商账户。");
   const credentials = { appKey, appSecret, accessToken, accountId };
   const report = await fetchWebullReport(network, credentials);
@@ -1015,6 +1014,9 @@ async function webullCredentials(db, secrets) {
 }
 export async function connectWebull(db, secrets) {
   const creds = await webullCredentials(db, secrets);
+  return authorizeWebull(creds, (value)=>secrets.set("webull.access-token", value));
+}
+export async function authorizeWebull(creds, saveToken) {
   if (!creds.appKey || !creds.appSecret) throw Error("请先保存 Webull App Key 与 App Secret。");
   let token = creds.accessToken
     ? await checkWebullToken(network, creds, creds.accessToken)
@@ -1022,7 +1024,7 @@ export async function connectWebull(db, secrets) {
   if (["INVALID", "EXPIRED"].includes(token.status)) token = await createWebullToken(network, creds);
   const saved = token.token || creds.accessToken;
   if (!saved) throw Error("Webull 未返回授权令牌。");
-  await secrets.set("webull.access-token", saved);
+  await saveToken(saved);
   if (token.status !== "NORMAL") return { status: token.status || "待确认", accounts: [] };
   return { status: "已连接", accounts: await listWebullAccounts(network, { ...creds, accessToken: saved }) };
 }

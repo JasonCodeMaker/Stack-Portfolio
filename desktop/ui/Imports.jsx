@@ -299,7 +299,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     [flow, setFlow] = useState(false);
   const [openCash, setOpenCash] = useState([]),
     [openPos, setOpenPos] = useState([]);
-  const [mapping, setMapping] = useState(d.brokerAccounts);
+  const [mapping, setMapping] = useState(() => initial.account && ["ibkr","webull"].includes(initial.broker)
+    ? {...d.brokerAccounts,[initial.broker]:initial.account} : d.brokerAccounts);
   const [nav, setNav] = useState("");
   const [amend, setAmend] = useState(null),
     [amendForm, setAmendForm] = useState({}),
