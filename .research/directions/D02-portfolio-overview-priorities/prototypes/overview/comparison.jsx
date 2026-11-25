@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { createPortal } from "react-dom";
-import { ArrowLeft, Check, ChevronRight, CircleAlert, Layers3 } from "lucide-react";
+import { ArrowLeft, ChevronRight, Layers3 } from "lucide-react";
 import { Overview } from "@desktop/ui/Overview";
 import { Holdings } from "@desktop/ui/Cockpit";
 import { I18nProvider } from "@desktop/ui/i18n";
@@ -46,7 +46,7 @@ function FirstLook({ d, close }) {
     </fieldset>
     <label>{choice==="partial" ? "你读到的小计（选填，AUD）" : "你读到的账户总额（AUD）"}<input type="text" inputMode="decimal" required={choice==="total"} value={amount} placeholder="输入金额" onChange={e=>{setAmount(e.target.value);setResult(null)}}/></label>
     <button className="btn pri" type="submit">核对答案</button>
-    {result && <p role="status" className="d02-outcome"><b>{result.correct ? "判断正确。" : "再对照一下。"}</b>{v.complete ? "账户总额为 " + money(v.amount) + "，估值完整。" : "完整总额未知。已计入现金与可定价持仓的小计为 " + money(v.amount) + "，" + v.missing.join("、") + " 缺少报价。"}</p>}
+    {result && <p role="status" className="d02-outcome"><b>{result.correct ? "判断正确。" : "再对照一下。"}</b>{v.complete ? "账户总额为 " + money(v.amount) + "。" : "完整总额未知。已计入现金与可定价持仓的小计为 " + money(v.amount) + "，" + v.missing.join("、") + " 缺少报价。"}</p>}
   </form></Modal>;
 }
 function Toolbar({ state, update, d }) {
@@ -58,16 +58,16 @@ function Toolbar({ state, update, d }) {
   </div>;
 }
 // The current overview owns every KPI, chart, table and drill-down in all three views.
-// Place the historical quote coverage beside its native total, including for screen readers.
+// Only a partial amount needs an additional description beside the native total.
 function OverviewPage({ d, mode, filters, onFilters, onPage, run }) {
   const rootRef = useRef(null);
   const descriptionId = useId();
   const [totalButton, setTotalButton] = useState(null);
   const coverage = valuation(d);
-  const Icon = coverage.complete ? Check : CircleAlert;
+  const showSubtotal = mode !== "current" && !coverage.complete;
 
   useLayoutEffect(() => {
-    if (mode === "current") return;
+    if (!showSubtotal) return;
     const button = rootRef.current.querySelector(".overview-total");
     const previous = button.getAttribute("aria-describedby");
     button.setAttribute("aria-describedby", [previous, descriptionId].filter(Boolean).join(" "));
@@ -76,14 +76,13 @@ function OverviewPage({ d, mode, filters, onFilters, onPage, run }) {
       if (previous) button.setAttribute("aria-describedby", previous);
       else button.removeAttribute("aria-describedby");
     };
-  }, [mode, descriptionId]);
+  }, [showSubtotal, descriptionId]);
 
   return <div ref={rootRef} data-reading={mode}>
     <Overview d={d} filters={filters} onFilters={onFilters} onPage={onPage} run={run}/>
-    {totalButton && createPortal(
-      <span id={descriptionId} className="d02-coverage" data-complete={coverage.complete}>
-        <span className="coverage-label"><Icon size={13} aria-hidden="true"/>{coverage.complete ? "估值完整" : "估值不完整"}</span>
-        {!coverage.complete && <span>可估值小计 {money(coverage.amount)} · {coverage.missing.join("、")} 缺报价</span>}
+    {showSubtotal && totalButton && createPortal(
+      <span id={descriptionId} className="d02-subtotal">
+        可估值小计 {money(coverage.amount)} · {coverage.missing.join("、")} 缺报价
       </span>, totalButton
     )}
   </div>;
