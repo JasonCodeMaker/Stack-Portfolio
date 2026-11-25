@@ -15,15 +15,73 @@ const env = {
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
+async function verifyLayoutChoice(app, page) {
+  const picker = page.getByRole("combobox", { name: "总览布局" });
+  const scope = page.locator(".header-tools .account-scope");
+  const date = page.getByLabel("估值日");
+  const period = page.locator(".overview > .period-row");
+  const total = page.locator(".overview-total .v");
+  const gain = page.locator(".overview-trend .seg button").nth(1);
+  assert.equal(await picker.inputValue(), "classic");
+  await scope.click();
+  await page.getByRole("checkbox", { name: "Webull Australia" }).uncheck();
+  await page.locator("dialog .primary").click();
+  await date.fill("2026-10-29");
+  await period.getByRole("button", { name: "本月", exact: true }).click();
+  await gain.click();
+  await page.waitForFunction(() => document.querySelector(".overview-total-label time")?.dateTime === "2026-10-29");
+  const prior = await total.textContent();
+
+  for (const [width, height] of [[1024, 650], [3440, 1440]]) {
+    await resizeContent(app, page, width, height);
+    for (const choice of ["daily", "classic"]) {
+      await picker.selectOption(choice);
+      assert.equal(await page.locator(".daily-assets").count(), choice === "daily" ? 1 : 0);
+      assert.equal(await total.textContent(), prior);
+      assert.equal(await date.inputValue(), "2026-10-29");
+      assert.equal(await scope.innerText(), "IBKR");
+      assert.equal(await gain.getAttribute("aria-pressed"), "true");
+      assert.equal(await period.getByRole("button", { name: "本月", exact: true }).getAttribute("aria-pressed"), "true");
+      assert.equal(await page.getByText("先看资产与走势", { exact: true }).count(), 0);
+      assert.ok(await page.locator(".overview").evaluate(root => {
+        const row = root.firstElementChild;
+        return row.classList.contains("period-row") &&
+          Math.abs(row.firstElementChild.getBoundingClientRect().left - root.getBoundingClientRect().left) < 1;
+      }));
+    }
+  }
+
+  await picker.selectOption("daily");
+  await page.getByRole("navigation", { name: "页面" }).getByRole("button", { name: "持仓", exact: true }).click();
+  assert.equal(await picker.count(), 0);
+  await page.reload();
+  await page.locator(".daily-assets").waitFor();
+  assert.equal(await picker.inputValue(), "daily");
+  await picker.selectOption("classic");
+  await scope.click();
+  await page.getByRole("dialog").getByRole("button", { name: "全部账户" }).click();
+  await page.locator("dialog .primary").click();
+  await period.getByRole("button", { name: "今年以来", exact: true }).click();
+  await page.reload();
+  await page.locator(".overview-main > .kpis").waitFor();
+  assert.equal(await picker.inputValue(), "classic");
+  await resizeContent(app, page, 1024, 650);
+}
+
 (async () => {
   let app;
   try {
     const packaged = process.argv[2];
     app = await electron.launch({ executablePath: packaged || require("electron"), args: packaged ? [] : [path.join(__dirname, "..")], env });
+    assert.equal(await app.evaluate(({ app }) => app.getPath("userData")), directory);
     const page = await app.firstWindow();
     page.setDefaultTimeout(5000);
     await resizeContent(app, page, 1024, 650);
+    const home = await page.evaluate(() => window.portfolio.home());
+    if (!home.mode && !home.hasReal && !home.onboardingSeen) await page.getByRole("button", { name: "暂时跳过" }).click();
     await page.getByRole("button", { name: "打开示例账本" }).click();
+    await page.locator(".overview").waitFor();
+    await verifyLayoutChoice(app, page);
     const chart = page.getByRole("img", { name: "总资产与净投入" });
     await chart.waitFor();
     assert.equal(await page.getByRole("main").getAttribute("data-cols"), "1");

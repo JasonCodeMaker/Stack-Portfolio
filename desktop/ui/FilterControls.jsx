@@ -2,7 +2,7 @@
 // 「正在查看」 chip beside the title, and the period control the overview and review place in-page.
 // The filter rules themselves live in filters.js.
 import React, { useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, LayoutDashboard } from "lucide-react";
 import { Modal } from "./common";
 import { daysBetween, periodPresets } from "../periods.js";
 import { accountScope, choosePreset, chooseRange, clearRange, isCustom, periodLabel, setValuationDate } from "./filters.js";
@@ -10,6 +10,21 @@ import { useI18n } from "./i18n.jsx";
 
 // The local calendar date, which the valuation date returns to.
 export const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Australia/Brisbane" });
+
+export function OverviewLayoutPicker({ value, onChange }) {
+  const { t } = useI18n();
+  return (
+    <label className="btn overview-layout-picker" title={t("overview.layout.label")}>
+      <LayoutDashboard size={15} aria-hidden="true" />
+      <span aria-hidden="true">{t("overview.layout." + value)}</span>
+      <ChevronDown size={13} aria-hidden="true" />
+      <select aria-label={t("overview.layout.label")} value={value} onChange={event => onChange(event.target.value)}>
+        <option value="classic">{t("overview.layout.classic")}</option>
+        <option value="daily">{t("overview.layout.daily")}</option>
+      </select>
+    </label>
+  );
+}
 
 // accounts: the active accounts [{id, name}]; selected: the ids the page shows.
 export function AccountScope({ filters, accounts, selected, onChange }) {

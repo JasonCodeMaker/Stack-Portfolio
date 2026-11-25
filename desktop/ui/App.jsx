@@ -15,7 +15,7 @@ import { Imports } from "./Imports";
 import { Allocation } from "./Allocation";
 import { Settings } from "./Settings";
 import { BookBackups } from "./BookBackups";
-import { AccountScope, AsOf, ValuationDate } from "./FilterControls";
+import { AccountScope, AsOf, OverviewLayoutPicker, ValuationDate } from "./FilterControls";
 import { dashboardQuery, defaultFilters, rememberedFilters, restoreFilters } from "./filters.js";
 import "./design.css";
 import "./styles.css";
@@ -172,6 +172,14 @@ function Welcome({ home, run, enter, onClose, onSetup }) {
   );
 }
 // The account scope and period are remembered across restarts (spec §2.3); storage may be unavailable.
+const overviewLayoutKey = "stock-portfolio.overview-layout.v1";
+function savedOverviewLayout() {
+  try {
+    if (localStorage.getItem(overviewLayoutKey) === "daily") return "daily";
+  } catch {}
+  return "classic";
+}
+
 const filtersKey = "stock-portfolio.filters.v1";
 function savedFilters() {
   try {
@@ -216,6 +224,11 @@ function Application() {
     [mode, setMode] = useState(null),
     [page, setPage] = useState("overview"),
     [initial, setInitial] = useState({});
+  const [overviewLayout, setOverviewLayout] = useState(savedOverviewLayout);
+  const changeOverviewLayout = value => {
+    setOverviewLayout(value);
+    try { localStorage.setItem(overviewLayoutKey, value); } catch {}
+  };
   const [filters, setFilters] = useState(savedFilters),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
@@ -440,6 +453,7 @@ function Application() {
         filters={
           analysis && (
             <>
+              {page === "overview" && <OverviewLayoutPicker value={overviewLayout} onChange={changeOverviewLayout} />}
               <AccountScope filters={filters} accounts={active} selected={d.selected} onChange={changeFilters} />
               <ValuationDate filters={filters} value={d.date} onChange={changeFilters} />
             </>
@@ -449,7 +463,7 @@ function Application() {
         {page === "performance" && (
           <Performance d={d} mode={mode} run={run} reload={reload} filters={filters} onFilters={changeFilters} onPage={onPage} />
         )}
-        {page === "overview" && <Overview d={d} run={run} onPage={onPage} filters={filters} onFilters={changeFilters} />}
+        {page === "overview" && <Overview layout={overviewLayout} d={d} run={run} onPage={onPage} filters={filters} onFilters={changeFilters} />}
         {page === "overview" && mode === "real" && !active.length && (
           <button className="btn pri" onClick={openSetup}>{t("app.addBrokerAccount")}</button>
         )}
