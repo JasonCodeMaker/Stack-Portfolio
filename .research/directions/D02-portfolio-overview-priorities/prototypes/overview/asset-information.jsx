@@ -18,11 +18,13 @@ export function AssetComposition({ d, onDetails }) {
       share: reconciled ? securities / total : null },
   ];
   return <section className="d02-composition" aria-label="资产构成">
+    <header className="d02-composition-head"><h2>资产构成</h2>
+      <button type="button" className="overview-all" onClick={onDetails}>金额明细 ›</button>
+    </header>
     <dl>{amounts.map(row => <div key={row.name}>
       <dt>{row.name}</dt>
       <dd><strong>{amount(row.value)}</strong>{row.share != null && <small>{pct(row.share)}</small>}</dd>
     </div>)}</dl>
-    <button type="button" className="overview-all" onClick={onDetails}>金额明细 ›</button>
   </section>;
 }
 
