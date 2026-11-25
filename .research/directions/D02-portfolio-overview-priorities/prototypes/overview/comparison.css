@@ -11,6 +11,10 @@
 .d02-samples { gap: 14px; }
 .d02-samples > span, .d02-title small, .d02-header-actions time { font-size: 12px; color: var(--l2); }
 .d02-check { font-size: 12px; }
+.experiment-controls { flex-wrap: wrap; }
+.d02-study-options { display: flex; gap: 8px 16px; flex-wrap: wrap; font-size: 12px; }
+.d02-study-options label { display: inline-flex; align-items: center; gap: 5px; padding-block: 4px; color: var(--l1); }
+.d02-study-options input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
 .d02-window { overflow: hidden; border: 1px solid var(--sep); background: var(--bg); border-radius: 0 0 10px 10px; }
 .d02-top { min-height: 58px; background: var(--surface); border-bottom: 1px solid var(--sep); padding: 10px clamp(12px,2.2%,32px); }
 .d02-title { gap: 10px; }
@@ -62,6 +66,22 @@
 [data-reading="performance"] .overview-total :is(.delta, .cap) { color: var(--l2); opacity: 1; }
 [data-reading="performance"] .overview-primary .overview-breakdown { order: -1; }
 .d02-subtotal { margin-top: 8px; font-size: 12px; line-height: 1.45; font-weight: 500; }
+.d02-total-notes { display: contents; }
+[data-reading="balance"] .overview-total:has(.d02-total-notes) > .d { order: 3; }
+.d02-total-notes .d02-subtotal { order: 1; }
+.d02-cash { order: 2; margin: 0 0 8px; font-size: 13px; line-height: 1.5; }
+.d02-subtotal + .d02-cash { margin-top: 4px; }
+.d02-driver { order: 4; margin-top: 2px; font-size: 12px; line-height: 1.45; }
+.d02-company { display: grid; gap: 12px; }
+.d02-company p { margin: 0; }
+.d02-company-picker { display: flex; align-items: center; gap: 10px; }
+.d02-company select { flex: 1; min-width: 0; }
+.d02-company-total { display: grid; gap: 3px; padding: 14px; border-radius: 7px; background: var(--surface2); }
+.d02-company-total span { font-size: 12px; color: var(--l2); }
+.d02-company-total strong { font: 600 28px/1.2 var(--display); }
+.d02-company table { width: 100%; }
+.d02-company :is(td,th) { text-align: left; padding: 7px 4px; white-space: normal; }
+.d02-company :is(td,th):last-child { text-align: right; white-space: nowrap; }
 [data-reading]:not([data-reading="current"]) .overview-total-label { align-items: baseline; flex-wrap: wrap; }
 [data-reading]:not([data-reading="current"]) .overview-total-label time { font-size: 11px; font-weight: 400; }
 [data-reading]:not([data-reading="current"]) .overview-layout { gap: clamp(12px,1.5cqw,22px); }
@@ -88,6 +108,7 @@
   .d02-page .holdings { overflow-x: auto; }
 }
 @media (max-width: 550px) {
+  .d02-study-options { order: 1; width: 100%; }
   .d02-scroll { height: 505px; }
   .d02-top, .experiment-controls { padding: 8px; }
   .d02-header-actions, .d02-samples { gap: 5px; }

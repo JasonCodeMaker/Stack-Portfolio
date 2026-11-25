@@ -18,10 +18,17 @@ async function snapshots() {
   const data = {};
   try {
     await seedDemo(db);
-    for (const sample of ["a", "b"]) {
+    for (const sample of ["a", "b", "c"]) {
+      db.exec("SAVEPOINT sample_quotes");
       // Withhold every usable BHP price in this disposable book. Units, accounts, cash
       // and activities stay identical. Removing only the last quote would allow fallback.
       if (sample === "b") db.prepare("DELETE FROM sp_prices WHERE asset = ?").run("bhp");
+      // C holds the end-of-day balance fixed but separates the largest holding
+      // from the largest driver of the move from the previous close.
+      if (sample === "c") {
+        const prior = db.prepare("UPDATE sp_prices SET price = ? WHERE asset = ? AND day = ?");
+        if (!prior.run("211", "aapl", "2026-10-29").changes) throw Error("Missing demo close for sample C");
+      }
       for (const scope of ["all", "ibkr", "webull"]) {
         const ids = scope === "all" ? "all" : ["demo-" + scope];
         for (const period of ["1d", "1w", "mtd", "3m", "6m", "ytd", "1y", "all"]) {
@@ -29,10 +36,12 @@ async function snapshots() {
           data[[sample, scope, period].join("/")] = Object.fromEntries([
             "selected", "accounts", "date", "end", "start", "summary", "rows", "byAccount",
             "breakdown", "holdings", "points", "fx", "valuation", "securities", "today",
-            "currentMarket", "known", "portfolio", "listings", "settings", "cumulative",
+            "currentMarket", "known", "portfolio", "listings", "settings", "cumulative", "exposure",
           ].map(key => [key, d[key]]));
         }
       }
+      db.exec("ROLLBACK TO sample_quotes");
+      db.exec("RELEASE sample_quotes");
     }
     return data;
   } finally {
