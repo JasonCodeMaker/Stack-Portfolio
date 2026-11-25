@@ -22,7 +22,7 @@
   gap: 7px;
   font-weight: 550;
 }
-:where(button):hover {
+:where(button:hover:enabled) {
   background: var(--surface2);
   border-color: var(--l3);
 }
@@ -33,6 +33,11 @@
 :where(input, select, textarea) {
   padding: 8px 10px;
   max-width: 100%;
+  border-color: var(--l3);
+}
+::placeholder {
+  color: var(--l2);
+  opacity: 1;
 }
 textarea {
   resize: vertical;
@@ -68,10 +73,6 @@ small {
   color: var(--on-accent);
   border-color: var(--green);
 }
-.primary:hover {
-  background: color-mix(in srgb, var(--accent) 86%, var(--l1));
-  border-color: transparent;
-}
 .soft {
   background: var(--surface2);
 }
@@ -88,10 +89,16 @@ small {
 .icon {
   padding: 6px;
 }
+:is(.text-btn, .icon):where(:hover:enabled) {
+  background: var(--surface2);
+}
 .ticker {
   font-weight: 720;
   padding: 0;
   color: var(--deep);
+}
+.ticker:hover {
+  text-decoration: underline;
 }
 .actions,
 .toolbar,
@@ -383,6 +390,9 @@ td small {
   gap: 9px;
   margin: 13px 0;
 }
+.check > input {
+  flex: none;
+}
 .empty {
   display: flex;
   align-items: center;
@@ -433,16 +443,6 @@ td small {
   background: var(--s1);
   border-radius: 50%;
 }
-.modal-inner {
-  padding: 24px;
-  display: grid;
-  gap: 12px;
-}
-.modal-inner > header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
 .modal-inner p {
   margin-bottom: 3px;
 }
@@ -481,9 +481,18 @@ td small {
 .toast {
   bottom: 24px;
   right: 25px;
+  max-width: calc(100% - 50px);
+  overflow-wrap: anywhere;
+}
+.toast > svg,
+.toast .icon {
+  flex: none;
 }
 .toast .icon {
   color: var(--hero-text);
+}
+.toast .icon:hover {
+  background: color-mix(in srgb, var(--hero-text) 16%, transparent);
 }
 .busy {
   bottom: 24px;
@@ -555,17 +564,6 @@ summary {
 .import-status.new { color: var(--green); }
 .import-status.review { color: var(--warn); }
 .import-account .text-btn { margin-top: 8px; }
-@media (max-width: 1100px) {
-  .metrics {
-    gap: 8px;
-  }
-  .metric {
-    padding: 13px;
-  }
-  .dashboard-grid {
-    grid-template-columns: minmax(0, 1.6fr) minmax(205px, 1fr);
-  }
-}
 /* Figures: gains and losses, right-aligned number columns */
 :root {
   --gain: var(--up);
@@ -594,6 +592,14 @@ summary {
 .delta em {
   font-style: normal;
   font-weight: 400;
+}
+.kpi .delta {
+  display: inline;
+  white-space: normal;
+}
+.kpi .delta i {
+  display: inline-block;
+  margin-inline-end: 3px;
 }
 th.num,
 td.num,

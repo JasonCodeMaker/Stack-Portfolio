@@ -80,3 +80,70 @@ export function closingDay(date, market) {
   while ([0, 6].includes(weekday(d)) || holidays(market, Number(d.slice(0, 4))).has(d)) d = shiftDay(d, -1);
   return d;
 }
+
+const clocks = Object.fromEntries(
+  Object.entries({
+    ASX: "Australia/Sydney",
+    US: "America/New_York",
+    FX: "America/New_York",
+    local: "Australia/Brisbane",
+  }).map(([key, timeZone]) => [
+    key, new Intl.DateTimeFormat("en-CA", {
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }),
+  ]),
+);
+
+export function marketTime(time, market = "local") {
+  const fields = Object.fromEntries((clocks[market] || clocks.local).formatToParts(time).map((p) => [p.type, p.value]));
+  return { date: [fields.year, fields.month, fields.day].join("-"), minute: Number(fields.hour) * 60 + Number(fields.minute) };
+}
+
+function sessionClose(date, market) {
+  if (market === "ASX") {
+    const year = date.slice(0, 4);
+    const christmasEve = closingDay(year + "-12-24", market);
+    const yearEnd = closingDay(year + "-12-31", market);
+    return date === christmasEve || date === yearEnd ? 14 * 60 + 10 : 16 * 60;
+  }
+  const [year, month, dom] = date.split("-").map(Number);
+  const short = (month === 11 && weekday(date) === 5 && dom >= 23 && dom <= 29) ||
+    (month === 12 && dom === 24) ||
+    (month === 7 && dom === 3 && weekday(date) !== 5);
+  return short && year >= 1993 ? 13 * 60 : 16 * 60;
+}
+
+const officialCloseMinute = (date, market) =>
+  sessionClose(date, market) + (market === "ASX" ? 11 : 0);
+
+export function marketCloseTime(date, market) {
+  const utcNoon = Date.parse(date + "T12:00:00Z");
+  const local = marketTime(utcNoon, market);
+  const dateOffset = Date.parse(date) - Date.parse(local.date);
+  return utcNoon + dateOffset + (officialCloseMinute(date, market) - local.minute) * 60_000;
+}
+
+export function marketSession(time, market) {
+  const { date, minute } = marketTime(time, market);
+  if (market === "FX") {
+    const dow = weekday(date);
+    const open = dow === 0 ? minute >= 17 * 60 : dow === 5 ? minute < 17 * 60 : dow !== 6;
+    return { date, phase: open ? "regular" : "closed" };
+  }
+  const prior = closingDay(shiftDay(date, -1), market);
+  const close = sessionClose(date, market);
+  const officialAfter = officialCloseMinute(date, market);
+  if (closingDay(date, market) !== date)
+    return { date, minute, phase: "closed", completed: prior, prior, officialAfter };
+  let phase = "closed";
+  if (market === "ASX") {
+    if (minute >= 600 && minute < close) phase = "regular";
+    else if (minute >= close && minute < officialAfter) phase = "auction";
+  } else if (market === "US") {
+    if (minute >= 240 && minute < 570) phase = "pre";
+    else if (minute >= 570 && minute < close) phase = "regular";
+    else if (minute >= close && minute < (close === 780 ? 1020 : 1200)) phase = "post";
+  }
+  return { date, minute, phase, completed: minute >= officialAfter ? date : prior, prior, officialAfter };
+}

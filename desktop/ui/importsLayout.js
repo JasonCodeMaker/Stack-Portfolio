@@ -6,24 +6,24 @@ export function syncLayout(previews, { batches = true } = {}) {
   if (!previews.length)
     return {
       1: [["update", ...(batches ? ["batches"] : [])]],
-      2: [["update"], batches ? ["batches"] : []],
+      2: batches ? [{ weight: 1.05, items: ["update"] }, { weight: 1, items: ["batches"] }] : [["update"]],
     };
   const layout = {
     1: [["update", ...previews]],
-    2: [{ weight: 1, items: ["update"] }, { weight: 1.6, items: previews }],
+    2: [{ weight: 1.05, items: ["update"] }, { weight: 1, items: previews }],
   };
   if (previews.length > 1)
     layout[3] = [{ weight: 1, items: ["update"] }, ...previews.map((p) => ({ weight: 1.3, items: [p] }))];
   return layout;
 }
 
-// 和券商结单核对: statement and evidence cards side by side in equal columns; the statement alone stays narrow.
+// 和券商结单核对: statement and evidence sit side by side in 21:9.
 export function checkLayout(evidence) {
   if (!evidence) return { 1: [["statement"]] };
   return {
     1: [["statement", "evidence"]],
     2: [
-      { weight: 1, items: ["statement"] },
+      { weight: 1.05, items: ["statement"] },
       { weight: 1, items: ["evidence"] },
     ],
   };

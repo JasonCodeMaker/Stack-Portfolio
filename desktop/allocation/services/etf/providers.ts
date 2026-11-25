@@ -8,14 +8,6 @@ export interface EtfHoldingsProvider {
   fetchHoldings(etf: EtfAsset): Promise<EtfHoldingsSnapshot>;
 }
 
-function normalizeProviderWeight(value: unknown): number | null {
-  const text = String(value ?? "").trim();
-  const numeric = typeof value === "number" ? value : Number(text.replace(/%$/, ""));
-  if (!Number.isFinite(numeric) || numeric < 0) return null;
-  if (text.endsWith("%")) return numeric / 100;
-  return numeric > 1 ? numeric / 100 : numeric;
-}
-
 function normalizePercentageWeight(value: unknown): number | null {
   const numeric = Number(String(value ?? "").trim().replace(/%$/, ""));
   if (!Number.isFinite(numeric) || numeric < 0) return null;
@@ -90,47 +82,6 @@ async function fetchText(ctx: NetworkContext, url: string, headers?: Record<stri
   const response = await ctx.api.network.request({ method: "GET", url, headers: { "User-Agent": USER_AGENT, ...headers } });
   if (response.status < 200 || response.status >= 300) throw new Error(`Provider returned ${response.status}`);
   return response.body;
-}
-
-export class AlphaVantageProvider implements EtfHoldingsProvider {
-  public readonly id = "alpha-vantage";
-
-  public constructor(private readonly ctx: NetworkContext, private readonly apiKey?: string | null) {}
-
-  public async canHandle(etf: EtfAsset): Promise<boolean> {
-    return Boolean(this.apiKey && etf.symbol);
-  }
-
-  public async fetchHoldings(etf: EtfAsset): Promise<EtfHoldingsSnapshot> {
-    if (!this.apiKey) throw new Error("Alpha Vantage API key is not configured");
-    const url = `https://www.alphavantage.co/query?function=ETF_PROFILE&symbol=${encodeURIComponent(etf.symbol)}&apikey=${encodeURIComponent(this.apiKey)}`;
-    let body: {
-      holdings?: Array<Record<string, unknown>>;
-      last_updated?: string;
-    };
-    try {
-      body = JSON.parse(await fetchText(this.ctx, url));
-    } catch {
-      throw new Error("Alpha Vantage ETF request failed");
-    }
-    if (!body?.holdings?.length) throw new Error("Alpha Vantage returned no holdings");
-    const holdings: UnderlyingHolding[] = [];
-    for (const row of body.holdings) {
-      const weight = normalizeProviderWeight(row.weight);
-      const name = String(row.name ?? row.description ?? row.symbol ?? "").trim();
-      if (!name || weight === null) continue;
-      holdings.push({
-        symbol: String(row.symbol ?? "").trim() || undefined,
-        name,
-        weight,
-        country: String(row.country ?? "").trim() || undefined,
-        sector: String(row.sector ?? "").trim() || undefined,
-        assetClass: String(row.asset_type ?? row.assetClass ?? "").trim() || undefined,
-        underlyingType: mapUnderlyingType(row.asset_type ?? row.assetClass),
-      });
-    }
-    return buildSnapshot(etf, this.id, holdings, body.last_updated);
-  }
 }
 
 class PublicCsvIssuerProvider implements EtfHoldingsProvider {
@@ -294,17 +245,13 @@ function parseIssuerAsOfDate(rows: string[][]): string | undefined {
   return `${match[3]}-${String(month).padStart(2, "0")}-${String(Number(match[2])).padStart(2, "0")}`;
 }
 
-export function createProviders(
-  ctx: NetworkContext,
-  secrets: { alphaVantageApiKey?: string | null },
-): EtfHoldingsProvider[] {
+export function createProviders(ctx: NetworkContext): EtfHoldingsProvider[] {
   return [
     new PublicCsvIssuerProvider("ishares", ctx, "https://www.ishares.com/us/products/"),
     // Invesco runs before Betashares because a configured CUSIP is alphanumeric
     // and would otherwise be tried as a Betashares ticker first.
     new InvescoProvider(ctx),
     new PublicCsvIssuerProvider("betashares", ctx, "https://www.betashares.com.au/files/csv/"),
-    new AlphaVantageProvider(ctx, secrets.alphaVantageApiKey),
   ];
 }
 

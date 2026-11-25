@@ -73,8 +73,8 @@ describe("settings card columns", () => {
     expect(arrangeGrid(cardColumns(cards), 1)).toEqual({ template: "minmax(0,1fr)", columns: [cards] });
   });
 
-  it("deals the cards into at most two equal columns, in reading order", () => {
-    const two = { template: "minmax(0,1fr) minmax(0,1fr)", columns: [["ibkr", "market", "reset"], ["webull", "sources"]] };
+  it("deals the cards into at most two columns in reading order", () => {
+    const two = { template: "minmax(0,1.05fr) minmax(0,1fr)", columns: [["ibkr", "market", "reset"], ["webull", "sources"]] };
     expect(arrangeGrid(cardColumns(cards), 2)).toEqual(two);
     expect(arrangeGrid(cardColumns(cards), 3)).toEqual(two);
   });
@@ -100,7 +100,6 @@ const book = {
     providerIdentities: {},
     typeOverrides: {},
     aliases: { "scope:ishares:ivv:GOOG": "US02079K1079" },
-    liveFxPolling: false,
   },
 };
 const page = (props) => renderToStaticMarkup(<Settings d={book} run={() => {}} onPage={() => {}} {...props} />);
@@ -115,7 +114,8 @@ describe("settings page", () => {
       ["账本", "false"],
       ["数据", "false"],
     ]);
-    expect(text(html)).toMatch(/Interactive Brokers.*Webull Australia.*行情自动更新.*其他行情来源.*重置/);
+    expect(text(html)).toMatch(/Interactive Brokers.*Webull Australia.*行情自动更新.*重置/);
+    expect(text(html)).not.toMatch(/其他行情来源|Twelve Data|Alpha Vantage|本机 API 端口/);
   });
 
   it("explains the sample connection in the sample book and still offers 立即更新", () => {

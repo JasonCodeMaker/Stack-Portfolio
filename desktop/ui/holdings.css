@@ -23,13 +23,15 @@
   font-size: 16px;
 }
 
-.holdings-card {
-  padding: var(--card-pad) 10px 6px;
+.card.holdings-card {
+  --table-edge: 10px;
+  --table-inset: calc(var(--card-pad) - var(--table-edge));
+  padding: var(--card-pad) var(--table-edge) 6px;
   container-type: inline-size;
 }
 
 .holdings-card-head {
-  padding-inline: 12px;
+  padding-inline: var(--table-inset);
 }
 
 .holdings-table-scroll {
@@ -37,11 +39,11 @@
 }
 
 .holdings-card :is(th, td):first-child {
-  padding-left: 12px;
+  padding-inline-start: var(--table-inset);
 }
 
 .holdings-card :is(th, td):last-child {
-  padding-right: 12px;
+  padding-inline-end: var(--table-inset);
 }
 
 .holdings-sort {
@@ -125,6 +127,7 @@
 
 .holdings-detail th[scope="row"] {
   white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .holdings-detail tbody tr:last-child th {
@@ -139,4 +142,26 @@
 
 .holdings-repairs {
   gap: 6px;
+}
+[data-aspect="21:9"] .holdings {
+  display: grid;
+  grid-template-columns: minmax(0, 1.48fr) minmax(390px, 1fr);
+  align-items: start;
+  gap: var(--gap);
+}
+.holdings-master {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+}
+.holdings-inspector {
+  min-width: 0;
+  position: sticky;
+  top: 0;
+}
+.holdings-inspector > .insp {
+  width: 100%;
+  max-height: calc(100vh - var(--head-h) - 2 * var(--pad));
+  border: 1px solid var(--sep);
+  border-radius: 12px;
 }

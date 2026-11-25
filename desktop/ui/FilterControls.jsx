@@ -8,7 +8,7 @@ import { daysBetween, periodPresets } from "../periods.js";
 import { accountScope, choosePreset, chooseRange, clearRange, isCustom, periodLabels, setValuationDate } from "./filters.js";
 
 // The local calendar date, which the valuation date returns to.
-export const today = () => new Date().toLocaleDateString("en-CA");
+export const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Australia/Brisbane" });
 
 // accounts: the active accounts [{id, name}]; selected: the ids the page shows.
 export function AccountScope({ filters, accounts, selected, onChange }) {
@@ -21,8 +21,9 @@ export function AccountScope({ filters, accounts, selected, onChange }) {
         : selected.length + " 个账户";
   return (
     <>
-      <button type="button" className="btn" aria-label={"账户范围 · " + label} onClick={() => setEditing([...selected])}>
-        {label}
+      <button type="button" className="btn account-scope" aria-label={"账户范围 · " + label}
+        title={label} onClick={() => setEditing([...selected])}>
+        <span>{label}</span>
         <ChevronDown size={13} aria-hidden="true" />
       </button>
       {editing && (
@@ -91,7 +92,7 @@ export function AsOf({ filters, onChange }) {
   );
 }
 
-// The period control: five presets ending on the valuation date. With `custom` (the review) it also
+// The period presets end on the valuation date. With `custom` (the review) the control also
 // enters a custom range; elsewhere a custom range shows as 「起 至 止 ✕」 with no preset selected.
 // range = {from, to}: the period as measured, for the caption; days adds "· N 天".
 export function PeriodControl({ filters, range, valuationDate, custom = false, days = false, onChange, children }) {
@@ -152,7 +153,7 @@ export function PeriodControl({ filters, range, valuationDate, custom = false, d
       ) : (
         range && (
           <span className="cap">
-            {range.from} 至 {range.to}
+            {range.from === range.to ? range.to : range.from + " 至 " + range.to}
             {days && " · " + (daysBetween(range.from, range.to) + 1) + " 天"}
           </span>
         )

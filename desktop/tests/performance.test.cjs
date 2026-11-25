@@ -13,7 +13,7 @@ const {
   backupMode,
 } = require("../out/ledger.cjs");
 const { portfolioReview, reviewDay, saveReviewNote, reviewNotes } = require("../out/performance.cjs");
-const { refreshBenchmarks, refreshCloses, refreshReviewPrices } = require("../out/reviewMarket.cjs");
+const { refreshBenchmarks, refreshCloses } = require("../out/reviewMarket.cjs");
 const { loadBook, positions, positionHistory, dashboard } = require("../out/flows.cjs");
 const { network } = require("../out/services.cjs");
 const monday = "2025-02-03",
@@ -300,27 +300,6 @@ test("benchmark refresh validates series identity, preserves good caches on part
   assert.equal(db.prepare("SELECT COUNT(*) n FROM sp_benchmark_levels").get().n, 3);
 });
 
-test("historical securities use matching, unadjusted closes for the held listing", async (t) => {
-  const { db } = fixture(t);
-  const asset = { id: "us", symbol: "ABC", currency: "USD", mic: "XNAS" };
-  let mic = "XNAS";
-  const request = async ({ url }) => {
-    assert.equal(new URL(url).searchParams.get("adjust"), "none");
-    return {
-      status: 200,
-      body: JSON.stringify({
-        meta: { symbol: "ABC", currency: "USD", mic_code: mic, interval: "1day" },
-        values: [{ datetime: monday, close: 21 }],
-      }),
-    };
-  };
-  const update = () => refreshReviewPrices(db, [asset], { from: monday, to: tuesday }, "fixture", request);
-  assert.equal((await update())[0].count, 1);
-  mic = "XASX";
-  assert.ok((await update())[0].error);
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM sp_prices").get().n, 1);
-});
-
 test("results are measured from the eve of the first record and stated as of the latest valued close", (t) => {
   const { db, account, event, level, review } = fixture(t);
   const stock = resolveAsset(db, { symbol: "ABC", exchangeMic: "XASX" }, "AUD");
@@ -494,6 +473,9 @@ test("the dashboard reports money put in, the gain on it and the cost of each ho
   assert.deepEqual([d.points[0].date, d.points[0].value, d.points[0].basis], ["2025-02-02", 0, 0]);
   near(d.points[1].basis, 3000);
   near(d.points.at(-1).basis, 2800);
+  assert.equal(d.points[0].netContributionRate, null);
+  near(d.points[1].netContributionRate, -15 / 3000);
+  near(d.points.at(-1).netContributionRate, 774 / 2800);
   // A year which began before the first record reads the same way instead of going blank.
   const year = await dashboard(db, { ids: [account], date: thursday, period: "ytd" });
   assert.deepEqual([year.start, year.pnl, year.flows], [monday, d.pnl, 2800]);

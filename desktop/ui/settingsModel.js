@@ -1,9 +1,9 @@
 // Pure rules behind the settings page (spec §4.6).
 
-// Grid layout for one tab's cards: one column when narrow, at most two equal columns when wide,
+// Grid layout for one tab's cards: one column in 16:9 and two proportioned columns in 21:9,
 // dealt round-robin so reading order runs across the row.
 export function cardColumns(keys) {
-  const column = (k) => ({ weight: 1, items: keys.filter((_, i) => i % 2 === k) });
+  const column = (k) => ({ weight: k === 0 ? 1.05 : 1, items: keys.filter((_, i) => i % 2 === k) });
   return { 1: [keys], 2: [column(0), column(1)] };
 }
 

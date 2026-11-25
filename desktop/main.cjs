@@ -33,9 +33,10 @@ const {
 } = require("./ledger.js");
 const { dashboard, storageContext, loadBook, positions, saveGroupedTargets } = require("./flows.js");
 const { portfolioReview, reviewDay, saveReviewNote, reviewNotes } = require("./performance.js");
-const { refreshBenchmarks, refreshCloses, refreshReviewPrices } = require("./reviewMarket.js");
-const { shiftDay } = require("./marketDays.js");
-const { initialWindow, minimumSize } = require("./windowState.js");
+const { refreshBenchmarks, refreshCloses } = require("./reviewMarket.js");
+const { marketFor, marketSession, marketTime, shiftDay } = require("./marketDays.js");
+const { initialWindow, minimumWindowSize } = require("./windowState.js");
+const { computeDisplayState, normalizeUserScale, USER_SCALE_LIMITS } = require("./adaptiveLayout.js");
 const {
   batch,
   parseWebullCsv,
@@ -57,7 +58,6 @@ network.browserFetch = (url, init) => net.fetch(url, init);
 const { EtfCache } = require("./allocation/storage/etfCache.ts");
 const { parseManualCsv, snapshotToCsv } = require("./allocation/domain/etf.ts");
 const { saveAllocationSettings } = require("./allocation/storage/settings.ts");
-const { FxService } = require("./allocation/services/fx/fxService.ts");
 app.setName("Stock Portfolio");
 if (process.env.STACK_PORTFOLIO_TEST_DIR) app.setPath("userData", process.env.STACK_PORTFOLIO_TEST_DIR);
 else app.setPath("userData", path.join(app.getPath("appData"), "Stack Portfolio"));
@@ -70,10 +70,11 @@ let db,
   bookKey,
   previews = new Map(),
   previewRequests = new Map(),
-  lastFxCheck = 0,
+  lastCloseCheck = 0,
   lastMarketCheck = 0;
 const reviewChecks = new Map();
 const fundChecks = new Map();
+const closeChecks = new Map();
 const dataDir = () => app.getPath("userData"),
   fileFor = (m) => path.join(dataDir(), m === "demo" ? "sample.sqlite" : "portfolio.sqlite");
 const originalDir = () =>
@@ -133,6 +134,17 @@ const writePreferences = (patch) =>
   writeFileAtomic(preferenceFile(), JSON.stringify({ ...readPreferences(), ...patch }));
 const lastMode = () => readPreferences().mode ?? null;
 const themes = ["system", "light", "dark"];
+let displayState;
+let syncDisplay;
+function setUserScale(request) {
+  const { multiplier, delta, reset } = request;
+  const valid = Object.keys(request).length === 1 &&
+    (Number.isFinite(multiplier) || Number.isFinite(delta) || reset === true);
+  if (!valid) throw Error("请选择有效的界面缩放比例。");
+  const next = normalizeUserScale(reset ? USER_SCALE_LIMITS.default : multiplier ?? displayState.userScaleMultiplier + delta);
+  if (next !== displayState.userScaleMultiplier) writePreferences({ uiScaleMultiplier: next });
+  return syncDisplay(next);
+}
 async function activate(m) {
   if (db && mode === m) return m;
   const file = fileFor(m);
@@ -154,7 +166,8 @@ async function activate(m) {
   displayedReview = null;
   fundChecks.clear();
   reviewChecks.clear();
-  lastFxCheck = 0;
+  closeChecks.clear();
+  lastCloseCheck = 0;
   lastMarketCheck = 0;
   return mode;
 }
@@ -164,36 +177,55 @@ function requireBook() {
 }
 // Public closes, FX and index levels arrive without a key unless the investor turns this off.
 const marketAutoUpdate = () => preference(db, "app", "market.autoUpdate") !== "0";
+function heldListings(book, date) {
+  const held = new Map();
+  for (const account of book.accounts.filter((a) => a.isActive))
+    for (const [id, quantity] of positions(book, account, date).holdings)
+      if (!quantity.isZero() && book.assets.has(id)) held.set(id, book.assets.get(id));
+  return [...held.values()];
+}
 // Closes of the listings held today, with the AUD rate and index levels for the same days,
 // so that valuations do not rest on stale quotes.
 async function updateMarket() {
   const book = loadBook(db);
-  const today = new Date().toISOString().slice(0, 10);
-  const held = new Map();
-  for (const account of book.accounts.filter((a) => a.isActive))
-    for (const [id, quantity] of positions(book, account, today).holdings)
-      if (!quantity.isZero() && book.assets.has(id)) held.set(id, book.assets.get(id));
+  const today = marketTime(Date.now()).date;
+  const held = heldListings(book, today);
   const observed = ["Webull AU", "Twelve Data"];
-  const oldest = [...held.keys()]
-    .map((id) => book.prices.get(id)?.findLast((q) => !observed.includes(q.source))?.day || "")
+  const oldest = held
+    .map(({ id }) => book.prices.get(id)?.findLast((q) => !observed.includes(q.source))?.day || "")
     .sort()[0];
   // Reach back to the oldest stored close, at most a quarter, to fill the days in between.
   const floor = shiftDay(today, -92);
   const range = { from: oldest > floor ? oldest : floor, to: today };
   const [indices, closes] = await Promise.all([
     refreshBenchmarks(db, range, network.request),
-    refreshCloses(db, [...held.values()], range, network.request),
+    refreshCloses(db, held, range, network.request),
   ]);
   const results = [...indices, ...closes];
   if (results.some((r) => r.count)) putPref(db, "app", "market.updated", new Date().toISOString());
+  return results;
+}
+async function refreshDueCloses(book, assets, now) {
+  const results = [];
+  for (const market of ["ASX", "US"]) {
+    const session = marketSession(now, market);
+    if (market === "ASX" && session.completed === session.date && session.minute < session.officialAfter + 20) continue;
+    const date = session.completed;
+    const key = market + date;
+    if (now - (closeChecks.get(key) || 0) < 120_000) continue;
+    const missing = assets.filter((asset) => marketFor(asset) === market &&
+      !book.prices.get(asset.id)?.some((q) => q.day === date && !["Webull AU", "Twelve Data"].includes(q.source)));
+    if (!missing.length) continue;
+    closeChecks.set(key, now);
+    results.push(...await refreshCloses(db, missing, { from: date, to: date }, network.request));
+  }
+  if (results.some((result) => result.added)) putPref(db, "app", "market.updated", new Date(now).toISOString());
   return results;
 }
 const secretNames = new Set([
   "ibkr.flex-token",
   "webull.app-secret",
   "webull.access-token",
-  "twelvedata.apiKey",
-  "alphaVantage.apiKey",
 ]);
 const secrets = {
   async get(key) {
@@ -231,6 +263,8 @@ function sourcePreview(file) {
 const portableBackup = [{ name: "密码加密的账本备份", extensions: ["spbackup"] }];
 const nativeBackup = [{ name: "投资账本备份", extensions: ["spbackup", "sqlite", "db"] }];
 const handlers = {
+  displayState: () => syncDisplay(),
+  setUserScale,
   async home() {
     let storageError;
     try {
@@ -276,7 +310,9 @@ const handlers = {
     await activate("real");
     return summary;
   },
-  dashboard: (args) => dashboard(requireBook(), args),
+  dashboard(args) {
+    return dashboard(requireBook(), { ...args, current: mode === "real", now: Date.now() });
+  },
   portfolioReview(args) {
     const result = portfolioReview(requireBook(), args);
     const token = randomUUID();
@@ -288,7 +324,6 @@ const handlers = {
       token,
       notes: reviewNotes(db),
       autoUpdate: mode === "real" && marketAutoUpdate(),
-      canBackfill: Boolean(preference(db, "credentials", "twelvedata.apiKey")),
     };
   },
   reviewDay: (args) => reviewDay(requireBook(), args),
@@ -298,15 +333,13 @@ const handlers = {
   },
   // Index levels, the AUD rate and the closes of held listings for the displayed period.
   // An automatic update repeats for the same period only after a pause.
-  async refreshReview({ token, holdings, auto }) {
+  async refreshReview({ token, auto }) {
     if (mode !== "real" || !displayedReview || token !== displayedReview.token)
       throw Error("请在正式账本打开需要更新的复盘区间。");
     const review = displayedReview,
       range = { from: review.base, to: review.to };
     const find = db.prepare("SELECT * FROM sp_assets WHERE id=?");
     const assets = review.missingAssets.map((id) => find.get(id)).filter(Boolean);
-    if (holdings)
-      return refreshReviewPrices(requireBook(), assets, range, await secrets.get("twelvedata.apiKey"), network.request);
     const key = review.ids.join() + range.from + range.to;
     if (auto && (!marketAutoUpdate() || Date.now() - (reviewChecks.get(key) || 0) < 900000)) return null;
     reviewChecks.set(key, Date.now());
@@ -325,7 +358,9 @@ const handlers = {
   marketSettings(args) {
     requireBook();
     if (typeof args?.autoUpdate === "boolean") putPref(db, "app", "market.autoUpdate", args.autoUpdate ? "1" : "0");
-    return { autoUpdate: marketAutoUpdate(), last: preference(db, "app", "market.updated") };
+    return {
+      autoUpdate: marketAutoUpdate(), last: preference(db, "app", "market.updated"),
+    };
   },
   account: (args) => createAccount(requireBook(), args.name, args.currency),
   history({ account: id, limit = 200, offset = 0, text = "", accountIds, assetIds, through }) {
@@ -514,7 +549,7 @@ const handlers = {
     }
     return !!file;
   },
-  fundRefresh: (a) => refreshFund(requireBook(), a.asset, secrets),
+  fundRefresh: (a) => refreshFund(requireBook(), a.asset),
   async connections() {
     requireBook();
     const present = Object.fromEntries(
@@ -556,23 +591,19 @@ const handlers = {
     if (mode !== "real" || !db) return false;
     let changed = false;
     const now = Date.now();
-    if (args?.fx && now - lastFxCheck >= 300000) {
-      lastFxCheck = now;
-      if (preference(db, "credentials", "twelvedata.apiKey")) {
-        const ctx = storageContext(db, ALLOCATION);
-        ctx.api.network = network;
-        ctx.api.secrets = secrets;
-        ctx.api.logger = { warn() {} };
-        const quote = await new FxService(ctx).getQuote();
-        if (quote?.provider === "twelvedata" && now - Date.parse(quote.fetchedAt) < 300000) {
-          savePrice(db, "FX:USD/AUD", day(quote.fetchedAt), quote.rate, "Twelve Data", 25);
-          changed = true;
-        }
+    if (args?.market && marketAutoUpdate()) {
+      if (now - lastCloseCheck >= 18_000) {
+        const previous = lastCloseCheck;
+        lastCloseCheck = now;
+        const book = loadBook(db);
+        const assets = heldListings(book, marketTime(now).date);
+        const closes = await refreshDueCloses(book, assets, now);
+        changed = closes.some((r) => r.added) || Math.floor(previous / 60_000) !== Math.floor(now / 60_000);
       }
-    }
-    if (args?.market && marketAutoUpdate() && now - lastMarketCheck >= 1800000) {
-      lastMarketCheck = now;
-      if ((await updateMarket()).some((r) => r.count)) changed = true;
+      if (now - lastMarketCheck >= 1800000) {
+        lastMarketCheck = now;
+        if ((await updateMarket()).some((r) => r.added ?? r.count)) changed = true;
+      }
     }
     if (args?.funds) {
       for (const f of (await dashboard(db)).etfData) {
@@ -584,7 +615,7 @@ const handlers = {
           continue;
         fundChecks.set(f.asset.etfKey, now);
         try {
-          await refreshFund(db, f.asset, secrets);
+          await refreshFund(db, f.asset);
           changed = true;
         } catch {
           /* The existing snapshot remains available. */
@@ -592,50 +623,6 @@ const handlers = {
       }
     }
     return changed;
-  },
-  async refreshMarket(a) {
-    requireBook();
-    if (mode === "demo") throw Error("示例账本使用结单时点报价。");
-    const key = await secrets.get("twelvedata.apiKey");
-    if (!key) throw Error("请先在连接设置中保存 Twelve Data API Key，或手工维护报价。");
-    const now = new Date().toISOString(),
-      ctx = storageContext(db, ALLOCATION);
-    ctx.api.network = network;
-    ctx.api.secrets = secrets;
-    ctx.api.logger = { warn() {} };
-    const fx = await new FxService(ctx).getQuote({ force: true });
-    if (fx && fx.provider === "twelvedata")
-      savePrice(db, "FX:USD/AUD", day(fx.fetchedAt), fx.rate, "Twelve Data", 25);
-    const active = new Set(
-        (await dashboard(db, { ids: a?.ids })).rows.filter((r) => r.type !== "cash").map((r) => r.assetId),
-      ),
-      failed = [];
-    let updated = 0;
-    for (const id of active) {
-      const asset = db.prepare("SELECT * FROM sp_assets WHERE id=?").get(id);
-      try {
-        const url = new URL("https://api.twelvedata.com/quote");
-        url.searchParams.set("symbol", asset.symbol);
-        if (asset.mic) url.searchParams.set("mic_code", asset.mic);
-        url.searchParams.set("apikey", key);
-        const response = await network.request({ method: "GET", url: url.toString() }),
-          out = JSON.parse(response.body);
-        if (
-          response.status !== 200 ||
-          !out.close ||
-          !out.datetime ||
-          String(out.symbol || "").toUpperCase() !== asset.symbol.toUpperCase() ||
-          (asset.mic && out.mic_code !== asset.mic) ||
-          out.currency?.toUpperCase() !== asset.currency
-        )
-          throw Error("报价缺失或币种不一致");
-        savePrice(db, id, day(out.datetime), out.close, "Twelve Data", 11);
-        updated++;
-      } catch {
-        failed.push(asset.symbol);
-      }
-    }
-    return { updated, failed, fx: !!(fx?.provider === "twelvedata" && day(fx.fetchedAt) === day(now)) };
   },
   async backup({ password, convertLegacy = false }) {
     const key = backupKey(password);
@@ -695,7 +682,7 @@ const handlers = {
       const ok = await dialog.showMessageBox(win, {
         type: "question", buttons: ["取消", "恢复到" + title], defaultId: 0, cancelId: 0,
         message: "恢复这份" + title + "？",
-        detail: "现有账本会先保存为本机加密备份。跨 Windows 账户恢复后，请重新授权券商和行情连接。",
+        detail: "现有账本会先保存为本机加密备份。跨 Windows 账户恢复后，请重新授权券商连接。",
       });
       if (ok.response !== 1) return null;
       const key = getBookKey();
@@ -755,6 +742,8 @@ for (const [name, fn] of Object.entries(handlers))
   ipcMain.handle("portfolio:" + name, (event, args) => {
     if (event.sender !== win?.webContents || event.senderFrame !== win.webContents.mainFrame ||
         event.senderFrame?.url !== page) throw Error("请求来源无效。");
+    // Display actions are synchronous and independent of ledger operations.
+    if (name === "displayState" || name === "setUserScale") return fn(args ?? {});
     if (!switchingBooks && ["dashboard", "history", "connections", "preview"].includes(name)) {
       const read = Promise.resolve().then(() => fn(args || {}));
       readers.add(read);
@@ -783,11 +772,12 @@ function createWindow() {
     screen.getAllDisplays(),
     screen.getPrimaryDisplay(),
   );
+  let minimum = minimumWindowSize(screen.getDisplayMatching(bounds).workArea);
   win = new BrowserWindow({
     title: "Stock Portfolio",
     ...bounds,
-    minWidth: minimumSize.width,
-    minHeight: minimumSize.height,
+    minWidth: minimum.width,
+    minHeight: minimum.height,
     backgroundColor: windowBackground(),
     show: false,
     webPreferences: {
@@ -798,15 +788,60 @@ function createWindow() {
       sandbox: true,
     },
   });
-  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  win.webContents.on("will-navigate", (e, url) => {
+  const contents = win.webContents;
+  contents.setZoomMode("isolated");
+  contents.setVisualZoomLevelLimits(1, 1).catch(() => {});
+  let resizeTimer;
+  syncDisplay = (multiplier = displayState?.userScaleMultiplier ?? readPreferences().uiScaleMultiplier) => {
+    const [dipWidth, dipHeight] = win.getContentSize();
+    const prev = displayState;
+    displayState = computeDisplayState({ dipWidth, dipHeight, currentAspect: prev?.aspect, userScaleMultiplier: multiplier });
+    if (Math.abs(contents.getZoomFactor() - displayState.zoomFactor) >= 0.005)
+      contents.setZoomFactor(displayState.zoomFactor);
+    if (contents.getURL() === page && (prev?.aspect !== displayState.aspect ||
+        prev?.zoomFactor !== displayState.zoomFactor || prev?.userScaleMultiplier !== displayState.userScaleMultiplier))
+      contents.send("portfolio:displayState", displayState);
+    return displayState;
+  };
+  const scheduleDisplay = () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      const next = minimumWindowSize(screen.getDisplayMatching(win.getBounds()).workArea);
+      if (next.width !== minimum.width || next.height !== minimum.height) {
+        minimum = next;
+        win.setMinimumSize(minimum.width, minimum.height);
+      }
+      syncDisplay();
+    }, 50);
+  };
+  for (const name of ["resize", "move", "moved", "maximize", "unmaximize"]) win.on(name, scheduleDisplay);
+  screen.on("display-metrics-changed", scheduleDisplay);
+  win.once("closed", () => {
+    clearTimeout(resizeTimer);
+    screen.removeListener("display-metrics-changed", scheduleDisplay);
+    win = null;
+  });
+  contents.on("did-finish-load", () => syncDisplay());
+  contents.on("before-input-event", (event, input) => {
+    if (input.type !== "keyDown" || !(input.control || input.meta) || input.alt) return;
+    const key = input.key;
+    if (key !== "0" && key !== "=" && key !== "+" && key !== "-") return;
+    event.preventDefault();
+    try {
+      setUserScale(key === "0" ? { reset: true } : { delta: key === "-" ? -USER_SCALE_LIMITS.step : USER_SCALE_LIMITS.step });
+    } catch (error) {
+      console.error("Unable to save interface zoom:", error.message);
+    }
+  });
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.on("will-navigate", (e, url) => {
     if (url !== page) e.preventDefault();
   });
   Menu.setApplicationMenu(null);
   win.once("ready-to-show", () => {
-    if (headless) return;
-    if (maximized) win.maximize();
-    win.show();
+    if (!headless && maximized) win.maximize();
+    syncDisplay();
+    if (!headless) win.show();
   });
   if (!headless)
     win.on("close", () => {
@@ -814,6 +849,7 @@ function createWindow() {
         writePreferences({ window: { bounds: win.getNormalBounds(), maximized: win.isMaximized() } });
       } catch {}
     });
+  syncDisplay();
   win.loadFile(path.join(__dirname, "index.html"));
 }
 if (!app.requestSingleInstanceLock()) app.quit();

@@ -27,9 +27,8 @@ function monthsBefore(date, months) {
   d.setUTCDate(Math.min(n, new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate()));
   return d.toISOString().slice(0, 10);
 }
-const monthPresets = { "1m": 1, "3m": 3, "1y": 12 };
-// 本月, 近 3 个月, 今年以来, 近一年, 全部. "1m" (近 1 个月) remains for the current screens.
-export const periodPresets = ["mtd", "3m", "ytd", "1y", "all"];
+const monthPresets = { "1m": 1, "3m": 3, "6m": 6, "1y": 12 };
+export const periodPresets = ["1d", "1w", "mtd", "3m", "6m", "ytd", "1y", "all"];
 
 // A review period from its first day through `to`, the valuation date. Its gains are measured
 // from the close of `base`, the day before it. A preset or chosen start earlier than the first
@@ -38,6 +37,8 @@ export function resolvePeriod({ to, period = "ytd", from, earliest }) {
   to = day(to);
   let start;
   if (from) start = day(from);
+  else if (period === "1d") start = to;
+  else if (period === "1w") start = shiftDay(to, -6);
   else if (period === "mtd") start = to.slice(0, 8) + "01";
   else if (period === "ytd") start = to.slice(0, 5) + "01-01";
   else if (period === "all") start = earliest && earliest <= to ? earliest : to;

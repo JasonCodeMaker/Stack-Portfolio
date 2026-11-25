@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { parseArgs } = require("node:util");
 const { seedAcceptanceBook } = require("./fixtures/acceptance-book.cjs");
+const { resizeContent: resize } = require("./fixtures/display.cjs");
 
 const root = path.join(__dirname, "..");
 const { values, positionals } = parseArgs({
@@ -30,7 +31,7 @@ const welcome = (p) => button(p, /^打开示例账本/);
 const assets = (p, amount) => button(p, "总资产 A$" + amount + "，查看明细");
 
 async function withDesktop(directory, verify) {
-  fs.mkdirSync(directory);
+  fs.mkdirSync(directory, { recursive: true });
   const env = {
     ...process.env,
     STACK_PORTFOLIO_HEADLESS: "1",
@@ -76,27 +77,23 @@ async function openSample(p) {
   await title(p, "总览").waitFor();
 }
 
-async function resize(app, p, width, height) {
-  await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h), [width, height]);
-  await p.waitForFunction(([w, h]) => innerWidth === w && innerHeight === h, [width, height]);
-}
-
 async function verifyNativeMinimum(app, p) {
   const { minimum, size, content } = await app.evaluate(({ BrowserWindow }) => {
     const win = BrowserWindow.getAllWindows()[0];
     win.setSize(800, 500);
     return { minimum: win.getMinimumSize(), size: win.getSize(), content: win.getContentSize() };
   });
-  assert.deepEqual(minimum, [1024, 640]);
+  assert.deepEqual(minimum, [920, 650]);
   assert.deepEqual(size, minimum);
   await p.waitForFunction(([w, h]) =>
-    innerWidth === w && innerHeight === h && document.documentElement.dataset.short === "1", content);
+    Math.abs(innerWidth - w / 0.70) <= 2 && Math.abs(innerHeight - h / 0.70) <= 2 &&
+    document.documentElement.dataset.aspect === "16:9", content);
   const dimensions = (locator) => locator.boundingBox();
-  assert.equal((await dimensions(nav(p))).width, 64);
-  assert.equal((await dimensions(p.getByRole("banner"))).height, 52);
+  assert.ok(Math.abs((await dimensions(nav(p))).width - 64) < 1);
+  assert.ok(Math.abs((await dimensions(p.getByRole("banner"))).height - 52) < 1);
   assert.equal(await p.getByRole("main").getAttribute("data-cols"), "1");
   const chart = p.getByRole("img", { name: "总资产与净投入", exact: true });
-  assert.equal((await dimensions(chart)).height, 240);
+  assert.ok((await dimensions(chart)).height >= 239);
   assert.ok(await nav(p).getByText("示例", { exact: true }).isVisible());
 }
 
@@ -154,7 +151,7 @@ async function verifyPeriods(p) {
 }
 
 async function verifyHoldings(app, p) {
-  await resize(app, p, 1920, 1080);
+  await resize(app, p, 2560, 1080);
   await open(p, "持仓");
   const holding = (account, ticker) => region(p, account).getByRole("row").filter({ has: button(p, ticker) });
   for (const [account, quantity] of [["IBKR", "8"], ["Webull Australia", "2"]]) {
@@ -166,13 +163,16 @@ async function verifyHoldings(app, p) {
   await columns(2);
   await button(holding("IBKR", "AAPL"), "AAPL").click();
   const dock = p.getByRole("complementary", { name: "AAPL", exact: true });
-  await columns(1);
+  await columns(2);
   for (const [label, quantity] of [["合计股数", "10"], ["IBKR", "8"], ["Webull Australia", "2"]]) {
     await dock.getByRole("rowheader", { name: label, exact: true }).locator("..")
       .getByRole("cell", { name: quantity, exact: true }).waitFor();
   }
   await button(dock, "关闭").click();
   await columns(2);
+  await button(region(p, "IBKR"), "IBKR现金").click();
+  await p.getByRole("complementary", { name: "IBKR · 现金", exact: true }).waitFor();
+  await p.keyboard.press("Escape");
   await resize(app, p, 1280, 720);
   await button(holding("IBKR", "AAPL"), "AAPL").click();
   const popup = p.getByRole("dialog", { name: "AAPL", exact: true });
@@ -181,8 +181,74 @@ async function verifyHoldings(app, p) {
   await button(popup, "关闭").click();
 }
 
+async function verifyAdaptiveDisplay(app, p, profile) {
+  await welcome(p).waitFor();
+  assert.equal(await p.locator("html").getAttribute("data-aspect"), "16:9");
+  assert.equal(await resize(app, p, 2100, 1000).then((state) => state.aspect), "16:9");
+  await resize(app, p, 2440, 1020);
+  await p.locator('html[data-aspect="21:9"]').waitFor();
+  assert.equal(await resize(app, p, 2100, 1000).then((state) => state.aspect), "21:9");
+  await resize(app, p, 2560, 1080);
+  await openSample(p);
+  assert.ok(await p.locator(".overview-main").getByRole("region", { name: "资产走势" }).isVisible());
+  assert.ok(await p.locator(".overview-rail").getByRole("region", { name: "汇率影响" }).isVisible());
+  assert.ok(await p.locator(".pane").evaluate((pane) => pane.scrollHeight <= pane.clientHeight + 1),
+    "The sample Overview fits in a 21:9 viewport at the default comfort zoom");
+  const trend = p.getByRole("img", { name: "总资产与净投入", exact: true });
+  const chart = await trend.boundingBox();
+  await p.mouse.move(chart.x + chart.width / 2, chart.y + chart.height / 2);
+  await p.locator(".ch-tip").waitFor({ state: "visible" });
+  await open(p, "收益复盘");
+  await p.locator(".review-rail").getByLabel("观察日").waitFor();
+  await p.locator(".review-rail").getByRole("heading", { name: /跑输时段/ }).waitFor();
+  await open(p, "配置分析");
+  await p.locator(".allocation-breakdown").getByRole("heading", { name: "公司敞口明细" }).waitFor();
+  await open(p, "导入与对账");
+  await p.locator(".imp .cols").waitFor();
+  await open(p, "设置");
+  const waitScale = (scale) => p.waitForFunction(
+    (value) => document.querySelector(".settings-zoom output")?.textContent === value, scale);
+  const shortcut = (keyCode) => app.evaluate(({ BrowserWindow }, keyCode) => {
+    const contents = BrowserWindow.getAllWindows()[0].webContents;
+    contents.focus();
+    for (const type of ["keyDown", "keyUp"]) contents.sendInputEvent({ type, keyCode, modifiers: ["control"] });
+  }, keyCode);
+  await button(p, "放大界面").click();
+  await waitScale("105%");
+  await shortcut("=");
+  await waitScale("110%");
+  await shortcut("Plus");
+  await waitScale("115%");
+  await shortcut("-");
+  await waitScale("110%");
+  await shortcut("-");
+  await waitScale("105%");
+  await shortcut("0");
+  await waitScale("100%");
+  await button(p, "缩小界面").click();
+  await waitScale("95%");
+  await button(p, "重置界面缩放").click();
+  await waitScale("100%");
+  await assert.rejects(() => p.evaluate(() => window.portfolio.setUserScale({ multiplier: "1.2" })));
+  await p.evaluate(() => window.portfolio.setUserScale({ multiplier: 8 }));
+  await waitScale("130%");
+  assert.ok(await button(p, "放大界面").isDisabled());
+  await p.evaluate(() => window.portfolio.setUserScale({ multiplier: 0 }));
+  await waitScale("85%");
+  assert.ok(await button(p, "缩小界面").isDisabled());
+  await p.evaluate(async () => {
+    await window.portfolio.setTheme({ theme: "dark" });
+    await window.portfolio.newBook();
+    await window.portfolio.openDemo();
+  });
+  await resize(app, p, 1920, 1080);
+  assert.equal(await p.locator("html").getAttribute("data-aspect"), "16:9");
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(profile, "workspace.json"), "utf8")),
+    { mode: "demo", uiScaleMultiplier: 0.85, theme: "dark" });
+}
+
 async function verifyHoldingCost(app, p) {
-  await resize(app, p, 1024, 640);
+  await resize(app, p, 1024, 650);
   const stock = button(p.getByRole("group", { name: "证券类别" }), "股票");
   await stock.click();
   const search = p.getByRole("searchbox", { name: "搜索持仓" });
@@ -378,7 +444,7 @@ async function verifyBackup(app, p, file, password, directory) {
 }
 
 async function captureMatrix(app, p, output) {
-  const sizes = [[1024, 640], [1280, 720], [1920, 1080], [3440, 1440]];
+  const sizes = [[1024, 650], [1280, 720], [1920, 1080], [3440, 1440]];
   const eachViewport = async (verify) => {
     for (const [width, height] of sizes) {
       await resize(app, p, width, height);
@@ -440,6 +506,12 @@ async function main() {
   const prefix = "stack-portfolio-smoke-";
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   try {
+    const displayProfile = path.join(directory, "display");
+    await withDesktop(displayProfile, (app, p) => verifyAdaptiveDisplay(app, p, displayProfile));
+    await withDesktop(displayProfile, async (_app, p) => {
+      await title(p, "总览").waitFor();
+      assert.equal(await p.evaluate(() => window.portfolio.displayState().then((state) => state.userScaleMultiplier)), 0.85);
+    });
     await withDesktop(path.join(directory, "acceptance"), async (app, p) => {
       await title(p, "打开投资账本").waitFor();
       await region(p, "迁入 Wealthfolio 账本").waitFor();

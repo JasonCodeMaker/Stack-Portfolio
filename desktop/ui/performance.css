@@ -24,6 +24,18 @@
   gap: var(--gap);
   transition: opacity 0.15s;
 }
+.review-layout, .review-main, .review-rail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--gap);
+  min-width: 0;
+}
+[data-aspect="21:9"] .review-layout {
+  grid-template-columns: minmax(0, 1.35fr) minmax(440px, 1fr);
+  align-items: start;
+}
+.review-main, .review-rail { container-type: inline-size; }
 /* The previous result stays in place while the next one is worked out. */
 .review-body.stale {
   opacity: 0.5;
@@ -56,6 +68,16 @@
 }
 .review-metrics small {
   display: block;
+}
+.review-day-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  margin-block-end: 12px;
+}
+.review-day-controls > .tabs {
+  justify-self: start;
+  max-width: 100%;
 }
 .review-readout {
   color: var(--muted);

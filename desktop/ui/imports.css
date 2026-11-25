@@ -5,7 +5,9 @@
   display: grid;
   gap: 12px;
   min-width: 0;
+  max-width: 1240px;
 }
+[data-aspect="21:9"] .imp-page { max-width: 1820px; }
 .imp .stack {
   display: grid;
   gap: var(--gap);
@@ -54,7 +56,7 @@
 }
 .imp :is(.f, .field, .line) :is(input:not([type="checkbox"]), select) {
   height: 32px;
-  border: 1px solid var(--sep);
+  border: 1px solid var(--l3);
   border-radius: 6px;
   background: var(--surface);
   color: var(--l1);

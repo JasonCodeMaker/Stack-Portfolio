@@ -4,7 +4,7 @@ const fs = require("node:fs"),
   os = require("node:os"),
   path = require("node:path");
 const { randomBytes } = require("node:crypto");
-const { createBook, createAccount, saveEvent, savePrice, resolveAsset } = require("../out/ledger.cjs");
+const { createBook, createAccount, saveBrokerValue, saveEvent, savePrice, resolveAsset } = require("../out/ledger.cjs");
 const { dashboard } = require("../out/flows.cjs");
 const { seedDemo, demoDay } = require("../out/demo.cjs");
 
@@ -54,6 +54,59 @@ function fixture(t) {
   return { db, a, b, asx, us, ids: [a, b] };
 }
 
+test("weights merge accounts at each close, distinguish a new listing and withhold unknown cost", async (t) => {
+  const { db, a, b, ids, asx } = fixture(t);
+  const date = "2025-02-07";
+  const fresh = resolveAsset(db, { symbol: "NEW", exchangeMic: "XASX" }, "AUD");
+  for (const [id, accountId, assetId, quantity] of [["add", b, asx, 5], ["new", a, fresh, 2]]) {
+    saveEvent(db, { id, accountId, assetId, date, activityType: "BUY", currency: "AUD", quantity, unitPrice: 20 });
+  }
+  savePrice(db, fresh, date, 25, "close");
+  const d = await dashboard(db, { ids, date, period: "1d" });
+  const xyz = d.holdings.securities.find((s) => s.ticker === "XYZ");
+  const buy = d.holdings.securities.find((s) => s.ticker === "NEW");
+  assert.equal(xyz.rowIds.length, 2);
+  assert.equal(xyz.newPosition, false);
+  near(xyz.weightChangePp, (105 * 21 / d.valuation.total - 2200 / 16432) * 100);
+  assert.equal(buy.newPosition, true);
+  near(buy.cumulativeGain, 10);
+  assert.equal(xyz.cumulativeGain, null);
+  assert.equal(d.holdings.openGain, null);
+  assert.equal(d.holdings.cost, null);
+});
+
+test("period FX reconciles a transfer still owned by the portfolio between accounts", async (t) => {
+  const { db } = fixture(t);
+  const a = createAccount(db, "From"), b = createAccount(db, "To");
+  for (const [accountId, date, type, amount, group] of [
+    [a, "2025-02-03", "DEPOSIT", 1000], [a, "2025-02-04", "TRANSFER_OUT", 100, "usd-pair"],
+    [b, "2025-02-05", "TRANSFER_IN", 100, "usd-pair"],
+  ]) saveEvent(db, { id: "transit-" + type, accountId, date, activityType: type, currency: "USD", amount, group });
+  const d = await dashboard(db, { ids: [a, b], from: "2025-02-04", date: "2025-02-05" });
+  near(d.fx.accounts.find((row) => row.id === a).periodGain, 90);
+  near(d.fx.accounts.find((row) => row.id === b).periodGain, 0);
+  near(d.fx.periodDifference, 10);
+  near(d.breakdown.parts.fx, 100);
+});
+
+test("cumulative gain includes income from another selected account that has sold its entire position", async (t) => {
+  const { db, a, b, asx, ids } = fixture(t);
+  const date = "2025-02-07";
+  db.prepare("INSERT INTO sp_holding_evidence(account,asset,day,quantity,reported,local_cost,aud_cost,reference) VALUES(?,?,?,?,?,?,?,?)")
+    .run(a, asx, "2025-02-03", "100", 0, "2000", null, "opening cost");
+  for (const [day, kind, amount, quantity, price] of [
+    ["2025-02-04", "BUY", 0, 5, 20], ["2025-02-05", "DIVIDEND", 3, 0, 0], [date, "SELL", 0, 5, 22],
+  ]) saveEvent(db, { id: kind, accountId: b, date: day, activityType: kind, currency: "AUD", assetId: asx,
+    amount, quantity, unitPrice: price });
+  const combined = await dashboard(db, { ids, date, period: "1d" });
+  const xyz = combined.holdings.securities.find((s) => s.ticker === "XYZ");
+  near(xyz.cumulativeGain, 100 + 10 + 3);
+  const single = await dashboard(db, { ids: [a], date, period: "1d" });
+  near(single.holdings.cost, 2000);
+  near(single.holdings.openGain, 100);
+  near(single.holdings.securities[0].cumulativeGain, 100);
+});
+
 test("on a Sunday the daily change is Friday's, net of the matched transfer, and adds up across accounts and securities", async (t) => {
   const { db, a, b, ids } = fixture(t);
   const d = await dashboard(db, { ids, date: "2025-02-09", period: "mtd" });
@@ -69,6 +122,8 @@ test("on a Sunday the daily change is Friday's, net of the matched transfer, and
   near(byId[b].change, -52);
   assert.deepEqual([byId[a].flow, byId[b].flow], [-500, 500]);
   near(sum(d.byAccount.map((v) => v.today.change)), today.change);
+  // A deposited A$1,000 and the later transfer cannot become period FX on an AUD-only account.
+  assert.equal(d.fx.accounts.find((row) => row.id === a).periodGain, 0);
   // Securities plus account-level items (here the USD cash rate move) add up to the portfolio.
   const row = (label) => today.securities.find((r) => r.label === label);
   near(row("XYZ").change, -100);
@@ -130,6 +185,41 @@ test("before every listing has closed, the daily change stays on the latest clos
   savePrice(db, "FX:USD/AUD", "2025-02-12", 1.55, "close");
   const { today } = await dashboard(db, { ids, date: "2025-02-12", period: "mtd" });
   assert.deepEqual([today.date, today.previous], ["2025-02-11", "2025-02-10"]);
+});
+
+test("an ASX holding uses its own quote while the portfolio waits for US closes", async (t) => {
+  const { db, ids, a, asx, us } = fixture(t);
+  db.prepare("UPDATE sp_anchors SET positions=? WHERE account=?").run(JSON.stringify({ [asx]: 50 }), a);
+  for (const [date, price] of [["2026-11-19", 73.40], ["2026-11-20", 71.33]]) {
+    savePrice(db, asx, date, price, "close");
+    savePrice(db, us, date, 100, "close");
+    savePrice(db, "FX:USD/AUD", date, 1.5, "close");
+  }
+  const date = "2026-11-23";
+  saveBrokerValue(db, a, {
+    date, source: "Webull AU", base: "AUD", cash: { AUD: 1000 }, nav: 4544.50,
+    positions: [{ symbol: "XYZ", mic: "XASX", currency: "AUD", quantity: 50, price: 70.89 }],
+  });
+  const read = () => dashboard(db, { ids, date, period: "mtd" });
+  const holding = (d) => d.holdings.securities.find((s) => s.ticker === "XYZ");
+  assert.equal(holding(await read()).quoteChange, null, "A broker snapshot alone does not verify the quote date");
+
+  savePrice(db, asx, date, 70.89, "Twelve Data");
+  let d = await read();
+  const row = d.rows.find((r) => r.ticker === "XYZ");
+  assert.equal(Number(row.price), 70.89);
+  assert.equal(d.today.date, "2026-11-20");
+  near(holding(d).today.change, -103.50);
+  for (const quote of [row.quoteChange, holding(d).quoteChange]) {
+    assert.equal(quote.date, date);
+    near(quote.change, 70.89 / 71.33 - 1);
+    near(quote.amount, -22);
+  }
+  assert.equal(d.rows.find((r) => r.ticker === "ABC").quoteChange, undefined);
+
+  db.prepare("DELETE FROM sp_prices WHERE asset=? AND day=?").run(asx, "2026-11-20");
+  d = await read();
+  assert.equal(holding(d).quoteChange, null, "Missing Friday close must not turn Thursday into the baseline");
 });
 
 test("company tiles use dated closes from direct or unambiguously known listings", async (t) => {

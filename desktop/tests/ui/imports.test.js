@@ -5,25 +5,25 @@ import { checkLayout, quantityGaps, syncLayout } from "../../ui/importsLayout.js
 const at = (layout, cols) => arrangeGrid(layout, cols);
 
 describe("记录与同步 layout", () => {
-  it("stacks the import card and recent batches in one column, side by side 2 : 1 when there is room", () => {
+  it("stacks the import card and recent batches in 16:9 and places them side by side in 21:9", () => {
     const layout = syncLayout([]);
     expect(at(layout, 1).columns).toEqual([["update", "batches"]]);
-    expect(at(layout, 2)).toEqual({ template: "minmax(0,2fr) minmax(0,1fr)", columns: [["update"], ["batches"]] });
+    expect(at(layout, 2)).toEqual({ template: "minmax(0,1.05fr) minmax(0,1fr)", columns: [["update"], ["batches"]] });
     expect(at(layout, 3).columns).toEqual([["update"], ["batches"]]);
   });
 
   it("puts the broker previews beside the import card, one broker per column only when three columns fit", () => {
     const layout = syncLayout(["ibkr", "webull"]);
     expect(at(layout, 1).columns).toEqual([["update", "ibkr", "webull"]]);
-    expect(at(layout, 2)).toEqual({ template: "minmax(0,1fr) minmax(0,1.6fr)", columns: [["update"], ["ibkr", "webull"]] });
+    expect(at(layout, 2)).toEqual({ template: "minmax(0,1.05fr) minmax(0,1fr)", columns: [["update"], ["ibkr", "webull"]] });
     expect(at(layout, 3)).toEqual({
       template: "minmax(0,1fr) minmax(0,1.3fr) minmax(0,1.3fr)",
       columns: [["update"], ["ibkr"], ["webull"]],
     });
   });
 
-  it("keeps the import card at the same width when there are no batches to list yet", () => {
-    expect(at(syncLayout([], { batches: false }), 2).columns).toEqual([["update"], []]);
+  it("renders only the import card when there are no batches to list yet", () => {
+    expect(at(syncLayout([], { batches: false }), 2).columns).toEqual([["update"]]);
   });
 
   it("keeps a single preview in the wider second column at three columns", () => {
@@ -32,10 +32,10 @@ describe("记录与同步 layout", () => {
 });
 
 describe("和券商结单核对 layout", () => {
-  it("puts the statement and the evidence side by side in equal columns, stacked in one column", () => {
+  it("puts the statement and the evidence side by side in 21:9, stacked in 16:9", () => {
     const layout = checkLayout(true);
     expect(at(layout, 1).columns).toEqual([["statement", "evidence"]]);
-    expect(at(layout, 2)).toEqual({ template: "minmax(0,1fr) minmax(0,1fr)", columns: [["statement"], ["evidence"]] });
+    expect(at(layout, 2)).toEqual({ template: "minmax(0,1.05fr) minmax(0,1fr)", columns: [["statement"], ["evidence"]] });
     expect(at(layout, 3).columns).toEqual([["statement"], ["evidence"]]);
   });
 

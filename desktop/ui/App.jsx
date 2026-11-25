@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   CheckCircle2,
@@ -8,7 +8,8 @@ import {
 } from "lucide-react";
 import { api, Modal } from "./common";
 import { Mark, Shell } from "./Shell";
-import { Overview, Holdings } from "./Cockpit";
+import { Holdings } from "./Cockpit";
+import { Overview } from "./Overview";
 import { Performance } from "./Performance";
 import { Imports } from "./Imports";
 import { Allocation } from "./Allocation";
@@ -169,6 +170,26 @@ function saveFilters(filters) {
 const analysisPages = ["overview", "performance", "allocation", "holdings"];
 
 function Application() {
+  const [display, setDisplay] = useState({ aspect: "16:9", userScaleMultiplier: 1 });
+  useLayoutEffect(() => {
+    let active = true, received = false;
+    const unsubscribe = api.onDisplayState((state) => {
+      received = true;
+      setDisplay(state);
+    });
+    api.displayState().then((state) => {
+      if (active && !received) setDisplay(state);
+    }).catch((error) => {
+      if (active) setFatal(error.message);
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.aspect = display.aspect;
+  }, [display.aspect]);
   const [home, setHome] = useState(null),
     [welcome, setWelcome] = useState(false),
     [d, setD] = useState(null),
@@ -266,20 +287,24 @@ function Application() {
   useEffect(() => {
     if (mode !== "real" || welcome || !d) return;
     let active = true,
+      checking = false,
       retry;
     const check = () => {
       clearTimeout(retry);
       if (document.visibilityState !== "visible") return;
       // Wait out an operation in progress instead of skipping until the next interval.
       if (busyDepth.current) return void (retry = setTimeout(check, 2000));
+      if (checking) return;
+      checking = true;
       api
-        .autoRefresh({ market: true, fx: d.settings.liveFxPolling, funds: shown.current === "allocation" })
+        .autoRefresh({ market: true, funds: shown.current === "allocation" })
         .then((changed) => {
-          if (active && changed) reload();
+          if (active && changed && (!opts.current.date || shown.current === "settings")) reload();
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => { checking = false; });
     };
-    const timer = setInterval(check, 300000);
+    const timer = setInterval(check, 20_000);
     document.addEventListener("visibilitychange", check);
     check();
     return () => {
@@ -288,7 +313,7 @@ function Application() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", check);
     };
-  }, [mode, welcome, !!d, !!d?.settings.liveFxPolling, reload]);
+  }, [mode, welcome, !!d, reload]);
   // Fund holdings are checked when the allocation page opens.
   useEffect(() => {
     if (mode !== "real" || welcome || !d || page !== "allocation") return;
@@ -308,9 +333,9 @@ function Application() {
       )}
       {message && (
         <div className="toast" role="status">
-          <CheckCircle2 size={17} />
-          {message}
-          <button className="icon" onClick={() => setMessage("")}>
+          <CheckCircle2 size={17} aria-hidden="true" />
+          <span>{message}</span>
+          <button type="button" className="icon" aria-label="关闭通知" onClick={() => setMessage("")}>
             <X size={15} />
           </button>
         </div>
@@ -341,6 +366,7 @@ function Application() {
   return (
     <>
       <Shell
+        aspect={display.aspect}
         page={page}
         onPage={onPage}
         ledger={{ demo: mode === "demo", accounts: active.length }}
@@ -360,7 +386,7 @@ function Application() {
         )}
         {page === "overview" && <Overview d={d} run={run} onPage={onPage} filters={filters} onFilters={changeFilters} />}
         {page === "holdings" && (
-          <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} historical={Boolean(filters.date)} />
+          <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} />
         )}
         {page === "allocation" && (
           <Allocation d={d} run={run} onPage={onPage} />
@@ -382,6 +408,8 @@ function Application() {
             mode={mode}
             theme={home.theme}
             onThemeChange={changeTheme}
+            userScale={display.userScaleMultiplier}
+            onUserScaleChange={(request) => run(() => api.setUserScale(request), false)}
             run={run}
             initial={initial}
             onPage={onPage}

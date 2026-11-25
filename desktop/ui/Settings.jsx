@@ -6,6 +6,7 @@ import { Grid, useShell } from "./Shell";
 import { marketNames } from "./HoldingEditor";
 import { scopedAliasKey } from "../allocation/domain/identifiers";
 import { BookBackups } from "./BookBackups";
+import { USER_SCALE_LIMITS } from "../adaptiveLayout.js";
 import { aliasRows, brokerState, cardColumns } from "./settingsModel.js";
 
 const tabs = [
@@ -45,7 +46,7 @@ function Fold({ title, children }) {
 const securityLabel = (r) =>
   [r.name || r.ticker, r.ticker, marketNames[r.mic] || r.mic || "上市地待补", r.localCurrency].join(" · ");
 
-export function Settings({ d, mode, theme = "system", onThemeChange, run, initial = {}, workspace, openHome, onPage }) {
+export function Settings({ d, mode, theme = "system", onThemeChange, userScale = 1, onUserScaleChange, run, initial = {}, workspace, openHome, onPage }) {
   const demo = mode === "demo";
   const { cols } = useShell();
   const [tab, setTab] = useState(initial.tab || "connections"),
@@ -279,47 +280,6 @@ export function Settings({ d, mode, theme = "system", onThemeChange, run, initia
         </div>
       </Panel>
     ),
-    sources: (
-      <Fold title="其他行情来源">
-        <p className="muted">
-          Twelve Data 用于盘中报价，以及补齐公开来源没有的历史收盘价；Alpha Vantage 用于部分 ETF
-          的成分数据。不填也可以正常使用。
-        </p>
-        <div className="fg">
-          {secretField("Twelve Data API Key", "twelvedata.apiKey")}
-          {secretField("Alpha Vantage API Key", "alphaVantage.apiKey")}
-        </div>
-        <div className="acts">
-          <button
-            className="btn pri"
-            disabled={demo}
-            onClick={() => run(() => saveKeys(["twelvedata.apiKey", "alphaVantage.apiKey"]), "数据源设置已保存")}
-          >
-            保存数据源设置
-          </button>
-          <button
-            className="btn"
-            disabled={demo}
-            onClick={() =>
-              run(async () => {
-                const r = await api.refreshMarket({ ids: d.selected });
-                return "报价已更新 " + r.updated + " 项" + (r.failed.length ? "；需核对 " + r.failed.join("、") : "");
-              }, true)
-            }
-          >
-            用 Twelve Data 刷新盘中报价
-          </button>
-        </div>
-        <label className="chk">
-          <input
-            type="checkbox"
-            checked={d.settings.liveFxPolling}
-            onChange={(e) => run(() => saveSettings({ liveFxPolling: e.target.checked }), "汇率刷新设置已保存")}
-          />
-          有 Twelve Data Key 时，每 5 分钟检查一次 USD/AUD 实时汇率
-        </label>
-      </Fold>
-    ),
     reset: (
       <Fold title="重置某个账户的券商同步标记">
         <div className="acts">
@@ -404,7 +364,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, run, initia
           <tbody>
             {d.accounts.map((a) => (
               <tr key={a.id}>
-                <td className="l">{a.name}</td>
+                <td className="l account-name">{a.name}</td>
                 <td className="l">{a.currency}</td>
                 <td className="l">{a.active ? "启用" : "归档"}</td>
               </tr>
@@ -491,7 +451,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, run, initia
               </F>
               <F label="固定数据源">
                 <select disabled={pm !== "pinned"} value={provider} onChange={(e) => setProvider(e.target.value)}>
-                  {["ishares", "invesco", "betashares", "alpha-vantage"].map((v) => (
+                  {["ishares", "invesco", "betashares"].map((v) => (
                     <option key={v}>{v}</option>
                   ))}
                 </select>
@@ -643,7 +603,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, run, initia
     ),
   };
   const keys = {
-    connections: ["ibkr", "webull", "market", "sources", "reset"],
+    connections: ["ibkr", "webull", "market", "reset"],
     book: ["book", "accounts"],
     data: ["price", "fund", "classes"],
   }[tab];
@@ -676,14 +636,28 @@ export function Settings({ d, mode, theme = "system", onThemeChange, run, initia
             <option value="dark">深色</option>
           </select>
         </label>
+        {onUserScaleChange && (
+          <div className="row m0 settings-zoom" role="group" aria-label="界面缩放" aria-describedby="zoom-shortcuts">
+            <span className="cap">界面缩放</span>
+            <button type="button" className="btn sm" aria-label="缩小界面"
+              disabled={userScale <= USER_SCALE_LIMITS.min}
+              onClick={() => onUserScaleChange({ delta: -USER_SCALE_LIMITS.step })}>−</button>
+            <output aria-label="当前界面缩放">{Math.round(userScale * 100)}%</output>
+            <button type="button" className="btn sm" aria-label="放大界面"
+              disabled={userScale >= USER_SCALE_LIMITS.max}
+              onClick={() => onUserScaleChange({ delta: USER_SCALE_LIMITS.step })}>+</button>
+            <button type="button" className="btn sm" aria-label="重置界面缩放"
+              disabled={userScale === USER_SCALE_LIMITS.default}
+              onClick={() => onUserScaleChange({ reset: true })}>重置</button>
+            <span className="cap" id="zoom-shortcuts">Ctrl + / − / 0</span>
+          </div>
+        )}
       </div>
       {tab === "connections" && demo && <div className="notice">正式账本可保存券商授权。示例账本使用随附样例。</div>}
       {cols === 1 ? (
-        <div className="stack cap880">{keys.map((k) => <React.Fragment key={k}>{cards[k]}</React.Fragment>)}</div>
+        <div className="stack">{keys.map((k) => <React.Fragment key={k}>{cards[k]}</React.Fragment>)}</div>
       ) : (
-        <div className="cap1760">
-          <Grid layout={cardColumns(keys)} panels={cards} />
-        </div>
+        <Grid layout={cardColumns(keys)} panels={cards} />
       )}
       {confirm && (
         <Modal title={confirm[0]} close={() => setDialog("")}>

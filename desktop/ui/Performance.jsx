@@ -2,17 +2,11 @@ import React, { useEffect, useRef, useState } from "react";
 import { Bookmark, RefreshCw } from "lucide-react";
 import { api, aud, directedPct, fmt, num, types, signedPct, tone, Card, Delta, Empty, Field, Table, Tabs } from "./common";
 import { DivergingBar, LineChart, divergingScale, seriesColor } from "./charts";
-import { Detail, Grid, useMainChartHeight, useRowKeys, useShell } from "./Shell";
+import { Detail, useMainChartHeight, useRowKeys, useShell } from "./Shell";
 import { resolvePeriod } from "../periods.js";
 import { PeriodControl } from "./FilterControls";
 import { accountScope, choosePreset, chooseRange, isCustom, periodLabels, periodQuery } from "./filters.js";
 import "./performance.css";
-
-const reviewLayout = {
-  1: [["verdict", "chart", "breakdown", "contributions", "method"]],
-  2: [["verdict", "chart", "breakdown"], ["contributions", "method"]],
-  3: [["verdict", "chart"], ["contributions"], ["breakdown", "method"]],
-};
 
 const gapPoints = (v) => signedPct(v).replace("%", " pp");
 const seriesOf = (review) => [{ id: "portfolio", name: "我的组合" }, ...review.series];
@@ -212,12 +206,33 @@ function Methods() {
   );
 }
 
-function MethodSummary() {
+function MethodSummary({ dataPanel }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details className="card review-method">
+    <details className="card review-method" onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary>口径说明</summary>
-      <Methods />
+      {open && dataPanel}
     </details>
+  );
+}
+
+function UnderperformancePeriods({ review, benchmark, select }) {
+  const periods = review.intervals.filter((interval) => interval.id === benchmark.id);
+  return (
+    <Card title={"跑输时段 · " + benchmark.name}>
+      {periods.length ? (
+        <Table head={["首次观察到落后", "最后观察日", "状态", ["最大落后", "num"]]}>
+          {periods.map((interval) => (
+            <tr key={interval.from}>
+              <td><button type="button" className="text-btn" onClick={() => select(interval.from)}>{interval.from}</button></td>
+              <td>{interval.to}</td>
+              <td>{{ recovered: "已追平", interrupted: "数据中断", open: "尚未追平" }[interval.status]}</td>
+              <td className="num">{gapPoints(interval.worst)}</td>
+            </tr>
+          ))}
+        </Table>
+      ) : <p className="cap">{review.metrics[benchmark.id].gap == null ? "暂无同期比较。" : "所选期间没有跑输时段。"}</p>}
+    </Card>
   );
 }
 
@@ -251,14 +266,9 @@ function DataPanel({ review, mode, disabled, refresh, results }) {
       </dl>
       {mode === "real" && (
         <div className="actions">
-          <button type="button" className="btn" disabled={disabled} onClick={() => refresh(false)}>
+          <button type="button" className="btn" disabled={disabled} onClick={refresh}>
             <RefreshCw size={14} aria-hidden="true" /> 更新指数、汇率和收盘价
           </button>
-          {review.canBackfill && review.missingAssets.length > 0 && (
-            <button type="button" className="btn" disabled={disabled} onClick={() => refresh(true)}>
-              用 Twelve Data 补齐收盘价
-            </button>
-          )}
         </div>
       )}
       {results.length > 0 && (
@@ -497,31 +507,33 @@ function DayDetail({ review, date, select }) {
           {error}
         </p>
       )}
-      {detail?.date === date && (
-        <p className="review-readout">
-          <span>
-            收盘净值 <b>{aud(detail.total, 2)}</b>
-          </span>
-          <span>
-            现金 <b>{aud(detail.cash, 2)}</b>
-          </span>
-          <span>
-            现金占比 <b>{detail.cashWeight == null ? "—" : fmt(detail.cashWeight * 100, 2) + "%"}</b>
-          </span>
-          <span>
-            自区间起点 <b><Delta rate={reading?.portfolio} /></b>
-          </span>
-        </p>
-      )}
-      <Tabs
-        items={[
-          ["holdings", "当日持仓"],
-          ["day", "当日流水"],
-          ["all", "区间流水"],
-        ]}
-        value={tab}
-        onChange={setTab}
-      />
+      <div className="review-day-controls">
+        {detail?.date === date && (
+          <p className="review-readout">
+            <span>
+              收盘净值 <b>{aud(detail.total, 2)}</b>
+            </span>
+            <span>
+              现金 <b>{aud(detail.cash, 2)}</b>
+            </span>
+            <span>
+              现金占比 <b>{detail.cashWeight == null ? "—" : fmt(detail.cashWeight * 100, 2) + "%"}</b>
+            </span>
+            <span>
+              自区间起点 <b><Delta rate={reading?.portfolio} /></b>
+            </span>
+          </p>
+        )}
+        <Tabs
+          items={[
+            ["holdings", "当日持仓"],
+            ["day", "当日流水"],
+            ["all", "区间流水"],
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
+      </div>
       {tab === "holdings" ? (
         !detail || detail.date !== date ? (
           <small>正在读取持仓…</small>
@@ -674,8 +686,8 @@ function Notes({ review, notes, opened, comparable, reopen, save, busy, accountN
 }
 
 export function Performance({ d, mode, run, reload, filters, onFilters, onPage }) {
-  const { tier } = useShell();
-  const docked = tier === "wide";
+  const { aspect } = useShell();
+  const docked = aspect === "21:9";
   // The account scope, valuation date and period are the global filters (spec §2.3).
   const valuationDate = filters.date || d.date;
   const scope = { ids: d.selected, ...periodQuery(filters, valuationDate) };
@@ -763,9 +775,9 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
       setBusy(false);
     }
   }
-  async function refresh(holdings) {
+  async function refresh() {
     await act(async () => {
-      const result = await api.refreshReview({ token: review.token, holdings });
+      const result = await api.refreshReview({ token: review.token });
       setResults(result);
       setVersion((v) => v + 1);
       reload();
@@ -789,6 +801,9 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
   const benchmarks = review ? benchmarksOf(review) : [];
   const benchmark = benchmarks.find((b) => b.id === benchmarkId) || benchmarks[0];
   const period = isCustom(filters) ? "自定义" : periodLabels[filters.period];
+  const dataPanel = review && (
+    <DataPanel review={review} mode={mode} disabled={!current || busy || updating > 0} refresh={refresh} results={results} />
+  );
   return (
     <>
       <PeriodControl
@@ -829,52 +844,77 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
         </Card>
       ) : (
         <div className={"review-body" + (current ? "" : " stale")} aria-busy={!current} inert={!current}>
-          <Grid layout={reviewLayout} panels={{
-            verdict: <Verdict review={review} benchmark={benchmark} period={period} />,
-            chart: <ReviewChart
-              review={review}
-              benchmarks={benchmarks}
-              benchmark={benchmark}
-              chooseBenchmark={setBenchmarkId}
-              select={openDay}
-              zoom={zoom}
-            />,
-            breakdown: <Breakdown
-              data={review.breakdown}
-              period={period}
-              selected={part}
-              select={setPart}
-              openHolding={openHolding}
-            />,
-            contributions: <Contributions
-              data={review.contributions}
-              total={review.money?.gain}
-              period={period}
-              expanded={expanded}
-              setExpanded={setExpanded}
-              openHolding={openHolding}
-              openEvidence={(row) => setDetail({ kind: "source", row })}
-            />,
-            method: <MethodSummary />,
-          }} />
+          <div className="review-layout">
+            <div className="review-main">
+              <Verdict review={review} benchmark={benchmark} period={period} />
+              <ReviewChart
+                review={review}
+                benchmarks={benchmarks}
+                benchmark={benchmark}
+                chooseBenchmark={setBenchmarkId}
+                select={openDay}
+                zoom={zoom}
+              />
+              <Breakdown
+                data={review.breakdown}
+                period={period}
+                selected={part}
+                select={setPart}
+                openHolding={openHolding}
+              />
+              <Contributions
+                data={review.contributions}
+                total={review.money?.gain}
+                period={period}
+                expanded={expanded}
+                setExpanded={setExpanded}
+                openHolding={openHolding}
+                openEvidence={(row) => setDetail({ kind: "source", row })}
+              />
+              <MethodSummary dataPanel={detail?.kind === "methods" ? null : dataPanel} />
+            </div>
+            <div className="review-rail">
+              {(docked || !inScope || !detail?.date) && (
+                <DayDetail
+                  review={review}
+                  date={(inScope && detail?.date) || review.metrics.portfolio.asOf || review.to}
+                  select={openDay}
+                />
+              )}
+              <UnderperformancePeriods review={review} benchmark={benchmark} select={openDay} />
+              <Notes
+                key={scopeKey}
+                review={review}
+                notes={review.notes}
+                opened={current ? opened : null}
+                comparable={comparable}
+                reopen={(note) => {
+                  if (!noteScopeAvailable(note)) {
+                    setOpened(note);
+                    return;
+                  }
+                  const date = note.to > valuationDate ? note.to : filters.date;
+                  const range = chooseRange({ ...filters, date }, note.from, note.to, date || valuationDate);
+                  change({ ...range, ids: accountScope(note.ids, activeIds) }, note);
+                  setVersion((v) => v + 1);
+                }}
+                save={save}
+                busy={busy}
+                accountName={accountName}
+              />
+            </div>
+          </div>
           {inScope && detail?.kind === "daily" && (docked || !detail.date) && (
             <Detail wide title={detail.date ? detail.date + " · 当日明细" : "逐日数据"} onClose={() => setDetail(null)}>
               <DailyTable review={review} benchmark={benchmark} selected={detail.date} select={selectDaily} docked={docked} />
-              {detail.date && <DayDetail review={review} date={detail.date} select={selectDaily} />}
             </Detail>
           )}
           {inScope && detail?.kind === "methods" && (
             <Detail title="数据来源与计算方法" onClose={() => setDetail(null)}>
-              <DataPanel
-                review={review}
-                mode={mode}
-                disabled={!current || busy || updating > 0}
-                refresh={refresh}
-                results={results}
-              />
+              {dataPanel}
             </Detail>
           )}
-          {inScope && (detail?.kind === "day" || (!docked && detail?.kind === "daily" && detail.date)) && (
+          {inScope && !docked && detail?.date && (
             <Detail wide title={detail.date + " · 当日明细"} onClose={() => setDetail(null)}>
               <DayDetail review={review} date={detail.date} select={openDay} />
             </Detail>
@@ -884,26 +924,6 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
               <ContributionEvidence row={detail.row} accountName={accountName} onPage={onPage} />
             </Detail>
           )}
-          <Notes
-            key={scopeKey}
-            review={review}
-            notes={review.notes}
-            opened={current ? opened : null}
-            comparable={comparable}
-            reopen={(note) => {
-              if (!noteScopeAvailable(note)) {
-                setOpened(note);
-                return;
-              }
-              const date = note.to > valuationDate ? note.to : filters.date;
-              const range = chooseRange({ ...filters, date }, note.from, note.to, date || valuationDate);
-              change({ ...range, ids: accountScope(note.ids, activeIds) }, note);
-              setVersion((v) => v + 1);
-            }}
-            save={save}
-            busy={busy}
-            accountName={accountName}
-          />
         </div>
       )}
     </>

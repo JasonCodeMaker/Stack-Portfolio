@@ -8,10 +8,11 @@ import { EtfCache } from "./allocation/storage/etfCache";
 import { getSnapshotStatus } from "./allocation/domain/etf";
 import { loadAllocationSettings, reconcileAccountSelection } from "./allocation/storage/settings";
 import { parseRebalanceSettings, REBALANCE_STORAGE_KEY } from "./allocation/storage/rebalance";
-import { closingDay, marketFor, shiftDay } from "./marketDays.js";
-import { closeBook, reviewContext, summarizePeriod } from "./periodSummary.js";
+import { closingDay, marketFor, marketTime, shiftDay } from "./marketDays.js";
+import { closeBook, reviewContext, summarizePeriod, valuation } from "./periodSummary.js";
+import { fxTranslation, listingQuote, recentCloseChanges } from "./liveQuotes.js";
 import { cumulativeIncome, gainBreakdown } from "./gainBreakdown.js";
-import { applyTodayChange, todayChange } from "./todayChange.js";
+import { addPriorWeights, applyTodayChange, asxQuoteChange, todayChange } from "./todayChange.js";
 
 const D = (n) => new Decimal(n ?? 0);
 const iso = (d) => d.toISOString().slice(0, 10);
@@ -371,6 +372,10 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     let fx = rate(book, ccy, date, acc.id);
     if (mark?.fx && (!fx || fx.day <= broker.day))
       fx = { price: mark.fx, day: broker.day, source: broker.source };
+    if (book.live) {
+      if (asset) q = listingQuote(book.live, asset, q);
+      if (ccy === "USD") fx = book.live.fx ?? fx;
+    }
     const local = q ? quantity.mul(q.price) : null,
       aud = local && fx ? local.mul(fx.price) : null;
     const kind = isCash ? "cash" : "securities";
@@ -406,7 +411,8 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
       rawQuantity: quantity.toFixed(),
       price: q?.price ?? null,
       quoteSource: q?.source || "",
-      quoteObservedAt: q?.source === "Webull AU" ? broker?.observedAt : null,
+      quoteObservedAt: q?.observed ?? (q?.source === "Webull AU" ? broker?.observedAt : null),
+      ...(book.live && { marketQuote: isCash ? null : q }),
       // Older than the previous completed session of the listing's own market.
       stale: Boolean(!isCash && q && q.day < closingDay(shiftDay(date, -1), marketFor(asset))),
       fx: fx?.price || null,
@@ -451,7 +457,7 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     );
   const useBroker = cashAgrees && quantitiesAgree && !pos.warnings.length;
   if (sameDay && !useBroker) warnings.push("券商快照与本地现金或持仓数量有差异");
-  const brokerCash = useBroker && broker.cashTotal != null ? Number(broker.cashTotal) : null;
+  const brokerCash = !book.live && useBroker && broker.cashTotal != null ? Number(broker.cashTotal) : null;
   const cash = brokerCash ?? (complete.cash ? sum.cash.toNumber() : null);
   const securities = complete.securities ? sum.securities.toNumber() : null;
   const itemizedTotal = complete.securities && complete.cash
@@ -459,7 +465,7 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
   const accountTotal = (cash) =>
     cash != null && securities != null ? D(cash).plus(securities).toNumber() : null;
   const brokerTotal = useBroker ? Number(broker.nav) : null;
-  const total = brokerTotal ?? accountTotal(cash);
+  const total = (book.live ? null : brokerTotal) ?? accountTotal(book.live ? ledgerCash : cash);
   const valuationCash = ledgerCash ?? brokerCash;
   return {
     id: acc.id,
@@ -470,19 +476,21 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     itemizedCash: complete.cash ? sum.cash.toNumber() : null,
     securities,
     total,
-    valuation: { cash: valuationCash, total: accountTotal(ledgerCash) ?? brokerTotal },
+    valuation: { cash: valuationCash, total: accountTotal(ledgerCash) ?? (book.live ? null : brokerTotal) },
+    ...(book.live && { brokerNav: broker ? { amount: Number(broker.nav), date: broker.day, source: broker.source } : null }),
+    cashUnverified: Boolean(needsCash || pos.warnings.length),
     valuationSource: useBroker ? broker.source : null,
     itemizedTotal,
     valuationDifference: useBroker && itemizedTotal != null ? D(broker.nav).minus(itemizedTotal).toNumber() : null,
     observedAt: useBroker ? broker.observedAt : null,
     unrealized: useBroker && broker.unrealized != null ? Number(broker.unrealized) : null,
     approximatePnl: useBroker && broker.approximatePnl,
-    known: total ?? (cashPending ? D(0) : sum.cash).plus(sum.securities).toNumber(),
+    known: total ?? ((book.live ? needsCash || pos.warnings.length : cashPending) ? D(0) : sum.cash).plus(sum.securities).toNumber(),
   };
 }
 export const accountSnapshot = snapshot;
 
-function summarizeHoldings(rows) {
+function summarizeHoldings(rows, closedIncome) {
   const groups = Map.groupBy(
     rows.filter((r) => r.type !== "cash"),
     (r) => JSON.stringify([r.identityKey, r.localCurrency]),
@@ -499,10 +507,20 @@ function summarizeHoldings(rows) {
     const gain = total("gainAud"),
       value = total("audValue"),
       cost = total("costAud");
+    let quoteChange = holdings[0].quoteChange;
+    if (quoteChange) {
+      const { date, price, previousClose } = quoteChange;
+      const matching = holdings.every(({ quoteChange: q }) => q?.date === date && q.price === price && q.previousClose === previousClose);
+      const amount = matching ? holdings.reduce((n, h) => n.plus(h.quoteChange.amount), D(0)).toNumber() : null;
+      quoteChange = matching ? { ...quoteChange, amount } : null;
+    }
     if (gain != null) {
       knownGain = knownGain.plus(gain);
       count++;
     }
+    const past = closedIncome.get(key);
+    const cumulativeGain = gain == null ? null : D(gain).plus(total("realised")).plus(total("dividends"))
+      .plus(past ?? 0).toNumber();
     securities.push({
       key,
       ticker,
@@ -513,6 +531,9 @@ function summarizeHoldings(rows) {
       value,
       gain,
       cost,
+      cumulativeGain,
+      recentCloseChange: total("recentCloseChange"),
+      quoteChange,
       realised: total("realised"),
       dividends: total("dividends"),
       quantity: holdings.reduce((n, h) => n.plus(h.rawQuantity), D(0)).toFixed(),
@@ -520,7 +541,9 @@ function summarizeHoldings(rows) {
     });
   }
   securities.sort((a, b) => (b.value ?? -Infinity) - (a.value ?? -Infinity));
-  return { securities, count, gain: count || !securities.length ? knownGain.toNumber() : null };
+  const cost = securities.some((s) => s.cost == null) ? null : securities.reduce((sum, s) => sum.plus(s.cost), D(0)).toNumber();
+  return { securities, count, cost, gain: count || !securities.length ? knownGain.toNumber() : null,
+    openGain: count === securities.length ? knownGain.toNumber() : null };
 }
 function combined(book, selected, date, settings) {
   const accounts = selected.map((a) => snapshot(book, a, date, settings.typeOverrides));
@@ -853,6 +876,26 @@ function asStored(book, accounts, date) {
   }
   return accounts.length ? total.toNumber() : null;
 }
+// Attribute each account over the portfolio's effective closes, even when an individual
+// account already has a newer close. Its own transfers cross its account boundary.
+function accountPeriodFx(context, summary, { from, to }) {
+  // The summary already walked its stateful position history through the end. Its daily
+  // points preserve the balances at both closes; use a dated snapshot outside its own range.
+  const balance = (date) => {
+    const point = summary.points.find((p) => p.date === date);
+    return point ? point.value : valuation(context, date, true).total;
+  };
+  const start = balance(from), end = balance(to);
+  if (start == null || end == null) return null;
+  let gain = D(end).minus(start);
+  for (const point of summary.points) {
+    if (point.date <= from || point.date > to) continue;
+    if (point.flow == null) return null;
+    gain = gain.minus(point.flow);
+  }
+  return gainBreakdown(context, { origin: from, valuedThrough: to, gain: gain.toNumber() }).parts.fx;
+}
+
 export async function dashboard(db, options = {}) {
   const book = loadBook(db),
     ctx = storageContext(db, ALLOCATION),
@@ -863,19 +906,21 @@ export async function dashboard(db, options = {}) {
   const chosen = Array.isArray(options.ids) ? active.filter((a) => options.ids.includes(a.id)) : [];
   const settings = reconciled.settings,
     selected = options.ids === "all" || (options.ids?.length && !chosen.length) ? active : chosen.length ? chosen : reconciled.selectedAccounts;
+  const now = options.current && !options.date ? options.now ?? Date.now() : null;
   const ids = selected.map((a) => a.id),
-    date = options.date ? day(options.date) : book.latest,
+    date = options.date ? day(options.date) : now != null ? marketTime(now).date : book.latest,
     period = options.period || "1m",
     // A custom range from the review keeps its own end, within the valuation date.
     end = options.from && options.to && day(options.to) < date ? day(options.to) : date;
   // Period figures come from the engine the return review uses, on daily closes.
   const closes = ids.length ? closeBook(db) : null;
   const measure = (context) => summarizePeriod(context, { to: end, period, from: options.from });
-  const summarize = (accountIds) => (closes && date ? measure(reviewContext(closes, accountIds)) : null);
   const context = closes && date ? reviewContext(closes, ids) : null;
   const summary = context && measure(context);
   // The same breakdown as the return review shows for this period.
   const breakdown = context && gainBreakdown(context, summary);
+  if (now != null && closes)
+    book.live = { now, historical: closes, fx: rate(closes, "USD", date) };
   const current = combined(book, selected, date, settings);
   // The period figures stand as of the engine's latest valued close, as on the review page.
   const result = (accounts, total, s) => ({
@@ -888,11 +933,19 @@ export async function dashboard(db, options = {}) {
   const overall = result(selected, current.total, summary);
   const flows = overall.period?.flows ?? null,
     pnl = overall.period?.gain ?? null;
+  const periodFxByAccount = new Map();
+  const closedIncome = new Map();
   for (const view of current.accounts) {
     const acc = selected.find((a) => a.id === view.id);
     view.balanceDate = [book.byAccount, book.anchors, book.brokerValues, book.evidence, book.archived, book.statements]
       .map((data) => last(data.get(acc.id), date)?.day).filter(Boolean).sort().at(-1) || null;
-    view.result = result([acc], view.total, ids.length > 1 ? summarize([acc.id]) : summary);
+    const accountContext = ids.length > 1 && context ? reviewContext(closes, [acc.id]) : context;
+    const accountSummary = ids.length > 1 && accountContext ? measure(accountContext) : summary;
+    view.result = result([acc], view.total, accountSummary);
+    if (breakdown) {
+      const fx = ids.length === 1 ? breakdown.parts.fx : accountPeriodFx(accountContext, accountSummary, breakdown);
+      periodFxByAccount.set(acc.id, fx);
+    }
     const lots = costBasis(book, acc, date);
     // Cumulative realised gain and dividends since the account's first record, sold-out securities included.
     const income = cumulativeIncome(book, acc, date);
@@ -917,6 +970,12 @@ export async function dashboard(db, options = {}) {
           dividends: amount(id, "dividends"),
         })),
     };
+    for (const item of view.cumulative.closed) {
+      const asset = book.assets.get(item.assetId);
+      if (!asset) continue;
+      const key = JSON.stringify([canonicalIdentity(asset).key || "asset:" + asset.id, asset.currency]);
+      closedIncome.set(key, (closedIncome.get(key) ?? D(0)).plus(item.realised).plus(item.dividends));
+    }
     for (const row of view.rows) {
       const l = lots.get(row.assetId);
       if (row.type === "cash" || !l || l.units.minus(row.rawQuantity).abs().gt("0.000001") || !l.units.gt(0))
@@ -950,6 +1009,8 @@ export async function dashboard(db, options = {}) {
       value: p.value,
       basis: basis?.toNumber() ?? null,
       invested: funding ? invested.toNumber() : null,
+      netContributionRate:
+        funding && invested.gt(0) && p.value != null ? D(p.value).minus(invested).div(invested).toNumber() : null,
       gain: p.value != null && basis && p.date <= summary.valuedThrough ? D(p.value).minus(basis).toNumber() : null,
     };
   });
@@ -977,13 +1038,50 @@ export async function dashboard(db, options = {}) {
     totalAud: portfolio.totalAud,
     aliases: settings.aliases,
   });
-  const holdings = summarizeHoldings(current.rows);
-  // 今日变动 on the net-value basis (ADR 0005), for the portfolio, accounts, rows and companies.
-  const today = applyTodayChange(closes && date ? todayChange(closes, ids, date) : null, closes, {
-    accounts: current.accounts,
-    holdings,
-    exposure,
+  for (const row of current.rows) {
+    if (!book.live) {
+      row.quoteChange = asxQuoteChange(book, closes, row);
+      continue;
+    }
+    const quote = row.marketQuote, prior = quote?.previousClose;
+    row.quoteChange = prior ? {
+      date: quote.day, closedAt: quote.closedAt, previousClose: Number(prior.price), price: Number(quote.price),
+      change: D(quote.price).div(prior.price).minus(1).toNumber(),
+      amount: D(quote.price).minus(prior.price).mul(row.rawQuantity).toNumber(),
+    } : null;
+  }
+  const usd = closes && date && rate(closes, "USD", date);
+  const priorUsd = usd && rate(closes, "USD", shiftDay(usd.day, -1));
+  const fx = fxTranslation(current.accounts, usd || null, priorUsd || null, current.valuation.total);
+  const periodStart = summary && rate(closes, "USD", summary.origin);
+  fx.periodEnd = summary && rate(closes, "USD", summary.valuedThrough ?? summary.period.to);
+  fx.periodRateChange = periodStart && fx.periodEnd ? D(fx.periodEnd.price).div(periodStart.price).minus(1).toNumber() : null;
+  for (const row of fx.accounts) row.periodGain = periodFxByAccount.get(row.id) ?? null;
+  // A transfer between selected accounts can spend a closing date in transit. Its FX
+  // belongs to the portfolio during that interval and to neither individual account.
+  fx.periodDifference = breakdown && fx.accounts.every((row) => row.periodGain != null)
+    ? fx.accounts.reduce((rest, row) => rest.minus(row.periodGain), D(breakdown.parts.fx)).toNumber() : null;
+  let currentMarket = null;
+  if (book.live) {
+    const currencies = new Set(["AUD", "USD", ...current.rows.map((row) => row.localCurrency)]);
+    const rates = new Map([...currencies].map((currency) => {
+      const latest = rate(closes, currency, date);
+      const previous = latest && rate(closes, currency, shiftDay(latest.day, -1));
+      return [currency, { latest, previous }];
+    }));
+    currentMarket = {
+      recentCloseChange: recentCloseChanges(current.accounts, rates),
+      old: current.rows.some((row) => row.marketQuote?.status === "old" || row.marketQuote?.status === "uncovered"),
+      incomplete: current.valuation.total == null,
+      fx,
+    };
+  }
+  const holdings = summarizeHoldings(current.rows, closedIncome);
+  const today = applyTodayChange(context ? todayChange(closes, ids, date) : null, closes, {
+    accounts: current.accounts, holdings, exposure,
   });
+  const latestMarketDay = book.live && current.rows.map((r) => r.marketQuote?.day).filter(Boolean).sort().at(-1);
+  if (context) addPriorWeights(context, latestMarketDay || date, holdings.securities, current.valuation.total);
   const etfData = portfolio.etfs.map((asset) => {
     const record = records.find((r) => r.etfKey === asset.etfKey),
       snapshot = record?.snapshot ?? null;
@@ -1028,6 +1126,8 @@ export async function dashboard(db, options = {}) {
     byAccount: current.accounts,
     holdings,
     today,
+    currentMarket,
+    fx,
     // Cumulative realised gain and dividends of the selected accounts, sold-out securities included.
     cumulative: Object.fromEntries(
       ["realised", "dividends"].map((k) => [k, current.accounts.reduce((n, a) => n.plus(a.cumulative[k]), D(0)).toNumber()]),

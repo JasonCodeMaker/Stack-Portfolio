@@ -1,5 +1,5 @@
 import { day, savePrice, transaction } from "./ledger.js";
-import { marketFor, shiftDay } from "./marketDays.js";
+import { marketFor, marketSession, shiftDay } from "./marketDays.js";
 
 export const benchmarks = [
   { id: "SP500TR", name: "标普 500", source: "Yahoo Finance · ^SP500TR" },
@@ -56,9 +56,14 @@ async function yahooCloses(request, symbol, from, to, expect) {
   const dates = localDates(meta.exchangeTimezoneName);
   const closes = data.indicators?.quote?.[0]?.close;
   if (!Array.isArray(closes) || closes.length !== data.timestamp.length) throw Error("缺少完整的日线字段。");
-  const today = dates.format(new Date());
+  const now = expect.now ?? Date.now();
+  const today = dates.format(now);
   const session = meta.currentTradingPeriod?.regular;
-  const finishedToday = session?.end * 1000 <= Date.now() && dates.format(session.end * 1000) === today;
+  const listed = expect.market && marketSession(now, expect.market);
+  const completed = listed?.completed === today &&
+    (expect.market !== "ASX" || listed.minute >= listed.officialAfter + 20);
+  const finishedToday = session?.end * 1000 <= now && dates.format(session.end * 1000) === today &&
+    (!expect.market || completed);
   // Closes before a split are restated by the source. The ledger holds the original
   // quantities, so only closes from the latest split onwards remain comparable.
   const splits = Object.values(data.events?.splits || {}).map((s) => dates.format(s.date * 1000));
@@ -170,6 +175,8 @@ export async function refreshCloses(db, assets, args, request) {
       kinds: ["EQUITY", "ETF"],
       exchanges: listing.exchanges,
       splits: true,
+      market: marketFor(asset),
+      now: args.now,
     });
   };
   const results = [];
@@ -189,57 +196,6 @@ export async function refreshCloses(db, assets, args, request) {
       });
       results.push({ id: asset.id, name: asset.symbol, count: result.value.size, added });
     });
-  }
-  return results;
-}
-
-// The ledger already posts dividends separately. Fetch contemporaneous, unadjusted
-// closes so that neither dividends nor corporate actions are applied twice.
-export async function refreshReviewPrices(db, assets, args, key, request) {
-  if (!key) throw Error("请在「数据与设置」保存 Twelve Data API Key 后补齐持仓收盘价。");
-  const { from, to } = reviewDates(args.from, args.to);
-  const results = [];
-  for (const asset of assets) {
-    try {
-      const rows = new Map();
-      for (let start = shiftDay(from, -7); start <= to; ) {
-        const end = [shiftDay(start, 4800), to].sort()[0];
-        const url = new URL("https://api.twelvedata.com/time_series");
-        url.search = new URLSearchParams({
-          symbol: asset.symbol,
-          interval: "1day",
-          adjust: "none",
-          outputsize: "5000",
-          start_date: start,
-          end_date: end,
-          apikey: key,
-        }).toString();
-        if (asset.mic) url.searchParams.set("mic_code", asset.mic);
-        const data = JSON.parse(await get(request, url));
-        if (
-          data.meta?.symbol !== asset.symbol ||
-          data.meta.currency !== asset.currency ||
-          (asset.mic && data.meta.mic_code !== asset.mic) ||
-          data.meta.interval !== "1day" ||
-          !Array.isArray(data.values)
-        )
-          throw Error("证券、币种、交易所或日线不可核实");
-        const today = localDates(data.meta.exchange_timezone || "UTC").format(new Date());
-        for (const row of data.values) {
-          const date = day(row.datetime);
-          if (date >= start && date <= end && date < today && row.close != null)
-            rows.set(date, positive(row.close));
-        }
-        start = shiftDay(end, 1);
-      }
-      if (!rows.size) throw Error("所选期间没有收盘价");
-      transaction(db, () => {
-        for (const [date, value] of rows) savePrice(db, asset.id, date, value, "Twelve Data 日收盘", 24);
-      });
-      results.push({ name: asset.symbol, count: rows.size });
-    } catch (e) {
-      results.push({ name: asset.symbol, error: e.message });
-    }
   }
   return results;
 }

@@ -30,7 +30,7 @@
 }
 :is(.settings, .welcome) .f :is(input, select) {
   height: 32px;
-  border: 1px solid var(--sep);
+  border: 1px solid var(--l3);
   border-radius: 6px;
   background: var(--surface);
   color: var(--l1);
@@ -85,11 +85,16 @@
   min-width: 0;
   container-type: inline-size;
 }
-.settings .cap880 {
-  max-width: 880px;
+.settings {
+  max-width: 1240px;
 }
-.settings .cap1760 {
-  max-width: 1760px;
+[data-aspect="21:9"] .settings {
+  max-width: 1820px;
+}
+.settings-zoom output {
+  min-width: 4ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 .settings .card > .row h2 {
   margin: 0;
@@ -188,6 +193,10 @@
 .settings :is(td, th).l {
   text-align: left;
 }
+.settings td.account-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 
 /* ---------- Welcome page: no shell, two cards side by side, stacked below 900 ---------- */
 .welcome {
@@ -229,8 +238,9 @@
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
   gap: var(--gap);
-  width: min(880px, 100%);
+  width: min(920px, 92%);
 }
+[data-aspect="21:9"] .wc { width: min(960px, 92%); }
 .wc .card {
   display: grid;
   gap: 10px;
@@ -258,6 +268,10 @@
   color: var(--hero-bg);
   border-color: var(--hero-text);
   font-weight: 600;
+}
+.wc .hero .btn:hover {
+  background: color-mix(in srgb, var(--hero-text) 90%, var(--hero-bg));
+  border-color: transparent;
 }
 .wc .hero .f > span {
   color: var(--hero-text);

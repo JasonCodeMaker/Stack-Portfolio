@@ -4,7 +4,7 @@ import React, { createContext, useCallback, useContext, useEffect, useLayoutEffe
 import { createPortal } from "react-dom";
 import { Icon } from "./icons";
 import { Modal } from "./common";
-import { arrangeGrid, gridColumns, mainChartHeight, shellTier, stepRow } from "./layout.js";
+import { arrangeGrid, mainChartHeight, shellTier, stepRow } from "./layout.js";
 
 // Six pages in two groups (分析 | 维护), in the order the questions narrow down.
 export const pageGroups = [
@@ -21,12 +21,12 @@ export const pageGroups = [
 ];
 export const pageTitles = Object.fromEntries(pageGroups.flat());
 
-const ShellContext = createContext({ tier: "regular", short: false, cols: 1, shell: null });
-// { tier: "compact" | "regular" | "wide", short, cols: 1 | 2 | 3 }
+const ShellContext = createContext({ aspect: "16:9", tier: "regular", short: false, cols: 1, shell: null });
 export const useShell = () => useContext(ShellContext);
 
-function useViewportTier() {
+function useViewportTier(aspect) {
   const [view, setView] = useState(() => shellTier(innerWidth, innerHeight));
+  const tier = aspect === "21:9" ? "wide" : view.tier === "compact" ? "compact" : "regular";
   useLayoutEffect(() => {
     const update = () =>
       setView((old) => {
@@ -38,25 +38,17 @@ function useViewportTier() {
   }, []);
   useLayoutEffect(() => {
     // On the root so tokens such as the card padding also reach dialogs.
-    document.documentElement.dataset.tier = view.tier;
+    document.documentElement.dataset.tier = tier;
     document.documentElement.dataset.short = view.short ? "1" : "0";
-  }, [view]);
-  return view;
+  }, [tier, view.short]);
+  return { tier, short: view.short };
 }
 
-export function Shell({ page, onPage, ledger, onLedger, titleExtra, filters, children }) {
-  const view = useViewportTier();
+export function Shell({ aspect, page, onPage, ledger, onLedger, titleExtra, filters, children }) {
+  const view = useViewportTier(aspect);
+  const cols = aspect === "21:9" ? 2 : 1;
   const [shell, setShell] = useState(null),
-    [cols, setCols] = useState(1),
     pane = useRef(null);
-  useLayoutEffect(() => {
-    const el = pane.current,
-      measure = () => setCols(gridColumns(el.clientWidth));
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
   // Each page opens at the top.
   useLayoutEffect(() => {
     pane.current.scrollTo(0, 0);
@@ -76,7 +68,7 @@ export function Shell({ page, onPage, ledger, onLedger, titleExtra, filters, chi
   );
   const book = ledger.demo ? "示例账本" : "本地账本";
   return (
-    <ShellContext.Provider value={{ ...view, cols, shell }}>
+    <ShellContext.Provider value={{ ...view, aspect, cols, shell }}>
       <div className="shell" ref={setShell}>
         <nav className="side" aria-label="页面">
           <div className="brand">
@@ -107,7 +99,7 @@ export function Shell({ page, onPage, ledger, onLedger, titleExtra, filters, chi
             {filters && <div className="header-tools">{filters}</div>}
           </header>
           <main className="pane" ref={pane} data-cols={cols}>
-            <div className="page">{children}</div>
+            <div className="page" data-page={page}>{children}</div>
           </main>
         </div>
       </div>
@@ -152,14 +144,16 @@ export function Grid({ layout, panels }) {
 
 // A detail you look at beside the page: docked inspector in the wide tier, a dialog otherwise.
 // Forms and confirmations use Modal directly at every tier.
-export function Detail({ title, onClose, wide, children }) {
-  const { tier, shell } = useShell();
-  if (tier === "wide" && shell)
+export function Detail({ title, onClose, wide, dock, children }) {
+  const { aspect, shell } = useShell();
+  const target = dock === undefined ? shell : dock;
+  if (aspect === "21:9" && dock === null) return null;
+  if (aspect === "21:9" && target)
     return createPortal(
       <Inspector title={title} onClose={onClose}>
         {children}
       </Inspector>,
-      shell,
+      target,
     );
   return (
     <Modal title={title} close={onClose} wide={wide}>

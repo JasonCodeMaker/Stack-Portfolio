@@ -8,12 +8,12 @@
   --sep: #d3ddd1;
   --l1: #17221c;
   --l2: #4f6056;
-  --l3: #7f8f85;
+  --l3: #6a7c71;
   --accent: #126548;
   --on-accent: #fff;
   --hero-bg: #124f3c;
   --hero-text: #fff;
-  --up: #2e7d12;
+  --up: #2a7310;
   --down: #b42318;
   --warn: #8f5300;
   --sb: #e3eae1;
@@ -23,8 +23,8 @@
   --sb-on-text: #0e5239;
   /* Chart series, fixed order; 1 is always 我的组合／总资产. */
   --s1: #17805b;
-  --s2: #2a78d6;
-  --s3: #eb6834;
+  --s2: #2871c9;
+  --s3: #d36132;
   --s4: #6250d6;
   --s5: #eda100;
   --s6: #e87ba4;
@@ -32,12 +32,18 @@
   --pad: 28px;
   --gap: 14px;
   --card-pad: 22px;
-  --sb-w: 212px;
+  --focus-inset: 8px;
+  --sb-w: 198px;
   --head-h: 76px;
   --fast: 120ms;
   --text: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
   --display: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", sans-serif;
   color-scheme: light;
+}
+:root[data-aspect="21:9"] {
+  --sb-w: 212px;
+  --pad: 26px;
+  --focus-inset: 18px;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -103,9 +109,17 @@ h3,
 p {
   margin: 0;
 }
-:focus-visible {
+:focus-visible,
+.date-pick:has(input:focus-visible) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+:where(.pane, .insp, .welcome, dialog) {
+  scroll-padding-block: var(--focus-inset);
+}
+.hero :focus-visible,
+.toast :focus-visible {
+  outline-color: var(--hero-text);
 }
 .disp {
   font-family: var(--display);
@@ -153,15 +167,19 @@ p {
   gap: 6px;
   transition: background-color var(--fast), border-color var(--fast);
 }
-.btn:hover {
+.btn:hover:where(:not(:disabled)) {
   background: var(--surface2);
-  border-color: var(--sep);
 }
 .btn.pri {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--on-accent);
   font-weight: 600;
+}
+.btn.pri:hover:where(:enabled),
+.primary:hover:where(:enabled) {
+  background: color-mix(in srgb, var(--accent) 86%, var(--l1));
+  border-color: transparent;
 }
 .btn.sm {
   height: 26px;
@@ -170,10 +188,14 @@ p {
 }
 input.btn,
 select.btn {
+  border-color: var(--l3);
   cursor: text;
 }
 select.btn {
   cursor: pointer;
+  min-inline-size: 0;
+  max-inline-size: 240px;
+  text-overflow: ellipsis;
 }
 .seg {
   display: inline-flex;
@@ -203,6 +225,10 @@ select.btn {
   color: var(--l1);
   font-weight: 600;
   box-shadow: 0 0 0 1px var(--sep);
+}
+.seg > button:where(:hover:not(.on, :disabled)) {
+  background: color-mix(in srgb, var(--surface) 55%, var(--surface2));
+  color: var(--l1);
 }
 .tag {
   display: inline-flex;
@@ -243,8 +269,21 @@ a.lnk {
 }
 
 /* ---------- Global filters (FilterControls.jsx) ---------- */
+.account-scope {
+  min-width: 0;
+  max-width: 240px;
+}
+.account-scope > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-scope > svg {
+  flex: none;
+}
 .date-pick {
   position: relative;
+  flex: none;
+  border-color: var(--l3);
   cursor: pointer;
 }
 .date-pick input {
@@ -303,6 +342,7 @@ a.lnk {
   line-height: 22px;
   font-weight: 600;
   letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 h3.sec {
   font: 600 20px/28px var(--display);
@@ -334,17 +374,21 @@ h3.sec {
 }
 .kpi .v {
   font: 600 30px/36px var(--display);
-  white-space: nowrap;
   letter-spacing: -0.01em;
+}
+.kpi :is(.k, .v, .d) {
+  overflow-wrap: anywhere;
 }
 .kpi .d {
   font-weight: 600;
-  white-space: nowrap;
 }
 .hero {
   background: var(--hero-bg);
   border-color: var(--hero-bg);
   color: var(--hero-text);
+}
+.hero:where(button:hover:enabled) {
+  background: color-mix(in srgb, var(--hero-bg) 88%, var(--hero-text));
 }
 .hero :is(.k, .cap, .up, .down) {
   color: var(--hero-text);
@@ -584,6 +628,9 @@ tr.sel {
   background: color-mix(in srgb, var(--sb-text) 14%, transparent);
   flex: none;
 }
+.ledger:hover .av {
+  background: color-mix(in srgb, var(--sb-text) 24%, transparent);
+}
 .ledger .tx {
   min-width: 0;
 }
@@ -657,6 +704,11 @@ tr.sel {
   min-width: 0;
   min-height: 0;
 }
+/* Keep header controls aligned with the content when a vertical scrollbar appears. */
+.head,
+.pane {
+  scrollbar-gutter: stable;
+}
 .head {
   display: flex;
   align-items: center;
@@ -664,6 +716,7 @@ tr.sel {
   padding: 0 var(--pad);
   height: var(--head-h);
   min-width: 0;
+  overflow: hidden;
 }
 .head h1 {
   font: 600 28px/36px var(--display);
@@ -679,10 +732,11 @@ tr.sel {
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
+  min-width: 0;
 }
 .pane {
   overflow: auto;
-  padding: 0 var(--pad) var(--pad);
+  padding: var(--focus-inset) var(--pad) var(--pad);
   min-width: 0;
   min-height: 0;
 }
@@ -693,6 +747,11 @@ tr.sel {
   align-content: start;
   min-width: 0;
   container-type: inline-size;
+  max-width: 1760px;
+  margin-inline: auto;
+}
+[data-aspect="21:9"] .page {
+  max-width: none;
 }
 
 /* ---------- Inspector (wide tier) and dialogs ---------- */
@@ -739,7 +798,9 @@ dialog::backdrop {
 .modal-inner {
   padding: 24px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 12px;
+  overflow-wrap: anywhere;
 }
 .modal-inner > header {
   display: flex;
@@ -751,4 +812,7 @@ dialog::backdrop {
   font-size: 16px;
   line-height: 22px;
   font-weight: 600;
+}
+.modal-inner > header .icon {
+  flex: none;
 }

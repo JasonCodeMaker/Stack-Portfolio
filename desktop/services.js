@@ -40,10 +40,8 @@ const D = (x) => new Decimal(x ?? 0);
 const networkHosts = new Set([
   "api.webull.com.au",
   "www.interactivebrokers.com.au",
-  "api.twelvedata.com",
   "query1.finance.yahoo.com",
   "fred.stlouisfed.org",
-  "www.alphavantage.co",
   "www.ishares.com",
   "dng-api.invesco.com",
   "www.betashares.com.au",
@@ -1031,7 +1029,7 @@ export async function connectWebull(db, secrets) {
 export function resetSync(db, broker, id) {
   return resetImportedKeysForMappings(syncHost(db), { ibkr: "", webull: "", [broker]: id });
 }
-export async function refreshFund(db, asset, secrets) {
+export async function refreshFund(db, asset) {
   const ctx = storageContext(db, ALLOCATION);
   ctx.api.network = network;
   const settings = await loadAllocationSettings(ctx),
@@ -1039,7 +1037,7 @@ export async function refreshFund(db, asset, secrets) {
     current = await cache.get(asset.etfKey);
   if (current?.snapshot?.sourceMode === "manual")
     throw Error("此基金使用手工成分。切换数据源前请先导出并停用当前成分表。");
-  const providers = createProviders(ctx, { alphaVantageApiKey: await secrets.get("alphaVantage.apiKey") });
+  const providers = createProviders(ctx);
   const result = await resolveEtfHoldings(
     { ...asset, providerSymbol: settings.providerIdentities[asset.etfKey] },
     providers,

@@ -1,10 +1,11 @@
-import React, { useId, useRef, useState } from "react";
+import React, { useId, useLayoutEffect, useRef, useState } from "react";
 import { area, curveLinear, curveStepAfter, line } from "d3-shape";
-import { lineLayout } from "./lineLayout.js";
+import { lineLayout, MARGIN } from "./lineLayout.js";
 import { useWidth } from "./useWidth.js";
 import "./charts.css";
 
 const identity = (v) => String(v);
+const TICK_LABEL_GAP = 8;
 
 /**
  * Shared line chart (prototype kit `K.line`, plus the hover crosshair and tooltip from spec §1.5).
@@ -12,6 +13,7 @@ const identity = (v) => String(v);
  *
  * series:  [{ name, color, values, width?, dash?, step?, area?: true | "sign" }]
  *          `width` emphasises a line (bold end label); `area` fills to zero ("sign" = gain/loss colours).
+ *          `axis: "right"` plots an independently scaled line with the `formatRightAxis` formatter.
  * dates:   date per index (ISO strings), used for the x axis and the tooltip heading.
  * between: [i, j] fills between series i (above = gain colour) and series j (below = loss colour).
  * bands:   [{ from, to, label?, color? }] shaded index intervals with a top rule and label.
@@ -35,8 +37,10 @@ export function LineChart({
   bands = [],
   markers = [],
   formatAxis = identity,
+  formatRightAxis = identity,
   formatValue,
   formatDate = identity,
+  formatAxisDate,
   hoverIndex,
   ariaLabel,
   onSelect,
@@ -45,23 +49,31 @@ export function LineChart({
   const [ref, measured] = useWidth();
   const width = fixedWidth ?? measured;
   const [hover, setHover] = useState(null);
+  const [keyboardIndex, setKeyboardIndex] = useState(null);
   const [drag, setDrag] = useState(null);
+  const [padLeft, setPadLeft] = useState(MARGIN.left);
+  const axisRef = useRef(null);
   const dragStart = useRef(null);
-  const interactive = Boolean(dates?.length && (onSelect || onZoom));
+  const navigable = Boolean(dates?.length);
+  const selectable = navigable && Boolean(onSelect || onZoom);
   const id = useId().replace(/:/g, "");
-  const shown = hoverIndex ?? hover;
+  const shown = hoverIndex ?? keyboardIndex ?? hover;
 
   let svg = null,
-    tip = null;
+    tip = null,
+    announcement = "",
+    tickText = "";
   if (width > 0 && series.length) {
-    const l = lineLayout({ width, height, series, dates, zero, lo, hi, labels, padRight });
+    const l = lineLayout({ width, height, series, dates, zero, lo, hi, labels, padLeft, padRight, formatAxisDate });
     const { plot, x, y } = l;
+    const tickLabels = l.ticks.map(({ value }) => formatAxis(value));
+    tickText = tickLabels.join("\n");
     const defined = (v) => Number.isFinite(v);
     const pathOf = (s) =>
       line()
         .defined(defined)
         .x((_, i) => x(i))
-        .y((v) => y(v))
+        .y((v) => l.seriesY(s, v))
         .curve(s.step ? curveStepAfter : curveLinear)(s.values);
     const fillTo = (s, base) =>
       area()
@@ -113,6 +125,7 @@ export function LineChart({
     };
     const onMove = (event) => {
       const index = indexAt(event);
+      setKeyboardIndex(null);
       setHover(index);
       if (dragStart.current?.pointerId === event.pointerId && onZoom)
         setDrag([dragStart.current.index, index]);
@@ -133,16 +146,22 @@ export function LineChart({
         onZoom(dates[Math.min(index, start.index)], dates[Math.max(index, start.index)]);
       else onSelect?.(dates[index]);
     };
+    const clearTip = () => {
+      setKeyboardIndex(null);
+      setHover(null);
+    };
     const onKeyDown = (event) => {
-      const index = shown ?? l.count - 1;
-      if (event.key === "ArrowLeft") setHover(Math.max(0, index - 1));
-      else if (event.key === "ArrowRight") setHover(Math.min(l.count - 1, index + 1));
+      const last = l.count - 1;
+      const index = Math.min(shown ?? last, last);
+      if (event.key === "ArrowLeft") setKeyboardIndex(Math.max(0, index - 1));
+      else if (event.key === "ArrowRight") setKeyboardIndex(Math.min(last, index + 1));
+      else if (event.key === "Home") setKeyboardIndex(0);
+      else if (event.key === "End") setKeyboardIndex(last);
       else if (event.key === "Enter" && onSelect) onSelect(dates[index]);
       else if (event.key === "Escape") {
-        setHover(null);
+        clearTip();
         return;
-      }
-      else return;
+      } else return;
       event.preventDefault();
     };
 
@@ -153,27 +172,37 @@ export function LineChart({
         height={height}
         role="img"
         aria-label={ariaLabel}
-        tabIndex={interactive ? 0 : undefined}
-        className={interactive ? "ch-selectable" : undefined}
+        aria-description={navigable ? "按左右方向键查看每日数值，Home 和 End 跳到起点和终点。" +
+          (onSelect ? "按 Enter 打开当日明细。" : "") : undefined}
+        tabIndex={navigable ? 0 : undefined}
+        className={selectable ? "ch-selectable" : undefined}
         onPointerMove={onMove}
         onPointerLeave={() => { if (!dragStart.current) setHover(null); }}
-        onPointerDown={interactive ? startDrag : undefined}
-        onPointerUp={interactive ? finishDrag : undefined}
-        onPointerCancel={interactive ? () => {
+        onPointerDown={selectable ? startDrag : undefined}
+        onPointerUp={selectable ? finishDrag : undefined}
+        onPointerCancel={selectable ? () => {
           dragStart.current = null;
           setDrag(null);
-          setHover(null);
+          clearTip();
         } : undefined}
-        onKeyDown={interactive ? onKeyDown : undefined}
-        onBlur={interactive ? () => setHover(null) : undefined}
+        onKeyDown={navigable ? onKeyDown : undefined}
+        onBlur={navigable ? clearTip : undefined}
       >
         {defs.length > 0 && <defs>{defs}</defs>}
-        {l.ticks.map((t) => (
+        <g ref={axisRef}>
+          {l.ticks.map((t, i) => (
+            <g key={t.value}>
+              <line className="ch-grid" x1={plot.left} x2={plot.right} y1={t.y} y2={t.y} />
+              <text className="ch-axis" x={plot.left - TICK_LABEL_GAP} y={t.y + 4} textAnchor="end">
+                {tickLabels[i]}
+              </text>
+            </g>
+          ))}
+        </g>
+        {l.rightTicks.map((t) => (
           <g key={t.value}>
-            <line className="ch-grid" x1={plot.left} x2={plot.right} y1={t.y} y2={t.y} />
-            <text className="ch-axis" x={plot.left - 8} y={t.y + 4} textAnchor="end">
-              {formatAxis(t.value)}
-            </text>
+            <line className="ch-grid" x1={plot.right} x2={plot.right + 5} y1={t.y} y2={t.y} />
+            <text className="ch-axis" x={plot.right + 8} y={t.y + 4}>{formatRightAxis(t.value)}</text>
           </g>
         ))}
         {l.zeroY != null && <line className="ch-zero" x1={plot.left} x2={plot.right} y1={l.zeroY} y2={l.zeroY} />}
@@ -241,7 +270,7 @@ export function LineChart({
             <line className="ch-cross" x1={hx} x2={hx} y1={plot.top} y2={plot.bottom} />
             {series.map((s, i) =>
               defined(s.values[shown]) ? (
-                <circle key={i} className="ch-dot" cx={hx} cy={y(s.values[shown])} r={3.5} style={{ fill: s.color }} />
+                <circle key={i} className="ch-dot" cx={hx} cy={l.seriesY(s, s.values[shown])} r={3.5} style={{ fill: s.color }} />
               ) : null,
             )}
           </g>
@@ -252,30 +281,41 @@ export function LineChart({
     if (hx != null && !drag) {
       const flip = hx > (plot.left + plot.right) / 2;
       const valueText = formatValue ?? ((v) => formatAxis(v));
+      const rows = series.filter((s) => defined(s.values[shown]) || s.axis === "right").map((s) => ({
+        name: s.name, color: s.color, value: defined(s.values[shown]) ? valueText(s.values[shown], s) : "暂无",
+      }));
+      const date = dates?.[shown] == null ? "" : formatDate(dates[shown]);
+      if (keyboardIndex != null) announcement = [date, ...rows.map((r) => r.name + " " + r.value)].join("，");
       tip = (
         <div
           className="ch-tip"
           style={{ left: flip ? hx - 12 : hx + 12, top: plot.top, transform: flip ? "translateX(-100%)" : undefined }}
         >
-          {dates?.[shown] != null && <div className="ch-tip-date">{formatDate(dates[shown])}</div>}
-          {series.map((s, i) =>
-            defined(s.values[shown]) ? (
-              <div key={i} className="ch-tip-row">
-                <i style={{ background: s.color }} />
-                <span>{s.name}</span>
-                <b>{valueText(s.values[shown], s)}</b>
-              </div>
-            ) : null,
-          )}
+          {date && <div className="ch-tip-date">{date}</div>}
+          {rows.map((row) => (
+            <div key={row.name} className="ch-tip-row">
+              <i style={{ background: row.color }} />
+              <span>{row.name}</span>
+              <b>{row.value}</b>
+            </div>
+          ))}
         </div>
       );
     }
   }
 
+  useLayoutEffect(() => {
+    if (!axisRef.current) return;
+    const labels = axisRef.current.querySelectorAll("text");
+    const widest = Math.max(0, ...Array.from(labels, (label) => label.getBBox().width));
+    setPadLeft(Math.max(MARGIN.left, Math.ceil(widest) + TICK_LABEL_GAP + 4));
+  }, [tickText]);
+
   return (
     <div ref={ref} className="ch-line" style={{ height }}>
       {svg}
       {tip}
+      {navigable && <div className="ch-announcement" role="status">{announcement}</div>}
     </div>
   );
 }

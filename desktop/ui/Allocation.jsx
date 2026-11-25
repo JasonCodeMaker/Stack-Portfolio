@@ -1,10 +1,10 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { buildComposition } from "../allocation/domain/composition";
 import { buildBreakdownNodes } from "../allocation/domain/visualization";
 import { buildRebalanceModel, CASH_TARGET, fullTargetTotal, OTHER_INVESTMENTS, STOCKS_TARGET } from "../allocation/domain/rebalance";
 import { api, aud, directedPct, fmt, pct, Card, Delta, Field, Modal, Table, Empty } from "./common";
-import { BulletBar, RankedBars, StackedBar, Treemap, changeTileColor } from "./charts";
-import { Detail, Grid, useMainChartHeight, useRowKeys, useShell } from "./Shell";
+import { Bar, BulletBar, RankedBars, StackedBar, Treemap, refinedTileColor } from "./charts";
+import { Detail, useRowKeys, useShell } from "./Shell";
 import "./allocation.css";
 const labels = {
   "Individual stocks": "个股",
@@ -228,11 +228,11 @@ function ExposureKey() {
   return <span className="alloc-key"><span><i className="alloc-direct" />直接持有</span><span><i className="alloc-via" />通过 ETF</span></span>;
 }
 
-const scaleSteps = [-3, -1.5, -0.25, 0.25, 1.5, 3];
+const scaleSteps = [-8, -4, -2, -0.5, 0.5, 2];
 function DailyKey() {
   return (
-    <span className="alloc-scale" aria-label="今日涨跌幅从负 3% 至正 3%">
-      −3% {scaleSteps.map((n) => <i key={n} style={{ background: changeTileColor(n).background }} />)} +3%
+    <span className="alloc-scale" aria-label="今日涨跌幅从下跌到上涨">
+      −8%+ {scaleSteps.map((n) => <i key={n} style={{ background: refinedTileColor(n).background }} />)} +3%
     </span>
   );
 }
@@ -278,93 +278,217 @@ function CompanySources({ company, holdings, weight, dayChange, day, onClose, on
   );
 }
 
-function CompanyBars({ companies, others, weight, select, selected }) {
-  const [query, setQuery] = useState("");
-  const max = Math.max(1, companies[0]?.valueAud ?? 0);
-  const text = query.trim().toLowerCase();
-  const matches = (c) => (c.label + " " + (c.ticker || "")).toLowerCase().includes(text);
-  const companyRow = (c) => (
-    <button type="button" className="alloc-company-bar" key={c.key} aria-pressed={selected === c.key} onClick={() => select(c.key)}>
-      <span title={c.label}>{c.label} <small>{c.ticker}</small></span>
-      <StackedBar first={c.directAud} second={c.viaEtfsAud} max={max} title={"直接 " + pct(weight(c.directAud)) + " · 通过 ETF " + pct(weight(c.viaEtfsAud))} />
-      <strong>{pct(weight(c.valueAud))}</strong>
-    </button>
-  );
+function CompanyBars({ items, select, selected }) {
+  const max = Math.max(...items.map((item) => item.value));
   return (
-    <>
-      {companies.map(companyRow)}
-      {!!others.length && (
-        <details className="alloc-company-tail">
-          <summary>其他公司 <span className="cap">{others.length} 家 · {pct(weight(sumBy(others, "valueAud")))}</span></summary>
-          <input className="btn" aria-label="查找其他公司" placeholder="查找公司或代码" value={query} onChange={(e) => setQuery(e.target.value)} />
-          {others.filter(matches).map(companyRow)}
-        </details>
-      )}
-    </>
+    <div className="alloc-company-bars">
+      {items.map((item) => {
+        const Row = item.selectable ? "button" : "div";
+        const name = item.name ?? item.label;
+        return (
+          <Row key={item.id} className="alloc-company-bar" title={item.title}
+            type={item.selectable ? "button" : undefined}
+            aria-label={item.selectable ? item.title : undefined}
+            aria-pressed={item.selectable ? item.id === selected : undefined}
+            onClick={item.selectable ? () => select(item.id) : undefined}>
+            <span>{name} {item.label !== name && <small>{item.label}</small>}</span>
+            {item.sources ? <StackedBar {...item.sources} max={max} /> : <Bar value={item.value} max={max} color="var(--l3)" />}
+            <strong>{item.detail[0]}</strong>
+          </Row>
+        );
+      })}
+    </div>
   );
 }
 
-function restItem(id, label, value, weight, title) {
-  return { id, label, value, rest: true, detail: [pct(weight(value))], title };
-}
-
-function CompanyChart({ d, weight, holdings, onPage, openFund }) {
-  const [view, setView] = useState("tree"), [color, setColor] = useState("day"), [chosen, choose] = useState(null);
-  const [ref, height] = useMainChartHeight({ min: 320, max: 700, below: 38 });
-  const { companies, tail, sectors, remaining, waiting } = useMemo(() => {
-    const slices = buildComposition(d.exposure);
-    const companies = slices.filter((c) => c.kind === "company");
-    const remaining = slices.filter((c) => c.kind !== "company" && c.kind !== "other-companies" && c.kind !== "unresolved");
-    const named = new Set(companies.map((c) => c.key));
-    const tail = d.exposure.rows.filter((r) => r.type === "stock" && !named.has(r.key)).map((row) => ({
-      ...row,
-      valueAud: row.totalAud,
-    }));
-    const sectors = slices.find((slice) => slice.kind === "other-companies")?.bySector ?? [];
-    const funds = d.exposure.rows.filter((r) => r.type === "etf");
-    const waiting = funds.filter((r) => r.sources.some((s) => s.kind === "opaque"));
-    const residual = funds.filter((r) => !waiting.includes(r));
-    if (residual.length) remaining.push({ key: "fund-residual", label: "Not looked through", valueAud: sumBy(residual, "totalAud") });
-    return { companies, tail, sectors, remaining, waiting };
-  }, [d.exposure]);
-  const top = companies[0], topFive = companies.slice(0, 5);
+function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height }) {
+  const [view, setView] = useState("tree"),
+    [color, setColor] = useState("day"),
+    [zoomPath, setZoomPath] = useState([]),
+    [otherUnit, setOtherUnit] = useState("total");
+  const totalAud = d.portfolio.totalAud;
+  const { named, otherAud, otherBuckets, companies: topFive, waiting } = useMemo(
+    () => buildComposition(d.exposure, totalAud),
+    [d.exposure, totalAud],
+  );
+  const top = topFive[0], namedCompanies = named.filter((row) => row.type === "stock");
   const day = (key) => d.today?.companies?.[key] ?? null;
 
-  const groups = new Map();
-  const add = (sector, item) => {
-    const label = sectorLabel(sector);
-    if (!groups.has(label)) groups.set(label, []);
-    groups.get(label).push(item);
+  useEffect(() => {
+    if (zoomPath.length >= 1 && otherBuckets.length === 0) setZoomPath([]);
+    else if (zoomPath.length === 2 && !otherBuckets.some((b) => b.key === zoomPath[1])) setZoomPath(["OTHER"]);
+  }, [otherBuckets, zoomPath]);
+
+  useEffect(() => {
+    if (zoomPath.length === 0 || chosen) return undefined;
+    const onKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      const tag = event.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      setZoomPath((prev) => prev.slice(0, -1));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [zoomPath.length, chosen]);
+
+  const splitTicker = (raw) => {
+    const parts = String(raw || "").split(" / ");
+    return { primaryTicker: parts[0], secondaryTicker: parts.slice(1).join(" / ") || null };
   };
-  for (const company of companies) {
-    const change = day(company.key), ticker = company.ticker || company.label;
-    add(company.sector, {
-      id: company.key,
-      label: ticker,
-      value: company.valueAud,
-      direct: company.directAud,
+
+  const visibleOtherBuckets = useMemo(() => {
+    const meaningful = otherBuckets.filter((b) => !(b.key === "residual" && (b.weight ?? 0) < 0.0005));
+    return meaningful.length > 0 ? meaningful : otherBuckets;
+  }, [otherBuckets]);
+
+  const tiles = named.map((row) => {
+    const selectable = row.type === "stock";
+    const change = day(row.key), name = lab(row.label), label = lab(row.ticker || row.label);
+    const { primaryTicker, secondaryTicker } = row.type === "cash"
+      ? { primaryTicker: label, secondaryTicker: null }
+      : splitTicker(label);
+    const share = row.weight < 0.0105 ? ">1%" : pct(row.weight);
+    const sources = row.type !== "etf" && row.directAud >= 0 && row.viaEtfsAud >= 0
+      ? { first: row.directAud, second: row.viaEtfsAud,
+        title: `直接 ${pct(weight(row.directAud))} + 通过 ETF ${pct(weight(row.viaEtfsAud))}` }
+      : null;
+    const directPct = row.totalAud > 0 && row.directAud >= 0 ? pct(row.directAud / row.totalAud) : null;
+    const etfPct = row.totalAud > 0 && row.viaEtfsAud >= 0 ? pct(row.viaEtfsAud / row.totalAud) : null;
+    const cashInfo = row.type === "cash" ? { cashAmount: aud(row.totalAud), cashBadge: "AUD / USD" } : {};
+    return {
+      id: row.key,
+      label,
+      primaryTicker,
+      secondaryTicker,
+      name,
+      share,
+      value: row.totalAud,
+      selectable,
+      cash: row.type === "cash",
       change,
-      detail: color === "day" ? [pct(weight(company.valueAud)), directedPct(change)] : [pct(weight(company.valueAud))],
-      title: `${company.label} · ${ticker} · 占总资产 ${pct(weight(company.valueAud))} · 直接 ${pct(weight(company.directAud))} + 通过 ETF ${pct(weight(company.viaEtfsAud))} · 今日 ${directedPct(change)}`,
+      colorMode: color,
+      sources,
+      directPct,
+      etfPct,
+      ...cashInfo,
+      detail: color === "day" && change != null ? [share, directedPct(change)] : [share],
+      title: [name === label ? name : `${name} · ${label}`, `占总资产 ${share}`, sources?.title,
+        change != null && `今日 ${directedPct(change)}`].filter(Boolean).join(" · "),
+    };
+  }).sort((a, b) => b.value - a.value);
+
+  if (otherAud > 0) {
+    const subItems = visibleOtherBuckets.map((bucket, i) => ({
+      id: bucket.key,
+      label: lab(bucket.ticker),
+      value: bucket.valueAud,
+      share: pct(bucket.weight),
+      inside: bucket.shareOfOther != null ? pct(bucket.shareOfOther) : undefined,
+      accent: `var(--s${(i % 6) + 1})`,
+    }));
+    tiles.push({
+      id: "composition:other",
+      label: "其他",
+      value: otherAud,
+      rest: true,
+      selectable: visibleOtherBuckets.length > 0,
+      detail: [pct(weight(otherAud))],
+      subItems,
+      title: `其他 · 占总资产 ${pct(weight(otherAud))}，点击查看各 ETF 占比`,
     });
   }
-  // Combine aliases which have the same displayed sector before drawing that sector's grey block.
-  for (const [label, parts] of Map.groupBy(sectors, (r) => sectorLabel(r.sector))) {
-    add(label, restItem("other:" + label, "其他", sumBy(parts, "valueAud"), weight, label + " · 其他 " + sumBy(parts, "count") + " 家"));
-  }
-  const neutral = remaining.map((r) => restItem(r.key, lab(r.label), r.valueAud, weight));
-  const missing = waiting.map((r) => restItem(r.key, r.ticker || "基金", r.totalAud, weight, (r.ticker || "基金") + " · 成分待更新"));
-  if (neutral.length) groups.set("未穿透与现金", neutral);
-  if (missing.length) groups.set("成分待更新", missing);
-  const tree = [...groups].map(([label, items]) => ({ key: label, label, caption: pct(weight(sumBy(items, "value"))), items }));
-  const tileColor = (item) => {
-    if (color === "sources") {
-      const split = item.direct / item.value * 100;
-      return { background: `linear-gradient(90deg,var(--s1) ${split}%,var(--s2) ${split}%)`, color: "var(--alloc-source-ink)" };
+
+  const depth = zoomPath.length;
+  const activeBucket = depth === 2 ? visibleOtherBuckets.find((b) => b.key === zoomPath[1]) : null;
+  const bucketTiles = useMemo(() => {
+    if (depth !== 1) return [];
+    return visibleOtherBuckets.map((bucket, i) => {
+      const mainShare = otherUnit === "total" ? pct(bucket.weight) : pct(bucket.shareOfOther);
+      const subShare = otherUnit === "total"
+        ? `占「其他」${pct(bucket.shareOfOther)}`
+        : `占总资产 ${pct(bucket.weight)}`;
+      return {
+        id: bucket.key,
+        label: lab(bucket.ticker),
+        value: bucket.valueAud,
+        share: mainShare,
+        selectable: bucket.members.length > 0,
+        bucketDrillable: bucket.members.length > 0,
+        bucketAccent: `var(--s${(i % 6) + 1})`,
+        bucketSub: bucket.members.length > 0
+          ? `追踪头部外 ${bucket.members.length + bucket.restCount} 项持股`
+          : undefined,
+        bucketMainPct: mainShare,
+        bucketSubPct: subShare,
+        bucketAmount: aud(bucket.valueAud),
+        detail: [mainShare, subShare],
+        title: `${lab(bucket.label)} · 占总资产 ${pct(bucket.weight)} · 占「其他」${pct(bucket.shareOfOther)} · ${aud(bucket.valueAud)}`,
+      };
+    });
+  }, [depth, visibleOtherBuckets, otherUnit]);
+
+  const memberTiles = useMemo(() => {
+    if (depth !== 2 || !activeBucket) return [];
+    const items = activeBucket.members.map((m) => {
+      const change = day(m.key);
+      const share = pct(m.weight);
+      const label = lab(m.ticker || m.label);
+      const { primaryTicker, secondaryTicker } = splitTicker(label);
+      return {
+        id: m.key,
+        label,
+        primaryTicker,
+        secondaryTicker,
+        name: m.label,
+        share,
+        value: m.valueAud,
+        selectable: false,
+        change,
+        colorMode: color,
+        detail: change != null ? [share, directedPct(change)] : [share],
+        title: [m.label, `占总资产 ${share}`, aud(m.valueAud), change != null && `今日 ${directedPct(change)}`].filter(Boolean).join(" · "),
+      };
+    });
+    if (activeBucket.restValueAud > 0) {
+      const restWeight = totalAud > 0 ? activeBucket.restValueAud / totalAud : null;
+      items.push({
+        id: `${activeBucket.key}:rest`,
+        label: activeBucket.members.length ? `其余 ${activeBucket.restCount} 项` : lab(activeBucket.ticker),
+        value: activeBucket.restValueAud,
+        rest: true,
+        selectable: false,
+        detail: [pct(restWeight)],
+        title: `${lab(activeBucket.label)} 其余部分 · ${aud(activeBucket.restValueAud)}`,
+      });
     }
-    return item.change == null ? { background: "var(--tz)", color: "var(--l1)" } : changeTileColor(item.change * 100);
+    return items;
+  }, [depth, activeBucket, totalAud, d.today, color]);
+
+  const tileColor = (item) => {
+    if (item.cash || item.bucketAccent) return {};
+    if (color === "sources" && item.sources) {
+      const split = item.sources.first / item.value * 100;
+      return {
+        background: `linear-gradient(90deg,var(--tm-how-direct) ${split}%,var(--tm-how-etf) ${split}%)`,
+        color: "var(--tm-tile-text)",
+      };
+    }
+    return color === "day" && item.change != null
+      ? refinedTileColor(item.change * 100)
+      : {
+          background: "var(--tm-unquoted-bg)",
+          color: "var(--tm-unquoted-text)",
+          boxShadow: "inset 0 0 0 1px var(--tm-unquoted-border)",
+        };
   };
-  const current = d.exposure.rows.find((r) => r.key === chosen);
+  const handleSelectTile = (item) => {
+    if (item.id === "composition:other") {
+      choose(null);
+      setZoomPath(["OTHER"]);
+      return;
+    }
+    choose(item.id);
+  };
 
   return (
     <section className="card alloc-company" aria-labelledby="allocation-company-title">
@@ -373,46 +497,116 @@ function CompanyChart({ d, weight, holdings, onPage, openFund }) {
         <span className="cap">穿透 ETF 后，占总资产</span>
         <span className="sp" />
         <Segmented label="公司敞口图" items={[["tree", "方框图"], ["bars", "条形"]]} value={view} select={setView} />
-        {view === "tree" && <Segmented label="方框着色" items={[["day", "今日涨跌"], ["sources", "持有方式"]]} value={color} select={setColor} />}
+        {view === "tree" && depth === 0 && <Segmented label="方框着色" items={[["day", "今日涨跌"], ["sources", "持有方式"]]} value={color} select={setColor} />}
       </div>
       <dl className="alloc-company-stats">
         <div>
           <dt className="cap">最大单一公司</dt>
-          <dd title={top?.label}>{top ? top.label + " " + pct(weight(top.valueAud)) : "—"}</dd>
+          <dd title={top?.label}>{top ? top.label + " " + pct(weight(top.totalAud)) : "—"}</dd>
           {top && <span className="cap">直接 {pct(weight(top.directAud))} + 通过 ETF {pct(weight(top.viaEtfsAud))}</span>}
         </div>
         <div>
           <dt className="cap">前五大公司合计</dt>
-          <dd>{pct(weight(sumBy(topFive, "valueAud")))}</dd>
+          <dd>{pct(weight(sumBy(topFive, "totalAud")))}</dd>
           <span className="cap">{topFive.map((c) => c.ticker || c.label).join("、")}</span>
         </div>
         <div>
-          <dt className="cap">逐家列出</dt>
-          <dd>{companies.length} 家，共 {pct(weight(sumBy(companies, "valueAud")))}</dd>
-          {!!tail.length && <span className="cap">其余 {tail.length} 家合计 {pct(weight(sumBy(tail, "valueAud")))}，按行业并成灰块</span>}
+          <dt className="cap">占比超过 1% 的公司</dt>
+          <dd>{totalAud > 0 ? namedCompanies.length + " 家，共 " + pct(weight(sumBy(namedCompanies, "totalAud"))) : "—"}</dd>
         </div>
       </dl>
-      <div ref={ref}>
-        {view === "tree" ? (
-          <>
-            {tree.length ? (
-              <Treemap groups={tree} height={height} color={tileColor} title={(item) => item.title} onSelect={(item) => choose(item.id)} selected={chosen} />
-            ) : <Empty>所选账户暂无公司敞口。</Empty>}
-            {!!tree.length && (
-              <div className="row alloc-chart-footer">
-                <span className="cap">方框越大，占比越高。点方框查看来源。</span>
-                <span className="sp" />
-                {color === "sources" ? <ExposureKey /> : <DailyKey />}
-              </div>
+      {view === "tree" && depth > 0 && (
+        <div className="row alloc-drillbar">
+          <button type="button" className="btn sm" onClick={() => setZoomPath((prev) => prev.slice(0, -1))}>
+            ← 返回{depth === 2 ? "「其他」ETF 分布" : "方框图"} (Esc)
+          </button>
+          <span className="alloc-drillpath">
+            {depth === 1 ? (
+              <><b>其他 · 各 ETF 占比</b>（共 {pct(weight(otherAud))}）</>
+            ) : (
+              <>
+                <button type="button" className="alloc-link" onClick={() => setZoomPath(["OTHER"])}>
+                  其他 {pct(weight(otherAud))}
+                </button>
+                {" › "}
+                <b>{lab(activeBucket?.ticker)}</b> 尾部持仓（{pct(activeBucket?.weight)}）
+              </>
             )}
+          </span>
+          <span className="sp" />
+          {depth === 1 && (
+            <Segmented
+              label="占比基准"
+              items={[["total", "占总资产 %"], ["inside", "占「其他」%"]]}
+              value={otherUnit}
+              select={setOtherUnit}
+            />
+          )}
+        </div>
+      )}
+      <div>
+        {!tiles.length ? (
+          <Empty>{d.exposure.rows.length ? "当前无法计算总资产占比。" : "所选账户暂无可估值资产。"}</Empty>
+        ) : view === "tree" ? (
+          <>
+            {depth === 0 && (
+              <Treemap
+                items={tiles}
+                height={height}
+                color={tileColor}
+                onSelect={handleSelectTile}
+                selected={chosen}
+                refined
+                layoutOptions={{ pinOtherRight: true, gap: 5 }}
+              />
+            )}
+            {depth === 1 && (
+              <Treemap
+                items={bucketTiles}
+                height={height}
+                color={tileColor}
+                onSelect={(item) => item.bucketDrillable && setZoomPath(["OTHER", item.id])}
+                refined
+                layoutOptions={{ gap: 5 }}
+              />
+            )}
+            {depth === 2 && (
+              <Treemap
+                items={memberTiles}
+                height={height}
+                color={tileColor}
+                refined
+                layoutOptions={{ gap: 5 }}
+              />
+            )}
+            <div className="row alloc-chart-footer">
+              <span className="cap">
+                {depth === 0
+                  ? "方框越大，占比越高。点左侧公司看来源，点右侧「其他」看各 ETF 占比。"
+                  : depth === 1
+                    ? "点选 ETF 方块可继续下钻查看尾部公司。"
+                    : "按占总资产比例展示该桶内尾部持仓。"}
+              </span>
+              <span className="sp" />
+              {depth !== 1 && (color === "day" ? <DailyKey /> : <ExposureKey />)}
+            </div>
           </>
         ) : (
           <>
             <div className="row"><ExposureKey /></div>
-            {companies.length ? (
-              <CompanyBars companies={companies} others={tail} weight={weight} select={choose} selected={chosen} />
-            ) : <Empty>所选账户暂无公司敞口。</Empty>}
-            {remaining.map((r) => <div className="alloc-exposure-remainder cap" key={r.key}>{lab(r.label)} <span>{pct(weight(r.valueAud))}</span></div>)}
+            <CompanyBars
+              items={tiles}
+              select={(id) => {
+                if (id === "composition:other") {
+                  choose(null);
+                  setZoomPath(["OTHER"]);
+                  setView("tree");
+                } else {
+                  choose(id);
+                }
+              }}
+              selected={chosen}
+            />
           </>
         )}
       </div>
@@ -430,7 +624,6 @@ function CompanyChart({ d, weight, holdings, onPage, openFund }) {
           })}
         </div>
       )}
-      {current && <CompanySources company={current} holdings={holdings} weight={weight} dayChange={day(current.key)} day={d.today?.date} onClose={() => choose(null)} onPage={onPage} />}
     </section>
   );
 }
@@ -444,8 +637,7 @@ const dimensions = [
 ];
 
 function Distributions({ d, expanded, onExpand }) {
-  const { cols } = useShell();
-  const open = expanded ?? cols === 3, p = d.portfolio;
+  const open = expanded ?? false, p = d.portfolio;
   return (
     <details className="card alloc-distributions" open={open}>
       <summary onClick={(e) => { e.preventDefault(); onExpand(!open); }}>
@@ -660,19 +852,45 @@ function TargetEditor({ d, model, run, close }) {
 
 export function Allocation({ d, run, onPage }) {
   const [fund, setFund] = useState(null), [expanded, setExpanded] = useState(null), [editing, setEditing] = useState(false);
+  const [selection, setSelection] = useState(null);
+  const { aspect } = useShell();
+  const scopeKey = d.selected.join();
+  const chosen = selection?.scopeKey === scopeKey ? selection.key : null;
+  const choose = (key) => setSelection(key == null ? null : { key, scopeKey });
   const holdings = new Map(d.rows.map((r) => [r.id, r]));
   const weight = (amount) => amount != null && d.portfolio.totalAud > 0 ? amount / d.portfolio.totalAud : null;
   const model = targetModel(d, weight);
+  const companies = d.exposure.rows.filter((row) => row.type === "stock" && row.totalAud != null)
+    .sort((a, b) => b.totalAud - a.totalAud);
+  const current = d.exposure.rows.find((row) => row.key === chosen);
   return (
     <>
-      <Grid
-        layout={{ 1: [["companies", "targets", "distributions"]], 2: [["companies", "distributions"], ["targets"]], 3: [["companies"], ["targets"], ["distributions"]] }}
-        panels={{
-          companies: <CompanyChart key={d.selected.join()} d={d} weight={weight} holdings={holdings} openFund={setFund} onPage={onPage} />,
-          targets: <TargetCard d={d} model={model} holdings={holdings} weight={weight} open={() => setEditing(true)} openFund={setFund} onPage={onPage} />,
-          distributions: <Distributions d={d} expanded={expanded} onExpand={setExpanded} />,
-        }}
-      />
+      <div className="allocation-studio">
+        <CompanyChart key={scopeKey} d={d} weight={weight} holdings={holdings} openFund={setFund}
+          chosen={chosen} choose={choose} height={aspect === "21:9" ? 500 : 430} />
+        <div className="allocation-breakdown">
+          <Card title="公司敞口明细">
+            {companies.length ? (
+              <Table head={["公司", ["直接（AUD）", "num"], ["通过 ETF（AUD）", "num"], ["占比", "num"]]}>
+                {companies.map((row) => (
+                  <tr key={row.key} className={row.key === chosen ? "sel" : undefined}>
+                    <td><button className="alloc-link" type="button" onClick={() => choose(row.key)}>{row.label}</button></td>
+                    <td className="num">{aud(row.directAud, 2)}</td>
+                    <td className="num">{aud(row.viaEtfsAud, 2)}</td>
+                    <td className="num">{pct(weight(row.totalAud))}</td>
+                  </tr>
+                ))}
+              </Table>
+            ) : <Empty>暂无可估值的公司敞口。</Empty>}
+          </Card>
+        </div>
+      </div>
+      <div className="allocation-maintenance">
+        <TargetCard d={d} model={model} holdings={holdings} weight={weight} open={() => setEditing(true)} openFund={setFund} onPage={onPage} />
+        <Distributions d={d} expanded={expanded} onExpand={setExpanded} />
+      </div>
+      {current && <CompanySources company={current} holdings={holdings} weight={weight}
+        dayChange={d.today?.companies?.[current.key]} day={d.today?.date} onClose={() => choose(null)} onPage={onPage} />}
       {editing && <TargetEditor d={d} model={model} run={run} close={() => setEditing(false)} />}
       {fund && (
         <Modal wide title={(d.etfData.find((f) => f.asset.etfKey === fund)?.asset.symbol || "ETF") + " · 基金成分"} close={() => setFund(null)}>

@@ -38,6 +38,9 @@ const range = (to, period, earliest, from) => {
 };
 
 test("presets end on the valuation date and a year runs from the day after the same date last year", () => {
+  assert.deepEqual(range("2026-11-24", "1d"), ["2026-11-24", "2026-11-24", 1]);
+  assert.deepEqual(range("2026-01-03", "1w"), ["2025-12-28", "2026-01-03", 7]);
+  assert.deepEqual(range("2024-08-31", "6m"), ["2024-03-01", "2024-08-31", 184]);
   assert.deepEqual(range("2025-12-31", "ytd"), ["2025-01-01", "2025-12-31", 365]);
   assert.deepEqual(range("2025-12-31", "1y"), ["2025-01-01", "2025-12-31", 365]);
   assert.deepEqual(range("2024-12-31", "1y"), ["2024-01-01", "2024-12-31", 366]);
@@ -119,12 +122,15 @@ test("the overview and the review report the same investment gain and time-weigh
   event(a, "2025-03-01", "DEPOSIT", 500);
   event(a, "2025-03-15", "FEE", 30);
   const to = "2025-03-31";
-  for (const [period, from] of [["mtd"], ["3m"], ["ytd"], ["1y"], ["all"], [undefined, "2025-02-11"]]) {
+  for (const [period, from] of [["1d"], ["1w"], ["mtd"], ["3m"], ["6m"], ["ytd"], ["1y"], ["all"], [undefined, "2025-02-11"]]) {
     const overview = await dashboard(db, { ids: [a], date: to, period, from });
     const review = portfolioReview(db, { ids: [a], to, period, from });
     assert.equal(overview.pnl, review.money.gain, period || from);
     assert.equal(overview.summary.twr, review.metrics.portfolio.totalReturn, period || from);
     assert.equal(overview.start, review.from);
+    near(Object.values(overview.breakdown.parts).reduce((sum, value) => sum + value, 0), overview.pnl);
+    assert.equal(overview.fx.accounts[0].periodGain, overview.breakdown.parts.fx);
+    assert.equal(overview.points.length, overview.summary.period.days + 1);
   }
   // A 5% interest gain, then a fee of 30 on 1,550 after the deposit.
   const year = periodSummary(db, { ids: [a], to, period: "ytd" });

@@ -5,6 +5,7 @@ import { scaleLinear } from "d3-scale";
 // (plus 0 when a zero line is drawn) padded by 8%, and series are labelled at their ends.
 export const MARGIN = { left: 52, right: 96, rightBare: 12, top: 10, bottom: 24 };
 const END_LABEL_GAP = 14;
+const RIGHT_AXIS_GUTTER = 62;
 const DAY = 864e5;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -24,6 +25,17 @@ export function dateLabeler(first, last) {
   };
 }
 
+function verticalScale(series, plot, zero, lo, hi, flatPad = 1) {
+  const all = series.flatMap((s) => s.values.filter(Number.isFinite)).concat(zero ? [0] : []);
+  let bottom = lo ?? (all.length ? Math.min(...all) : 0),
+    top = hi ?? (all.length ? Math.max(...all) : 1);
+  const pad = (top - bottom) * 0.08 || flatPad;
+  if (lo == null) bottom -= pad;
+  if (hi == null) top += pad;
+  const round = (v) => +v.toFixed(10);
+  return scaleLinear().domain([round(bottom), round(top)]).range([plot.bottom, plot.top]);
+}
+
 /**
  * @param o.width, o.height  pixel size of the SVG
  * @param o.series           [{ name, values:number[], width? }] — `width` marks an emphasised line
@@ -31,38 +43,37 @@ export function dateLabeler(first, last) {
  * @param o.zero             include 0 in the range and report `zeroY`
  * @param o.lo, o.hi         force the bottom / top of the range (no padding on that side)
  * @param o.labels           false drops line-end labels and narrows the right margin
+ * @param o.padLeft          left margin for the rendered value labels
  * @param o.padRight         override the right margin (review charts use 104)
  */
-export function lineLayout({ width, height, series, dates, zero = false, lo, hi, labels = true, padRight }) {
+export function lineLayout({ width, height, series, dates, zero = false, lo, hi, labels = true, padLeft = MARGIN.left, padRight, formatAxisDate }) {
   const n = Math.max(0, ...series.map((s) => s.values.length));
+  const rightSeries = series.filter((s) => s.axis === "right");
+  const hasRightAxis = rightSeries.some((s) => s.values.some(Number.isFinite));
+  const rightGutter = hasRightAxis ? RIGHT_AXIS_GUTTER : 0;
   const plot = {
-    left: MARGIN.left,
-    right: width - (padRight ?? (labels ? MARGIN.right : MARGIN.rightBare)),
+    left: padLeft,
+    right: width - (padRight ?? (labels ? MARGIN.right : MARGIN.rightBare)) - rightGutter,
     top: MARGIN.top,
     bottom: height - MARGIN.bottom,
   };
 
-  const all = series.flatMap((s) => s.values.filter(Number.isFinite)).concat(zero ? [0] : []);
-  let bottom = lo ?? (all.length ? Math.min(...all) : 0),
-    top = hi ?? (all.length ? Math.max(...all) : 1);
-  const pad = (top - bottom) * 0.08 || 1;
-  if (lo == null) bottom -= pad;
-  if (hi == null) top += pad;
-  const round = (v) => +v.toFixed(10);
-  const domain = [round(bottom), round(top)];
-
   const xScale = scaleLinear().domain([0, Math.max(1, n - 1)]).range([plot.left, plot.right]);
-  const yScale = scaleLinear().domain(domain).range([plot.bottom, plot.top]);
+  const yScale = verticalScale(series.filter((s) => s.axis !== "right"), plot, zero, lo, hi);
+  const rightScale = hasRightAxis ? verticalScale(rightSeries, plot, true, undefined, undefined, 0.01) : null;
+  const domain = yScale.domain();
   const x = (i) => xScale(i),
-    y = (v) => yScale(v);
+    y = (v) => yScale(v),
+    seriesY = (s, v) => (s.axis === "right" ? rightScale(v) : y(v));
 
   const tickCount = clamp(Math.floor(height / 64), 2, 6);
   const ticks = yScale.ticks(tickCount).map((value) => ({ value, y: y(value) }));
+  const rightTicks = rightScale?.ticks(tickCount).map((value) => ({ value, y: rightScale(value) })) ?? [];
   const zeroY = zero && domain[0] < 0 && domain[1] > 0 ? y(0) : null;
 
   let xLabels = [];
   if (dates?.length && n > 0) {
-    const label = dateLabeler(dates[0], dates[n - 1]);
+    const label = formatAxisDate ?? dateLabeler(dates[0], dates[n - 1]);
     const count = Math.min(n - 1, clamp(Math.floor((plot.right - plot.left) / 120), 2, 10));
     xLabels =
       count < 1
@@ -77,17 +88,17 @@ export function lineLayout({ width, height, series, dates, zero = false, lo, hi,
   if (labels && n > 0) {
     const ends = series.map((s) => {
       const last = [...s.values].reverse().find(Number.isFinite);
-      return last == null ? null : y(last);
+      return last == null ? null : seriesY(s, last);
     });
     const order = ends.map((_, i) => i).filter((i) => ends[i] != null).sort((a, b) => ends[a] - ends[b]);
     for (let k = 1; k < order.length; k++)
       if (ends[order[k]] - ends[order[k - 1]] < END_LABEL_GAP) ends[order[k]] = ends[order[k - 1]] + END_LABEL_GAP;
     endLabels = series
-      .map((s, i) => ({ name: s.name, x: plot.right + 8, y: ends[i] + 4, strong: s.width != null, series: i }))
+      .map((s, i) => ({ name: s.name, x: plot.right + rightGutter + 8, y: ends[i] + 4, strong: s.width != null, series: i }))
       .filter((l) => ends[l.series] != null);
   }
 
   const nearestIndex = (px) => (n < 2 ? 0 : clamp(Math.round(xScale.invert(px)), 0, n - 1));
 
-  return { plot, domain, x, y, ticks, zeroY, xLabels, endLabels, nearestIndex, count: n };
+  return { plot, domain, x, y, seriesY, ticks, rightTicks, zeroY, xLabels, endLabels, nearestIndex, count: n };
 }

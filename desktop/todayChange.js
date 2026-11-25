@@ -35,6 +35,29 @@ function* closesBefore(context, date) {
   }
 }
 
+// Compare both weights across the whole selected portfolio, including cash. All accounts
+// holding the same listing share one numerator even when the ledger has separate asset IDs.
+export function addPriorWeights(context, date, securities, currentTotal) {
+  const closes = closesBefore(context, date);
+  closes.next();
+  const prior = closes.next().value?.view;
+  if (!(prior?.total > 0 && currentTotal > 0)) return;
+  const values = new Map();
+  for (const row of prior.rows) {
+    if (row.cash) continue;
+    const key = securityKey(row.key, row.currency);
+    const old = values.get(key);
+    values.set(key, row.value == null || old === null ? null : (old ?? D(0)).plus(row.value));
+  }
+  for (const security of securities) {
+    const previous = values.get(security.key);
+    if (previous === null || security.value == null) continue;
+    security.newPosition = previous === undefined;
+    security.weightChangePp = D(security.value).div(currentTotal)
+      .minus((previous ?? D(0)).div(prior.total)).mul(100).toNumber();
+  }
+}
+
 // The latest close on or before the valuation date valued on its own closes and rates (as the
 // period engine states its results), or else the latest valued close, and the close before it.
 function changeDays(context, date) {
@@ -100,6 +123,29 @@ export function priceChange(book, assetId, date) {
     close: Number(close.price),
     previousClose: Number(prior.price),
     change: D(close.price).div(prior.price).minus(1).toNumber(),
+  };
+}
+
+export function asxQuoteChange(book, closes, row) {
+  const { assetId, price, priceUpdatedAt: date, quoteSource } = row;
+  if (row.localCurrency !== "AUD" || marketFor(book.assets.get(assetId)) !== "ASX") return undefined;
+  if (!date || price == null || closingDay(date, "ASX") !== date) return null;
+
+  // A broker snapshot dates the account reading. Check the mark against a dated market quote.
+  if (["Webull AU", "券商账户页面（手工核对）"].includes(quoteSource)) {
+    const quote = last(book.prices.get(assetId), date);
+    if (quote?.day !== date || !D(quote.price).toDecimalPlaces(4).eq(D(price).toDecimalPlaces(4))) return null;
+  }
+  const previous = closingDay(shiftDay(date, -1), "ASX");
+  const prior = last(closes.prices.get(assetId), previous);
+  if (prior?.day !== previous) return null;
+
+  return {
+    date,
+    previousClose: Number(prior.price),
+    price: Number(price),
+    change: D(price).div(prior.price).minus(1).toNumber(),
+    amount: D(price).minus(prior.price).mul(row.rawQuantity).toNumber(),
   };
 }
 

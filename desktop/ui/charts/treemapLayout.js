@@ -1,105 +1,116 @@
-import { hierarchy, treemap, treemapSquarify } from "d3-hierarchy";
+import { hierarchy, treemap, treemapBinary, treemapSquarify } from "d3-hierarchy";
 
-// Grouped squarified treemap (prototype allocation variant D), laid out with d3-hierarchy.
-const GROUP_GAP = 6;
-const HEADER = 19;
+const estimateWidth = (text) => text.replace(/[^\x20-\x7e]/g, "WW").length * 0.7;
+const minFont = 11;
+export const inlineLabelGap = 7;
 
-const sum = (items) => items.reduce((s, i) => s + i.value, 0);
-
-// Squarify `items` (values > 0) into the rectangle; returns [{ item, x, y, w, h }].
-function squarify(items, x, y, w, h) {
-  const kept = items.filter((i) => i.value > 0);
-  if (!kept.length || w <= 0 || h <= 0) return [];
-  const root = hierarchy({ children: kept }, (d) => d.children)
-    .sum((d) => (d.children ? 0 : d.value))
-    .sort((a, b) => b.value - a.value);
-  treemap().tile(treemapSquarify).size([w, h]).round(false)(root);
-  return root.leaves().map((n) => ({ item: n.data, x: x + n.x0, y: y + n.y0, w: n.x1 - n.x0, h: n.y1 - n.y0 }));
+function fitLabel(labels, detail, w, h, measureWidth) {
+  const [share, change] = detail;
+  const labelWidth = Math.max(...labels.map((line) => measureWidth(line, 650)));
+  const labelHeight = labels.length * 1.2;
+  const shareWidth = share ? measureWidth(share, 400) : 0;
+  const font = Math.min(28, w / labelWidth, (h - (share ? minFont * 1.2 : 0)) / labelHeight);
+  if (font < minFont || shareWidth * minFont > w) return null;
+  const detailFont = Math.max(minFont, Math.min(14, font * 0.55, w / shareWidth, (h - font * labelHeight) / 1.2));
+  const lines = share ? [share] : [];
+  if (change && h >= font * labelHeight + detailFont * 2.4 && w >= measureWidth(change, 400) * detailFont) lines.push(change);
+  return { labels, font, detailFont, lines };
 }
 
-// Text that fits a named tile: main label size, and up to two detail lines.
-function namedText(item, w, h) {
-  const main = Math.min(28, (w - 8) / (item.label.length * 0.68), (h - 6) / 1.3);
-  if (!(main >= 9)) return { font: null, detailFont: null, lines: [] };
-  const small = Math.max(10, Math.min(14, main * 0.55)),
-    fits = (text) => w > text.length * small * 0.62 + 8,
-    [first, second] = item.detail ?? [],
-    lines = [];
-  if (first != null && main >= 10 && h > main * 1.2 + small * 1.3 + 6 && fits(first)) {
-    lines.push(first);
-    if (second != null && h > main * 1.2 + small * 2.7 + 8 && fits(second)) lines.push(second);
-  }
-  return { font: main, detailFont: small, lines };
+function tileText(item, w, h, measureWidth) {
+  const detail = item.detail ?? [];
+  const innerWidth = w - 6, innerHeight = h - 6;
+  const fit = (labels) => fitLabel(labels, detail, innerWidth, innerHeight, measureWidth);
+  const single = fit([item.label]);
+  const tickers = item.label.split(" / ");
+  const split = tickers.length > 1 && !(single?.font >= 16) ? fit(tickers) : null;
+  if (split && split.font > (single?.font ?? 0)) return split;
+  if (single) return single;
+
+  const [share] = detail;
+  if (!share) return null;
+  const lineWidth = measureWidth(item.label, 650) + measureWidth(share, 400);
+  const font = Math.min(14, (innerWidth - inlineLabelGap) / lineWidth, innerHeight / 1.2);
+  return font >= minFont ? { labels: [item.label], font, detailFont: font, lines: [share], inline: true } : null;
 }
 
-// Grey 「其他」 tiles carry one short top-left label: "其他 10.0%", or just the label, or nothing.
-function restText(item, w, h) {
-  const full = [item.label, item.detail?.[0]].filter(Boolean).join(" ");
-  const text = h > 22 && w > full.length * 8 + 10 ? full : h > 22 && w > 34 ? item.label : null;
-  return { font: null, detailFont: null, lines: [], text };
+function otherAtBottom(root, x0, y0, x1, y1) {
+  const other = root.children.at(-1);
+  const cut = y1 - (y1 - y0) * (other.value / root.value);
+  treemapSquarify({ children: root.children.slice(0, -1), value: root.value - other.value }, x0, y0, x1, cut);
+  Object.assign(other, { x0, y0: cut, x1, y1 });
 }
 
-/**
- * groups: [{ key, label, caption?, items: [{ id, label, value, rest?, detail?: [line2, line3] }] }]
- * `rest` items are the light grey 「其他」 blocks, placed at the end of their group.
- * Returns { groups: [{ key, x, y, w, h, header, content }], tiles: [{ item, group, x, y, w, h, rest, font, detailFont, lines, text? }] }.
- */
-export function treemapLayout(groups, width, height) {
-  const outGroups = [],
-    tiles = [];
-  const boxes = squarify(
-    groups.map((g) => ({ ...g, value: sum(g.items) })),
-    0,
-    0,
-    width,
-    height,
-  );
-  for (const box of boxes) {
-    const g = box.item;
-    let x = box.x + GROUP_GAP / 2,
-      y = box.y + GROUP_GAP / 2,
-      w = box.w - GROUP_GAP,
-      h = box.h - GROUP_GAP;
-    if (w < 8 || h < 8) continue;
-    let header = null;
-    const frame = { x, y, w, h };
-    if (h > 54 && w > 70) {
-      header = { x, y, w, label: g.label, caption: g.caption ?? "" };
-      y += HEADER;
-      h -= HEADER;
+function otherAtRight(root, x0, y0, x1, y1) {
+  const other = root.children.at(-1);
+  const cut = x1 - (x1 - x0) * (other.value / root.value);
+  treemapSquarify({ children: root.children.slice(0, -1), value: root.value - other.value }, x0, y0, cut, y1);
+  Object.assign(other, { x0: cut, y0, x1, y1 });
+}
+
+const tilers = [treemapSquarify, treemapSquarify.ratio(1), treemapBinary];
+
+function paintTile({ data: item, x0, x1, y0, y1 }, measureWidth, gap = 1) {
+  const gapX = Math.min(gap, (x1 - x0) / 2), gapY = Math.min(gap, (y1 - y0) / 2);
+  const w = x1 - x0 - gapX, h = y1 - y0 - gapY;
+  return { item, x: x0 + gapX / 2, y: y0 + gapY / 2, w, h, text: tileText(item, w, h, measureWidth) };
+}
+
+function layoutScore(tiles) {
+  let outside = 0, otherOutside = 0, inline = 0, worstAspect = 1;
+  for (const { item, text, w, h } of tiles) {
+    if (item.rest) {
+      otherOutside += Number(!text);
+      continue;
     }
-
-    const named = g.items.filter((i) => !i.rest),
-      rest = g.items.filter((i) => i.rest),
-      share = sum(rest) / (sum(named) + sum(rest));
-    let rx = x,
-      ry = y,
-      rw = w,
-      rh = h,
-      nw = w,
-      nh = h;
-    if (named.length && sum(named) > 0) {
-      if (w >= h) {
-        rw = w * share;
-        rx = x + w - rw;
-        nw = w - rw;
-      } else {
-        rh = h * share;
-        ry = y + h - rh;
-        nh = h - rh;
-      }
-    }
-    outGroups.push({ key: g.key, ...frame, header, content: { x, y, w, h } });
-
-    const place = (r, isRest) => {
-      const tw = r.w - 1,
-        th = r.h - 1;
-      if (tw < 3 || th < 3) return;
-      const text = isRest ? restText(r.item, tw, th) : namedText(r.item, tw, th);
-      tiles.push({ item: r.item, group: g.key, x: r.x + 0.5, y: r.y + 0.5, w: tw, h: th, rest: isRest, ...text });
-    };
-    squarify(rest, rx, ry, rw, rh).forEach((r) => place(r, true));
-    if (named.length) squarify(named, x, y, nw, nh).forEach((r) => place(r, false));
+    outside += Number(!text);
+    inline += Number(text?.inline === true);
+    worstAspect = Math.max(worstAspect, w / h, h / w);
   }
-  return { groups: outGroups, tiles };
+  return [outside, otherOutside, inline, Math.round(worstAspect * 10)];
+}
+
+function isBetter(score, best) {
+  const firstDifference = score.findIndex((value, i) => value !== best[i]);
+  return firstDifference >= 0 && score[firstDifference] < best[firstDifference];
+}
+
+export function treemapLayout(items, width, height, measureWidth = estimateWidth, options = {}) {
+  const kept = items.filter((item) => item.value > 0);
+  if (!kept.length || width <= 0 || height <= 0) return [];
+  const gap = options.gap ?? 1;
+  const root = hierarchy({ children: kept }).sum((node) => node.value ?? 0).sort((a, b) => {
+    if (Boolean(a.data.rest) !== Boolean(b.data.rest)) return a.data.rest ? 1 : -1;
+    return b.value - a.value;
+  });
+  const pack = treemap().size([width, height]);
+  const lastNode = root.children.at(-1);
+  const canPinRight = options.pinOtherRight && kept.length > 1 && lastNode.data.rest && lastNode.value / root.value >= 0.04;
+  if (canPinRight) {
+    return pack.tile(otherAtRight)(root).leaves().map((leaf) => paintTile(leaf, measureWidth, gap));
+  }
+  const tilerOptions = kept.length > 1 && lastNode.data.rest ? [...tilers, otherAtBottom] : tilers;
+  let best, bestScore;
+  for (const tile of tilerOptions) {
+    const candidate = pack.tile(tile)(root).leaves().map((leaf) => paintTile(leaf, measureWidth, gap));
+    const score = layoutScore(candidate);
+    if (!best || isBetter(score, bestScore)) {
+      best = candidate;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
+export function subTreemapLayout(items, width, height) {
+  const kept = items.filter((item) => item.value > 0);
+  if (!kept.length || width <= 8 || height <= 8) return [];
+  const root = hierarchy({ children: kept }).sum((node) => node.value ?? 0).sort((a, b) => b.value - a.value);
+  return treemap().size([width, height]).tile(treemapSquarify)(root).leaves().map((leaf) => ({
+    item: leaf.data,
+    x: leaf.x0,
+    y: leaf.y0,
+    w: leaf.x1 - leaf.x0,
+    h: leaf.y1 - leaf.y0,
+  }));
 }

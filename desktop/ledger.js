@@ -53,6 +53,8 @@ CREATE INDEX IF NOT EXISTS sp_evidence_account ON sp_holding_evidence(account,as
 CREATE TABLE IF NOT EXISTS sp_prices(asset TEXT NOT NULL, day TEXT NOT NULL, price TEXT NOT NULL, source TEXT NOT NULL, priority INTEGER NOT NULL, PRIMARY KEY(asset,day,source));
 CREATE TABLE IF NOT EXISTS sp_broker_prices(account TEXT NOT NULL REFERENCES sp_accounts(id), asset TEXT NOT NULL, day TEXT NOT NULL, price TEXT NOT NULL, source TEXT NOT NULL, priority INTEGER NOT NULL, PRIMARY KEY(account,asset,day,source));
 CREATE INDEX IF NOT EXISTS sp_prices_date ON sp_prices(asset,day);
+CREATE TABLE IF NOT EXISTS sp_live_prices(asset TEXT PRIMARY KEY, observed INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sp_live_fx(bucket INTEGER PRIMARY KEY, observed INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sp_archive(account TEXT NOT NULL, day TEXT NOT NULL, total TEXT, cash TEXT, invested TEXT, base TEXT, status TEXT, PRIMARY KEY(account,day));
 CREATE TABLE IF NOT EXISTS sp_prefs(scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,key));
 CREATE TABLE IF NOT EXISTS sp_statements(id TEXT PRIMARY KEY, account TEXT NOT NULL, day TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL);

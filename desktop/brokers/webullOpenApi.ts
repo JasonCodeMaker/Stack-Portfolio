@@ -167,8 +167,6 @@ async function sendSignedRequest(
   });
 }
 
-
-
 async function requestWithLegacyFallback(
   network: NetworkClient,
   credentials: WebullCredentials,

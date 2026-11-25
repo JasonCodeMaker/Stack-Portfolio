@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { resizeContent } = require("./fixtures/display.cjs");
 
 async function seedFullYear(app, root) {
   await app.evaluate(({ app, safeStorage }, root) => {
@@ -72,6 +73,19 @@ async function seedFullYear(app, root) {
     await page.getByRole("group", { name: "期间" }).getByRole("button", { name: "本月" }).click();
     const drawdown = page.getByRole("region", { name: "最大回撤" });
     await drawdown.waitFor();
+    const verifyDayLayout = async () => {
+      const day = page.locator(".review-rail .card").filter({ has: page.getByRole("heading", { name: "收盘持仓与流水" }) });
+      await day.getByRole("columnheader", { name: "估值依据" }).waitFor();
+      const position = await day.evaluate((card) => {
+        const bounds = (selector) => card.querySelector(selector).getBoundingClientRect();
+        const tabs = bounds(".tabs"), summary = bounds(".review-readout"), table = bounds(".table-scroll");
+        return { tabs: tabs.width, table: table.width, summaryGap: tabs.top - summary.bottom, tableGap: table.top - tabs.bottom };
+      });
+      assert.ok(position.tabs < position.table, "Day tabs stay content-width: " + JSON.stringify(position));
+      assert.ok(position.summaryGap >= 7 && position.summaryGap <= 16);
+      assert.ok(position.tableGap >= 7 && position.tableGap <= 16);
+    };
+    await verifyDayLayout();
     assert.match(await drawdown.innerText(), /−[\d.]+%[\s\S]*\d\d-\d\d 至 \d\d-\d\d[\s\S]*收复/);
     assert.equal(await page.getByRole("button", { name: "回撤", exact: true }).count(), 0);
     await page.getByText("不满一年，不显示年化").waitFor();
@@ -106,15 +120,17 @@ async function seedFullYear(app, root) {
     await page.getByRole("dialog", { name: "2026-10-30 · 当日明细", exact: true }).waitFor();
     await page.keyboard.press("Escape");
 
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1920, 1080));
+    await resizeContent(app, page, 2560, 1080);
+    await verifyDayLayout();
     await page.waitForFunction(() => document.querySelector(".pane").dataset.cols === "2");
     await page.getByRole("button", { name: "逐日数据", exact: true }).click();
     const dockedDaily = page.getByRole("complementary", { name: "逐日数据", exact: true });
     await dockedDaily.getByRole("row", { name: /^2026-10-30/ }).getByRole("cell").nth(1).click();
-    await page.getByRole("complementary", { name: "2026-10-30 · 当日明细" }).getByLabel("观察日").waitFor();
+    const observedDay = page.locator(".review-rail").getByLabel("观察日");
+    await observedDay.waitFor();
+    assert.equal(await observedDay.inputValue(), "2026-10-30");
     await page.keyboard.press("ArrowDown");
-    const dockedDay = page.getByRole("complementary", { name: "2026-10-29 · 当日明细" });
-    assert.equal(await dockedDay.getByLabel("观察日").inputValue(), "2026-10-29");
+    await page.waitForFunction(() => document.querySelector(".review-rail input[type=date]")?.value === "2026-10-29");
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "数据来源与计算方法", exact: true }).click();
     const sources = page.getByRole("complementary", { name: "数据来源与计算方法", exact: true });
@@ -123,10 +139,10 @@ async function seedFullYear(app, root) {
     const nasdaq = sources.getByText("纳斯达克 100", { exact: true }).locator("..");
     assert.match(await sp500.innerText(), /区间最大回撤\s*▼\s*−0\.71%/);
     assert.match(await nasdaq.innerText(), /区间最大回撤\s*▼\s*−1\.55%/);
-    await page.waitForFunction(() => document.querySelector(".pane").dataset.cols === "1");
+    await page.waitForFunction(() => document.querySelector(".pane").dataset.cols === "2");
     await sources.getByRole("button", { name: "关闭" }).click();
     await page.waitForFunction(() => document.querySelector(".pane").dataset.cols === "2");
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1440, 900));
+    await resizeContent(app, page, 1440, 900);
 
     const breakdown = page.getByRole("region", { name: "盈亏构成" });
     await breakdown.getByRole("button", { name: /^未实现变动/ }).click();
@@ -135,6 +151,16 @@ async function seedFullYear(app, root) {
     const contribution = page.getByRole("region", { name: "持仓贡献" });
     await contribution.getByRole("button", { name: /^IVV/ }).click();
     await page.getByRole("heading", { name: "持仓", exact: true }).waitFor();
+
+    // A long formatted value must fit inside the chart's left margin.
+    await page.evaluate(() => window.portfolio.savePrice({ assetId: "aapl", date: "2026-10-30", price: "300000" }));
+    await page.reload();
+    await nav.getByRole("button", { name: "收益复盘", exact: true }).click();
+    await page.getByRole("group", { name: "主图视图" }).getByRole("button", { name: "收益差", exact: true }).click();
+    const largeTick = page.getByRole("img", { name: /^收益差曲线/ }).getByText(/^\+\d{2},\d{3}\.\d pp$/, { exact: true }).first();
+    await largeTick.waitFor();
+    assert.ok(await largeTick.evaluate((tick) => tick.getBBox().x >= 0), "A wide return-gap tick stays inside the chart");
+
     await app.close();
     app = null;
 

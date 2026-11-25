@@ -3,10 +3,9 @@ import { ArrowDown, ArrowUp } from "lucide-react";
 import { canonicalIdentity } from "../allocation/domain/identifiers";
 import { api, aud, fmt, kind, num, signedPct, types, Delta } from "./common";
 import { HoldingEditor } from "./HoldingEditor";
-import { Detail, Grid, useRowKeys, useShell } from "./Shell";
+import { Detail, useRowKeys, useShell } from "./Shell";
+import { closeTimeLabel, quoteDetails, quoteStatus } from "./MarketQuotes";
 import "./holdings.css";
-
-export { Overview } from "./Overview";
 
 const price = (n) => new Intl.NumberFormat("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(n);
 const sorts = {
@@ -26,14 +25,16 @@ function amountWithCash(value, cash) {
   return value == null || cash == null ? null : value + cash;
 }
 
-function HoldingsTotals({ d, rows, filtered, day }) {
+function HoldingsTotals({ d, rows, filtered }) {
   const securities = filtered ? sum(rows, (r) => r.audValue) : d.securities;
   const cash = d.valuation.cash;
   const total = filtered ? amountWithCash(securities, cash) : d.valuation.total;
   const cost = sum(rows, (r) => r.costAud);
   const gain = sum(rows, (r) => r.gainAud);
   const missingCost = rows.some((r) => r.costLocal == null);
-  const change = filtered ? sum(rows, (r) => r.today?.change) : d.today?.change;
+  const change = d.currentMarket
+    ? (filtered ? sum(rows, (r) => r.recentCloseChange) : d.currentMarket.recentCloseChange.total)
+    : (filtered ? sum(rows, (r) => r.today?.change) : d.today?.change);
   const realised = filtered ? sum(rows, (r) => r.realised) : d.cumulative.realised;
   const dividends = filtered ? sum(rows, (r) => r.dividends) : d.cumulative.dividends;
   return (
@@ -48,7 +49,7 @@ function HoldingsTotals({ d, rows, filtered, day }) {
         <b>{missingCost ? "待补" : <Delta amount={gain} rate={gain != null && cost > 0 ? gain / cost : null} />}</b>
       </span>
       <span>
-        <span className="cap">{day}涨跌{d.today?.date && " · " + d.today.date}</span>{" "}
+        <span className="cap">{d.currentMarket ? "最近收盘变动" : "收盘变动" + (d.today?.date ? " · " + d.today.date : "")}</span>{" "}
         <b><Delta amount={change} /></b>
       </span>
       <span><span className="cap">累计已实现</span> <b><Delta amount={realised} /></b></span>
@@ -57,7 +58,9 @@ function HoldingsTotals({ d, rows, filtered, day }) {
   );
 }
 
-function AccountCard({ account, rows, filtered, day, sort, setSort, selectedId, arrival, select }) {
+const cashRowId = (account) => "cash-account:" + account.id;
+
+function AccountCard({ account, rows, filtered, sort, setSort, selectedId, arrival, select, selectCash, current }) {
   const title = useId();
   const cash = account.valuation.cash;
   const total = filtered ? amountWithCash(sum(rows, (r) => r.audValue), cash) : account.valuation.total;
@@ -78,7 +81,7 @@ function AccountCard({ account, rows, filtered, day, sort, setSort, selectedId, 
     <section className="card holdings-card" aria-labelledby={title}>
       <div className="row holdings-card-head">
         <h2 id={title}>{account.name}</h2>
-        <span className="cap">{rows.length} 只 · 市值 {aud(total, 2)}</span>
+        <span className="cap">{rows.length} 只 · {current && total == null ? "可估值小计 " + aud(account.known, 2) : "市值 " + aud(total, 2)}</span>
       </div>
       <div className="holdings-table-scroll">
         <table>
@@ -91,39 +94,49 @@ function AccountCard({ account, rows, filtered, day, sort, setSort, selectedId, 
               <th scope="col" aria-sort={sortOrder("gain") || sortOrder("rate")}>
                 {sortable("gain", "未实现盈亏")} <span className="hide-n">/ {sortable("rate", "盈亏率")}</span>
               </th>
-              <th scope="col">{day}涨跌</th>
-              <th scope="col">涨跌幅</th>
+              <th scope="col">{current ? "现价" : "收盘贡献"}</th>
+              <th scope="col">{current ? "较本市场前收盘" : "报价涨跌幅"}</th>
               <th scope="col" className="hide-n">累计已实现</th>
               <th scope="col" className="hide-n">累计分红</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr
-                key={r.id}
-                data-holding-row={r.id}
-                data-row={r.id}
-                className={"click" + (selectedId === r.id ? " sel" : "") + (arrival === r.id ? " holdings-arrival" : "")}
-                onClick={() => select(r.id)}
-              >
-                <td>
-                  <div className="holdings-security">
-                    <button type="button" className="ticker">{r.ticker}</button>
-                    {r.name && <i className="holdings-name" title={r.name}>{r.name}</i>}
-                  </div>
-                </td>
-                <td>{num(r.rawQuantity)}</td>
-                <td className="hide-n">{r.costLocal == null ? <span className="warn">待补</span> : aud(r.costAud, 2)}</td>
-                <td>{aud(r.audValue, 2)}</td>
-                <td>{r.costLocal == null ? <span className="warn">待补</span> : <Delta amount={r.gainAud} rate={r.gainRate} />}</td>
-                <td><Delta amount={r.today?.change} /></td>
-                <td><Delta rate={r.today?.priceChange?.change} /></td>
-                <td className="hide-n">{r.realised ? <Delta amount={r.realised} /> : "—"}</td>
-                <td className="hide-n">{r.dividends ? aud(r.dividends, 2) : "—"}</td>
-              </tr>
-            ))}
-            <tr className="holdings-cash">
-              <td>现金</td>
+            {rows.map((r) => {
+              const quote = r.quoteChange === undefined ? r.today?.priceChange : r.quoteChange;
+              return (
+                <tr
+                  key={r.id}
+                  data-holding-row={r.id}
+                  data-row={r.id}
+                  className={"click" + (selectedId === r.id ? " sel" : "") + (arrival === r.id ? " holdings-arrival" : "")}
+                  onClick={() => select(r.id)}
+                >
+                  <td>
+                    <div className="holdings-security">
+                      <button type="button" className="ticker">{r.ticker}</button>
+                      {r.name && <i className="holdings-name" title={r.name}>{r.name}</i>}
+                    </div>
+                  </td>
+                  <td>{num(r.rawQuantity)}</td>
+                  <td className="hide-n">{r.costLocal == null ? <span className="warn">待补</span> : aud(r.costAud, 2)}</td>
+                  <td>{aud(r.audValue, 2)}</td>
+                  <td>{r.costLocal == null ? <span className="warn">待补</span> : <Delta amount={r.gainAud} rate={r.gainRate} />}</td>
+                  <td>{current ? (
+                    <span title={quoteDetails(r.marketQuote)}>
+                      {r.price == null ? "—" : r.localCurrency + " " + price(r.price)}
+                      <small>{quoteStatus(r.marketQuote)}</small>
+                    </span>
+                  ) : <Delta amount={r.today?.change} />}</td>
+                  <td><Delta rate={quote?.change} />{quote && <small title={current ? "布里斯班时间" : undefined}>{closeTimeLabel(quote.closedAt, quote.date)}</small>}</td>
+                  <td className="hide-n">{r.realised ? <Delta amount={r.realised} /> : "—"}</td>
+                  <td className="hide-n">{r.dividends ? aud(r.dividends, 2) : "—"}</td>
+                </tr>
+              );
+            })}
+            <tr data-row={cashRowId(account)}
+              className={"holdings-cash click" + (selectedId === cashRowId(account) ? " sel" : "")}
+              onClick={() => selectCash(account)}>
+              <td><button type="button" className="ticker" aria-label={account.name + "现金"}>现金</button></td>
               <td />
               <td className="hide-n" />
               <td>{aud(cash, 2)}</td>
@@ -158,7 +171,7 @@ function linkedSecurity(d, { assetId, symbol }) {
 }
 
 // A review link can point to a listing with history but no open position.
-function selectedSecurity(d, selection) {
+export function selectedSecurity(d, selection) {
   if (!selection) return null;
   const { assetId, rowId, symbol } = selection;
   const listing = d.listings.find((a) => a.id === assetId);
@@ -230,9 +243,12 @@ function DetailHistory({ events, error, accounts }) {
   );
 }
 
-function SecurityDetail({ d, security, day, onClose, openRepair }) {
+export function SecurityDetail({ d, security, onClose, openRepair, dock }) {
   const [history, setHistory] = useState(null);
   const { row, rows, group, closed, daily, currency } = security;
+  const quote = group?.quoteChange;
+  const showQuote = quote !== undefined;
+  const closeDate = d.today?.date;
   const request = JSON.stringify([d.selected, d.date, security.ids]);
   const { events, error } = history?.request === request ? history : {};
   useEffect(() => {
@@ -258,7 +274,7 @@ function SecurityDetail({ d, security, day, onClose, openRepair }) {
   const missingCost = rows.some((r) => r.costLocal == null);
   const withinCurrency = (n) => n == null ? "—" : currency + " " + price(n);
   return (
-    <Detail title={security.ticker} onClose={onClose}>
+    <Detail title={security.ticker} onClose={onClose} wide={dock !== undefined} dock={dock}>
       <div className="holdings-detail">
         <div className="row m0 holdings-detail-meta">
           {security.name && security.name !== security.ticker && <span className="cap">{security.name}</span>}
@@ -278,8 +294,20 @@ function SecurityDetail({ d, security, day, onClose, openRepair }) {
             </div>
             <div><span className="cap">成本（含费用）</span><b>{missingCost ? "待补" : aud(group.cost, 2)}</b></div>
             <div>
-              <span className="cap">{day}涨跌</span><b><Delta amount={daily?.change} /></b>
-              {daily?.priceChange && <span className="cap">涨跌幅 {signedPct(daily.priceChange.change)}（{currency}）</span>}
+              {showQuote ? (
+                <>
+                  <span className="cap">{d.currentMarket ? "较本市场前收盘" : "报价涨跌"}{quote && " · " + (d.currentMarket ? "布里斯班 " : "") + closeTimeLabel(quote.closedAt, quote.date)}</span>
+                  {quote ? <b>{d.currentMarket ? <><Delta rate={quote.change} /> · {currency} {fmt(quote.amount, 2)}</> :
+                    <Delta amount={quote.amount} rate={quote.change} />}</b> : <b>暂无可核实涨跌</b>}
+                </>
+              ) : (
+                <>
+                  <span className="cap">收盘贡献{closeDate && " · " + closeDate}</span><b><Delta amount={daily?.change} /></b>
+                  {daily?.priceChange && (
+                    <span className="cap">{daily.priceChange.date} 涨跌幅 {signedPct(daily.priceChange.change)}（{currency}）</span>
+                  )}
+                </>
+              )}
             </div>
           </div>
         )}
@@ -296,10 +324,14 @@ function SecurityDetail({ d, security, day, onClose, openRepair }) {
                     <th scope="row">现价</th>
                     <td title={[row.quoteSource, row.priceUpdatedAt].filter(Boolean).join(" · ")}>{withinCurrency(row.price)}</td>
                   </tr>
+                  {d.currentMarket && <tr><th scope="row">报价状态</th><td>{quoteDetails(row.marketQuote)}</td></tr>}
                   {row.fx && currency !== "AUD" && (
                     <tr><th scope="row">汇率</th><td title={[row.fxSource, row.fxDate].filter(Boolean).join(" · ")}>1 {currency} = {num(row.fx)} AUD</td></tr>
                   )}
                 </>
+              )}
+              {showQuote && daily?.change != null && (
+                <tr><th scope="row">收盘贡献{closeDate && " · " + closeDate}</th><td><Delta amount={daily.change} /></td></tr>
               )}
               <tr><th scope="row">累计已实现盈亏</th><td><Delta amount={security.realised} /></td></tr>
               <tr><th scope="row">累计分红</th><td>{aud(security.dividends, 2)}</td></tr>
@@ -334,18 +366,20 @@ function SecurityDetail({ d, security, day, onClose, openRepair }) {
   );
 }
 
-export function Holdings({ d, initial = {}, run, historical }) {
+export function Holdings({ d, initial = {}, run }) {
   const [q, setQ] = useState(initial.search || ""),
     [filter, setFilter] = useState("all"),
     [sort, setSort] = useState({ key: "value", down: true }),
     [selection, setSelection] = useState(() => linkedSecurity(d, initial)),
     [arrival, setArrival] = useState(selection?.rowId),
     [repair, setRepair] = useState(null);
-  const { cols } = useShell();
+  const { aspect } = useShell();
+  const [dock, setDock] = useState(null);
   const root = useRef(null);
   const returnTo = useRef(null);
-  const security = useMemo(() => selectedSecurity(d, selection), [d, selection]);
-  const selectedId = security?.row?.id;
+  const cash = d.byAccount.find((account) => account.id === selection?.cashAccountId);
+  const security = useMemo(() => selection?.cashAccountId ? null : selectedSecurity(d, selection), [d, selection]);
+  const selectedId = cash ? cashRowId(cash) : security?.row?.id;
   const rowButton = (id) => id && root.current?.querySelector('[data-row="' + CSS.escape(id) + '"] .ticker');
 
   useEffect(() => {
@@ -360,7 +394,7 @@ export function Holdings({ d, initial = {}, run, historical }) {
       if (arrival && !document.querySelector("dialog[open]")) button?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
-  }, [selectedId, cols, arrival]);
+  }, [selectedId, aspect, arrival]);
   useLayoutEffect(() => {
     if (selection || repair || returnTo.current == null) return;
     const { rowId, scrollTop } = returnTo.current;
@@ -395,66 +429,74 @@ export function Holdings({ d, initial = {}, run, historical }) {
       }),
   }));
   const rows = rowsByAccount.flatMap(({ rows }) => rows);
+  const selectCash = (account) => {
+    setArrival(null);
+    setSelection({ cashAccountId: account.id });
+    if (!document.querySelector("dialog[open]")) rowButton(cashRowId(account))?.focus({ preventScroll: true });
+  };
   const select = (id) => {
+    const cashAccount = d.byAccount.find((account) => cashRowId(account) === id);
+    if (cashAccount) return selectCash(cashAccount);
     const row = securities.find((r) => r.id === id);
     if (!row) return;
     setArrival(null);
     setSelection({ assetId: row.assetId, symbol: row.ticker, rowId: id });
     if (!document.querySelector("dialog[open]")) rowButton(id)?.focus({ preventScroll: true });
   };
-  const rowKeys = useRowKeys(rows.map((r) => r.id), selectedId, select);
-  const day = historical ? "当日" : "今日";
-  const ids = d.byAccount.map((a) => a.id);
-  const split = Math.floor(ids.length / 2);
-  const panels = Object.fromEntries(rowsByAccount.map(({ account, rows }) => [
-    account.id, <AccountCard {...{ account, rows, filtered, day, sort, setSort, selectedId, arrival, select }} />,
-  ]));
+  const rowKeys = useRowKeys(rowsByAccount.flatMap(({ account, rows }) => [...rows.map((r) => r.id), cashRowId(account)]), selectedId, select);
 
   return (
     <div className="holdings" ref={root} onKeyDown={(e) => {
       if (!repair && e.target.closest("[data-row], .insp, dialog")) rowKeys(e);
     }}>
-      <div className="row m0 holdings-tools">
-        <input
-          className="btn"
-          type="search"
-          placeholder="搜索代码或名称"
-          aria-label="搜索持仓"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <span className="seg" role="group" aria-label="证券类别">
-          {categories.map(([id, name]) => (
-            <button
-              key={id}
-              type="button"
-              className={filter === id ? "on" : ""}
-              aria-pressed={filter === id}
-              onClick={() => setFilter(id)}
-            >
-              {name}
-            </button>
+      <div className="holdings-master">
+        <div className="row m0 holdings-tools">
+          <input
+            className="btn"
+            type="search"
+            placeholder="搜索代码或名称"
+            aria-label="搜索持仓"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <span className="seg" role="group" aria-label="证券类别">
+            {categories.map(([id, name]) => (
+              <button
+                key={id}
+                type="button"
+                className={filter === id ? "on" : ""}
+                aria-pressed={filter === id}
+                onClick={() => setFilter(id)}
+              >
+                {name}
+              </button>
+            ))}
+          </span>
+          <span className="cap" role="status">{filtered ? "显示 " + rows.length + " / " + securities.length + " 只" : securities.length + " 只证券"}</span>
+          <span className="sp" />
+          <button className="btn" type="button" onClick={() => setRepair({ action: "position" })}>＋ 补持仓</button>
+        </div>
+        <HoldingsTotals {...{ d, rows, filtered }} />
+        {!rows.length && <p className="card cap">没有匹配的证券。</p>}
+        <div className="col">
+          {rowsByAccount.map(({ account, rows }) => (
+            <AccountCard key={account.id} current={Boolean(d.currentMarket)}
+              {...{ account, rows, filtered, sort, setSort, selectedId, arrival, select, selectCash }} />
           ))}
-        </span>
-        <span className="cap" role="status">{filtered ? "显示 " + rows.length + " / " + securities.length + " 只" : securities.length + " 只证券"}</span>
-        <span className="sp" />
-        <button className="btn" type="button" onClick={() => setRepair({ action: "position" })}>＋ 补持仓</button>
+        </div>
       </div>
-      <HoldingsTotals {...{ d, rows, filtered, day }} />
-      {!rows.length && <p className="card cap">没有匹配的证券。</p>}
-      <Grid
-        layout={{
-          1: [ids],
-          ...(split > 0 && { 3: [{ weight: 1, items: ids.slice(0, split) }, { weight: 1, items: ids.slice(split) }] }),
-        }}
-        panels={panels}
-      />
+      {aspect === "21:9" && (
+        <div ref={setDock} className="holdings-inspector">
+          {!cash && !security && <section className="card"><h2>持仓明细</h2><p className="cap">选择一项证券或现金查看明细。</p></section>}
+        </div>
+      )}
+      {cash && <CashDetail account={cash} onClose={closeDetail} dock={dock} />}
       {security && (
         <SecurityDetail
           d={d}
           security={security}
-          day={day}
           onClose={closeDetail}
+          dock={dock}
           openRepair={(next) => setRepair({ ...next, scrollTop: root.current?.closest(".pane")?.scrollTop })}
         />
       )}
@@ -474,5 +516,31 @@ export function Holdings({ d, initial = {}, run, historical }) {
         />
       )}
     </div>
+  );
+}
+
+function CashDetail({ account, onClose, dock }) {
+  const rows = account.rows.filter((row) => row.type === "cash");
+  return (
+    <Detail title={account.name + " · 现金"} onClose={onClose} wide dock={dock}>
+      <div className="holdings-detail">
+        <p className="cap">现金市值 {aud(account.valuation.cash, 2)}</p>
+        {rows.length ? (
+          <table>
+            <thead><tr><th>币种</th><th>原币余额</th><th>市值（AUD）</th></tr></thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.id}>
+                  <th scope="row">{row.localCurrency}</th>
+                  <td>{fmt(row.nativeValue ?? row.rawQuantity, 2)}</td>
+                  <td>{aud(row.audValue, 2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <p className="cap">暂无现金余额。</p>}
+        {account.cashUnverified && <p className="warn">现金余额待核对。</p>}
+      </div>
+    </Detail>
   );
 }

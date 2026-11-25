@@ -54,6 +54,24 @@ async function launch() {
     // The overview opens on 今年以来.
     await page("总览");
     assert.deepEqual(await pressed(), ["今年以来"]);
+    const labels = ["本日", "本周", "本月", "近 3 月", "近 6 月", "今年以来", "近一年", "全部"];
+    assert.deepEqual(await p.getByRole("group", { name: "期间" }).getByRole("button").allTextContents(), labels);
+    for (const label of labels) {
+      await preset(label).click();
+      await p.getByRole("region", { name: "关键数字" }).getByText(label + "投资盈亏", { exact: true }).waitFor();
+      assert.deepEqual(await pressed(), [label]);
+    }
+    await page("收益复盘");
+    assert.deepEqual(await pressed(), ["全部"]);
+    await preset("本周").click();
+    await page("总览");
+    assert.deepEqual(await pressed(), ["本周"]);
+    await preset("今年以来").click();
+
+    await head.getByRole("button", { name: "账户范围 · 全部账户" }).focus();
+    await p.keyboard.press("Tab");
+    assert.ok(await head.getByLabel("估值日").evaluate((input) => input === document.activeElement));
+    assert.equal(await head.locator(".date-pick").evaluate((label) => getComputedStyle(label).outlineStyle), "solid");
 
     // A past valuation date shows 「正在查看」 beside the title until 回到今天.
     await head.getByLabel("估值日").fill("2025-12-31");
@@ -104,6 +122,34 @@ async function launch() {
     await head.getByRole("button", { name: "账户范围 · 全部账户" }).waitFor();
     assert.deepEqual(await pressed(), ["今年以来"]);
     assert.equal(await head.getByText("正在查看").count(), 0);
+
+    // A valid long account name reflows in the account list and stays inside the page head.
+    const longName = "Portfolio " + "W".repeat(109);
+    await p.evaluate((name) => window.portfolio.account({ name, currency: "AUD" }), longName);
+    await p.reload();
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1024, 640));
+    await head.getByRole("button", { name: "账户范围 · 全部账户" }).click();
+    const accounts = p.getByRole("dialog", { name: "账户范围" });
+    assert.ok(await accounts.evaluate((el) => el.scrollWidth <= el.clientWidth));
+    await accounts.getByLabel("IBKR", { exact: true }).uncheck();
+    await accounts.getByLabel("Webull Australia").uncheck();
+    await accounts.getByLabel(longName).check();
+    await accounts.getByRole("button", { name: "应用", exact: true }).click();
+    await head.getByRole("button", { name: "账户范围 · " + longName }).waitFor();
+    await head.getByLabel("估值日").fill("2025-12-31");
+    await head.getByText("正在查看 2025-12-31").waitFor();
+    assert.ok(await head.evaluate((el) => el.scrollWidth <= el.clientWidth));
+
+    await p.getByRole("navigation", { name: "页面" }).getByRole("button", { name: "导入与对账", exact: true }).click();
+    const checkTab = p.getByRole("button", { name: "和券商结单核对", exact: true });
+    await checkTab.click();
+    const account = p.getByRole("main").getByLabel("账本账户");
+    await account.selectOption({ label: longName });
+    assert.ok(await p.getByRole("main").evaluate((el) => el.scrollWidth <= el.clientWidth),
+      "Long account names must not widen the imports page");
+    const [tabBox, accountBox] = await Promise.all([checkTab.boundingBox(), account.boundingBox()]);
+    assert.ok(Math.abs(tabBox.y + tabBox.height / 2 - accountBox.y - accountBox.height / 2) < 1,
+      "The account selector stays aligned with the import tabs");
 
     console.log("Global filters verified: page head, as-of chip, shared period, restart memory and book switch.");
   } catch (e) {
