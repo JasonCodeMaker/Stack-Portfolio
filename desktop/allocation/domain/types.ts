@@ -249,7 +249,6 @@ export interface AllocationSettings {
   selectionInitialized: boolean;
   selectedAccountIds: string[];
   acknowledgedAccountIds: string[];
-  liveFxPolling: boolean;
   providerModes: Record<string, "auto" | "pinned">;
   pinnedProviders: Record<string, string>;
   providerIdentities: Record<string, string>;

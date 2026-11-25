@@ -1,5 +1,6 @@
 import { applyAlias, canonicalCompanyIdentity, canonicalEtfKey, canonicalIdentity, normalizeIdentityPart, preferUsListingKey, usListingKey } from "./identifiers";
 import type { CompanyIdentity } from "./identifiers";
+import { normalizeSectorName } from "./portfolio";
 import type {
   AssetType,
   EtfHoldingsSnapshot,
@@ -98,9 +99,10 @@ function consolidateShareClasses(
       continue;
     }
     const existing = companies.get(company.key);
+    const sector = normalizeSectorName(holding.sector);
     if (existing) {
       existing.weight += holding.weight;
-      existing.sector = mergeMetadata(existing.sector, holding.sector);
+      existing.sector = mergeMetadata(existing.sector, sector);
       existing.country = mergeMetadata(existing.country, holding.country);
       continue;
     }
@@ -108,6 +110,7 @@ function consolidateShareClasses(
       ...holding,
       symbol: company.ticker,
       name: company.label,
+      sector,
       company,
     };
     companies.set(company.key, consolidated);
@@ -141,13 +144,14 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
     status?: string;
   }): void {
     const existing = rows.get(args.key);
+    const sector = normalizeSectorName(args.sector);
     if (existing) {
       if (args.direct) existing.directAud += args.amountAud;
       else existing.viaEtfsAud += args.amountAud;
       existing.totalAud += args.amountAud;
       existing.sources.push(args.source);
       existing.ticker = existing.ticker ?? args.ticker;
-      existing.sector = mergeMetadata(existing.sector, args.sector);
+      existing.sector = mergeMetadata(existing.sector, sector);
       existing.country = mergeMetadata(existing.country, args.country);
       existing.status = mergeMetadata(existing.status, args.status);
       return;
@@ -161,7 +165,7 @@ export function buildExposureModel(input: ExposureInput): ExposureModel {
       viaEtfsAud: args.direct ? 0 : args.amountAud,
       totalAud: args.amountAud,
       portfolioWeight: null,
-      sector: args.sector,
+      sector,
       country: args.country,
       status: args.status,
       sources: [args.source],

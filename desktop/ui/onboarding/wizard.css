@@ -1,0 +1,178 @@
+.ob {
+  height: 100dvh;
+  overflow: auto;
+  background: var(--bg);
+  color: var(--l1);
+  font: 15px/1.55 var(--text);
+}
+.ob :is(figure, h1, h2, h3, p, ol) {
+  margin: 0;
+}
+.ob h1 {
+  line-height: 1.18;
+  color: var(--l1);
+}
+.ob h1:focus {
+  outline: none;
+}
+.ob button,
+.ob select,
+.ob input {
+  font: inherit;
+  color: var(--l1);
+  background: var(--surface);
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+}
+.ob button {
+  cursor: pointer;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 14px;
+}
+.ob button:disabled {
+  opacity: 0.52;
+  cursor: default;
+}
+.ob button:enabled:hover {
+  border-color: var(--accent);
+}
+.ob :is(button, summary, select, input, a):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.ob .ob-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  font-weight: 650;
+}
+.ob-top,
+.ob-wordmark,
+.ob-actions,
+.ob-help,
+.ob-drawer-label,
+.ob-drawer-label span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.ob-top,
+.ob-drawer-label {
+  justify-content: space-between;
+}
+.ob-top {
+  border-bottom: 1px solid var(--sep);
+  gap: 14px;
+}
+.ob-wordmark {
+  font-weight: 650;
+  font-size: 17px;
+  white-space: nowrap;
+}
+.ob-track {
+  display: flex;
+  gap: 4px;
+}
+.ob-track i {
+  height: 4px;
+  border-radius: 5px;
+  flex: 1;
+}
+.ob-track .on {
+  background: var(--accent);
+}
+.ob-kicker,
+.ob-checkpoint {
+  color: var(--accent);
+  font-weight: 600;
+}
+.ob-lead,
+.ob small,
+.ob-help button {
+  color: var(--l2);
+}
+.ob-actions,
+.ob-help {
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.ob-help {
+  gap: 18px;
+}
+.ob-help button {
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+}
+.ob-broker-picks,
+.ob-form {
+  display: grid;
+  gap: 12px;
+}
+.ob-broker-picks button {
+  width: 100%;
+  text-align: left;
+  justify-content: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+}
+.ob-broker-picks :is(small, strong) {
+  display: block;
+}
+.ob-broker-picks button > svg:first-child {
+  color: var(--accent);
+}
+.ob-broker-picks button > svg:last-child {
+  margin-left: auto;
+}
+.ob-form {
+  margin-bottom: 15px;
+}
+.ob-form .field {
+  display: grid;
+  gap: 5px;
+  font-size: 14px;
+  color: var(--l2);
+}
+.ob-form :is(input, select) {
+  width: 100%;
+  padding: 8px 12px;
+  min-height: 40px;
+}
+.ob-checkpoint {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 14px;
+}
+.ob-checkpoint svg {
+  align-self: flex-start;
+  flex: none;
+  margin-top: 4px;
+}
+.ob .wizard-error {
+  margin-top: 12px;
+  color: var(--down);
+  overflow-wrap: anywhere;
+}
+.ob-studio-accounts h2 {
+  font-size: 15px;
+  background: var(--soft);
+  padding: 10px 16px;
+}
+.ob-studio-accounts p {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 10px 16px;
+  flex-wrap: wrap;
+}
+.binding-row {
+  flex-wrap: wrap;
+  border-top: 1px solid var(--sep);
+  padding: 8px 0;
+}

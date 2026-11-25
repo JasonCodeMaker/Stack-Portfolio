@@ -108,7 +108,7 @@ function sourceLinkPrefix(sourceKey: string): string {
   return `${SOURCE_LINK_PREFIX}${encodeURIComponent(sourceKey)}:`;
 }
 
-function linkedActivityId(keys: Set<string>, sourceKey: string): string | undefined {
+export function linkedActivityId(keys: Set<string>, sourceKey: string): string | undefined {
   const prefix = sourceLinkPrefix(sourceKey);
   const link = [...keys].find((key) => key.startsWith(prefix));
   if (!link) return undefined;

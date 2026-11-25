@@ -1,6 +1,15 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const actions = [
   "home",
+  "setTheme",
+  "setLanguage",
+  "beginAccountSetup",
+  "checkAccountSetup",
+  "bindAccount",
+  "leaveAccountSetup",
+  "disconnectAccount",
+  "displayState",
+  "setUserScale",
   "openDemo",
   "openReal",
   "newBook",
@@ -16,6 +25,8 @@ const actions = [
   "account",
   "history",
   "manual",
+  "recordHolding",
+  "rememberListing",
   "preview",
   "commit",
   "compare",
@@ -34,7 +45,6 @@ const actions = [
   "saveConnection",
   "connectWebull",
   "resetSync",
-  "refreshMarket",
   "autoRefresh",
   "backup",
   "selectBackup",
@@ -42,10 +52,17 @@ const actions = [
 ];
 contextBridge.exposeInMainWorld(
   "portfolio",
-  Object.fromEntries(
-    [...actions, "amend", "corrections"].map((name) => [
-      name,
-      (args = {}) => ipcRenderer.invoke("portfolio:" + name, args),
-    ]),
-  ),
+  {
+    ...Object.fromEntries(
+      [...actions, "amend", "corrections"].map((name) => [
+        name,
+        (args = {}) => ipcRenderer.invoke("portfolio:" + name, args),
+      ]),
+    ),
+    onDisplayState(callback) {
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on("portfolio:displayState", listener);
+      return () => ipcRenderer.removeListener("portfolio:displayState", listener);
+    },
+  },
 );

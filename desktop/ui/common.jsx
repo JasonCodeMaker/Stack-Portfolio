@@ -1,5 +1,6 @@
-import React, { useEffect, useRef } from "react";
+import React, { useLayoutEffect, useRef } from "react";
 import { X, Inbox } from "lucide-react";
+import { tMain, useI18n } from "./i18n.jsx";
 export const api = window.portfolio;
 export const fmt = (n, digits = 0) =>
   n == null || !Number.isFinite(Number(n))
@@ -26,15 +27,24 @@ export const tone = (n, digits = 2) => {
   const sign = n == null || !Number.isFinite(Number(n)) ? "" : signOf(n, digits, true);
   return sign === "+" ? "gain" : sign === "−" ? "loss" : "";
 };
-export function Delta({ amount, rate, digits = 2 }) {
+const directionMark = (direction) => direction === "gain" ? "▲" : direction === "loss" ? "▼" : "";
+const rateText = (rate, unit = "%") => signedPct(rate).replace("%", unit);
+
+export function directedPct(rate, unit) {
+  const mark = directionMark(tone(rate, 4));
+  return (mark ? mark + " " : "") + rateText(rate, unit);
+}
+
+export function Delta({ amount, rate, digits = 2, currency = true, rateUnit }) {
+  const { t } = useI18n();
   const basis = amount ?? rate,
     direction = tone(basis, amount == null ? 4 : digits);
   if (basis == null) return <span className="delta">—</span>;
   return (
     <span className={"delta " + direction}>
-      {direction && <i aria-hidden="true">{direction === "gain" ? "▲" : "▼"}</i>}
-      {amount != null && signedAud(amount, digits)}
-      {rate != null && <em>{amount != null ? "（" + signedPct(rate) + "）" : signedPct(rate)}</em>}
+      {direction && <i aria-hidden="true">{directionMark(direction)}</i>}
+      {amount != null && (currency ? signedAud(amount, digits) : signedAud(amount, digits).replace("A$", ""))}
+      {rate != null && <em>{amount != null ? t("common.openParen") + rateText(rate, rateUnit) + t("common.closeParen") : rateText(rate, rateUnit)}</em>}
     </span>
   );
 }
@@ -62,10 +72,12 @@ export const types = {
   TRANSFER_OUT: "转出",
 };
 export function Modal({ title, children, close, wide = false }) {
+  const { t } = useI18n();
   const ref = useRef(null);
-  useEffect(() => {
-    ref.current.showModal();
-    return () => ref.current?.close();
+  useLayoutEffect(() => {
+    const dialog = ref.current;
+    dialog.showModal();
+    return () => dialog.close();
   }, []);
   return (
     <dialog
@@ -73,6 +85,7 @@ export function Modal({ title, children, close, wide = false }) {
       className={wide ? "wide" : ""}
       aria-label={title}
       onCancel={(e) => {
+        e.stopPropagation();
         e.preventDefault();
         close();
       }}
@@ -83,7 +96,7 @@ export function Modal({ title, children, close, wide = false }) {
       <div className="modal-inner">
         <header>
           <h2>{title}</h2>
-          <button aria-label="关闭" className="icon" onClick={close}>
+          <button aria-label={t("app.close")} className="icon" onClick={close}>
             <X size={18} />
           </button>
         </header>
@@ -126,7 +139,7 @@ export function Empty({ children }) {
   );
 }
 // A heading written as [label, "num"] aligns right, over a column of figures.
-export function Table({ head, children }) {
+export function Table({ head, onKeyDown, children }) {
   return (
     <div className="table-scroll">
       <table>
@@ -139,7 +152,7 @@ export function Table({ head, children }) {
             ))}
           </tr>
         </thead>
-        <tbody>{children}</tbody>
+        <tbody onKeyDown={onKeyDown}>{children}</tbody>
       </table>
     </div>
   );
@@ -158,8 +171,10 @@ export function Card({ title, action, children }) {
   );
 }
 export function AccountSelect({ data, value, set }) {
+  const { t } = useI18n();
   return (
-    <select aria-label="账本账户" value={value} onChange={(e) => set(e.target.value)}>
+    <select aria-label={t("app.accountSelectAria")} value={value || ""} onChange={(e) => set(e.target.value)}>
+      {!value && <option value="">{t("app.selectAccount")}</option>}
       {data.accounts
         .filter((a) => a.active)
         .map((a) => (
@@ -175,9 +190,9 @@ export function parseCash(text) {
   for (const row of text.trim().split(/\r?\n/).filter(Boolean)) {
     const p = row.split(/[,，\s]+/).filter(Boolean);
     if (p.length !== 2 || !/^[-+]?\d+(?:\.\d+)?$/.test(p[1]))
-      throw Error("每行填写币种与余额，例如 AUD 7600。");
+      throw Error(tMain("common.cashLineError"));
     const code = p[0].toUpperCase();
-    if (code in out) throw Error("现金币种重复。");
+    if (code in out) throw Error(tMain("common.cashDuplicateError"));
     out[code] = p[1];
   }
   return out;

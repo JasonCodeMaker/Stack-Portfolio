@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { reconcileAccountSelection } from "../../allocation/storage/settings";
+import { loadAllocationSettings, reconcileAccountSelection } from "../../allocation/storage/settings";
 import type { AllocationSettings, PortfolioAccount } from "../../allocation/domain/types";
 
 const accounts: PortfolioAccount[] = [
@@ -12,13 +12,23 @@ const settings: AllocationSettings = {
   selectionInitialized: true,
   selectedAccountIds: ["ibkr"],
   acknowledgedAccountIds: ["ibkr", "stake"],
-  liveFxPolling: true,
   providerModes: {},
   pinnedProviders: {},
   providerIdentities: {},
   typeOverrides: {},
   aliases: {},
 };
+
+it("returns a retired ETF source to automatic while preserving other pinned providers", async () => {
+  const legacy = JSON.stringify({
+    ...settings,
+    providerModes: { retired: "pinned", current: "pinned" },
+    pinnedProviders: { retired: "alpha-vantage", current: "ishares" },
+  });
+  const result = await loadAllocationSettings({ api: { storage: { get: async () => legacy } } } as never);
+  expect(result.providerModes).toEqual({ current: "pinned" });
+  expect(result.pinnedProviders).toEqual({ current: "ishares" });
+});
 
 describe("account selection", () => {
   it("includes every active account on first use", () => {

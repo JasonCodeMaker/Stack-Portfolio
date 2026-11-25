@@ -2,6 +2,7 @@ import { EtfCache } from "./allocation/storage/etfCache";
 import { storageContext } from "./flows.js";
 import { ALLOCATION, preference, putPref, saveEvent, savePrice, transaction } from "./ledger.js";
 import { closingDay, shiftDay } from "./marketDays.js";
+import { tMain } from "./i18n/index.js";
 
 export const demoDay = "2026-10-30";
 export const demoCsv =
@@ -56,14 +57,14 @@ export async function seedDemo(db) {
         amount: "1000",
         date: "2026-10-16",
         group: "demo-paired",
-        comment: "两个账户之间划转",
+        comment: tMain("demo.transferComment"),
         status: "POSTED",
       });
     }
     db.prepare("INSERT INTO sp_checks VALUES(?,?,?)").run(
       "demo-webull",
       "2026-10-27",
-      "Webull 只有成交数据，现金及期间盈亏待月结单核对",
+      tMain("demo.webullNote"),
     );
     putPref(db, "app", "demo", "1");
   });
@@ -75,6 +76,11 @@ export async function seedDemo(db) {
         ["AAPL", "Apple", 0.07, "XNAS", "Technology"],
         ["MSFT", "Microsoft", 0.06, "XNAS", "Technology"],
         ["NVDA", "NVIDIA", 0.065, "XNAS", "Technology"],
+        ["AMZN", "Amazon", 0.035, "XNAS", "Consumer Discretionary"],
+        ["JPM", "JPMorgan Chase", 0.018, "XNYS", "Financials"],
+        ["LLY", "Eli Lilly", 0.015, "XNYS", "Health Care"],
+        ["V", "Visa", 0.011, "XNYS", "Financials"],
+        ["CAT", "Caterpillar", 0.006, "XNYS", "Industrials"],
       ],
     ],
     [
@@ -82,6 +88,11 @@ export async function seedDemo(db) {
       [
         ["BHP", "BHP Group", 0.09, "XASX", "Materials"],
         ["CBA", "Commonwealth Bank", 0.115, "XASX", "Financials"],
+        ["CSL", "CSL", 0.05, "XASX", "Health Care"],
+        ["NAB", "National Australia Bank", 0.04, "XASX", "Financials"],
+        ["WES", "Wesfarmers", 0.032, "XASX", "Consumer Discretionary"],
+        ["TLS", "Telstra", 0.018, "XASX", "Communication Services"],
+        ["WOW", "Woolworths", 0.012, "XASX", "Consumer Staples"],
       ],
     ],
   ])
@@ -114,7 +125,26 @@ export async function seedDemo(db) {
 }
 
 function seedDemoReview(db) {
-  if (preference(db, "app", "demo") !== "1" || preference(db, "app", "demo-review-v1")) return;
+  if (preference(db, "app", "demo") !== "1") return;
+  if (!preference(db, "app", "demo-costs-v1")) {
+    transaction(db, () => {
+      const start = "2026-09-30";
+      const add = db.prepare(`INSERT INTO sp_holding_evidence
+        (account,asset,day,quantity,reported,local_cost,aud_cost,reference)
+        SELECT @account,@asset,@start,@units,0,@local,@aud,@reference
+        FROM sp_anchors WHERE account=@account AND day=@start
+          AND json_extract(positions,'$.' || @asset)=@units
+          AND NOT EXISTS (SELECT 1 FROM sp_holding_evidence WHERE account=@account AND asset=@asset)
+          AND NOT EXISTS (SELECT 1 FROM sp_events WHERE account=@account AND day<=@start AND json_extract(data,'$.assetId')=@asset)`);
+      for (const [account, asset, units, local, aud] of [
+        ["demo-ibkr", "aapl", "100", "18000", "27000"],
+        ["demo-ibkr", "ivv", "100", "32000", "48000"],
+        ["demo-webull", "a200", "200", "27300", "27300"],
+      ]) add.run({account, asset, start, units, local, aud, reference: tMain("demo.costEvidence", { asset: asset.toUpperCase() })});
+      putPref(db, "app", "demo-costs-v1", "1");
+    });
+  }
+  if (preference(db, "app", "demo-review-v1")) return;
   transaction(db, () => {
     const first = "2026-09-30";
     const insert = db.prepare("INSERT OR IGNORE INTO sp_benchmark_levels VALUES(?,?,?,?)");

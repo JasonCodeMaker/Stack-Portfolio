@@ -25,12 +25,14 @@ export interface IbkrFlexAudit {
   openPositionValueByCurrency: Record<string, number>;
   reportedNavBase?: number;
   fxExecutions: number;
+  conversionRates?: Array<{ day: string; from: string; to: string; rate: string }>;
   openPositions: number;
   statementPositions?: Array<{symbol: string; quantity: string; currency: string; mic?: string; price?: string; fxToBase?: string}>;
   warnings: string[];
 }
 
 export interface IbkrFlexReport {
+  brokerAccountId?: string;
   activities: BrokerActivity[];
   audit: IbkrFlexAudit;
 }
@@ -80,7 +82,28 @@ function isExecution(row: Record<string, string>): boolean {
   return !row.levelOfDetail || row.levelOfDetail.toUpperCase() === "EXECUTION";
 }
 
-function fxConversion(row: Record<string, string>): BrokerActivity[] | undefined {
+function positiveDecimal(value?: string): string | undefined {
+  return value && Number.isFinite(Number(value)) && Number(value) > 0 ? value.trim() : undefined;
+}
+
+function executionEvidence(row: Record<string, string>, baseCurrency?: string) {
+  const tradeDate = flexDay(row.tradeDate || row.dateTime);
+  const reportDate = flexDay(row.reportDate);
+  const currency = row.currency?.toUpperCase();
+  const fxRateToBase = baseCurrency && positiveDecimal(row.fxRateToBase);
+  const closePrice = row.assetCategory === "STK" && positiveDecimal(row.closePrice);
+  const isFx = row.assetCategory === "CASH";
+  if (!tradeDate || !currency || !(fxRateToBase || closePrice || isFx)) return {};
+  return { ibkrExecution: {
+    tradeDate, currency, ...(reportDate && { reportDate }),
+    ...(fxRateToBase && { baseCurrency, fxRateToBase }), ...(closePrice && { closePrice }),
+    ...(isFx && { pair: row.symbol, side: row.buySell, ...(positiveDecimal(row.tradePrice) && { tradePrice: row.tradePrice }),
+      commissionCurrency: row.ibCommissionCurrency || row.currency,
+      ...(/(?:^|[;,\s])AFx(?:$|[;,\s])/i.test(row.notes || "") && { autoFx: true }) }),
+  } };
+}
+
+function fxConversion(row: Record<string, string>, accountBase?: string): BrokerActivity[] | undefined {
   if (row.assetCategory?.toUpperCase() !== "CASH") return undefined;
   if (!isExecution(row)) return [];
   const currencies = row.symbol?.trim().toUpperCase().split(/[./]/).filter(Boolean);
@@ -110,6 +133,7 @@ function fxConversion(row: Record<string, string>): BrokerActivity[] | undefined
   const timing = executionTiming(row);
   const metadata = {
     ...timing.metadata,
+    ...executionEvidence(row, accountBase),
     flow: { is_external: false },
     fx: {
       sourceCurrency,
@@ -248,7 +272,7 @@ function cashImportRevision(row: Record<string, string>, type: BrokerActivity["a
   return undefined;
 }
 
-function assertSingleBrokerAccount(xml: string): void {
+function singleBrokerAccount(xml: string): string | undefined {
   const accountIds = new Set([
     ...elements(xml, "FlexStatement"),
     ...elements(xml, "AccountInformation"),
@@ -258,11 +282,11 @@ function assertSingleBrokerAccount(xml: string): void {
   if (accountIds.size > 1) {
     throw new Error("IBKR Flex response must contain exactly one broker account. Create a separate Query and mapping for each account.");
   }
+  return [...accountIds][0];
 }
 
-function parseIbkrActivities(xml: string): BrokerActivity[] {
+function parseIbkrActivities(xml: string, baseCurrency?: string): BrokerActivity[] {
   if (!/<FlexStatement\b/i.test(xml)) throw new Error("IBKR response is not an Activity Flex XML statement.");
-  assertSingleBrokerAccount(xml);
   const activities: BrokerActivity[] = [];
   const tradeRows = elements(xml, "Trade");
   const taxedTradeIds = new Set(tradeRows
@@ -272,7 +296,7 @@ function parseIbkrActivities(xml: string): BrokerActivity[] {
 
   for (const row of tradeRows) {
     if (!isExecution(row)) continue;
-    const conversion = fxConversion(row);
+    const conversion = fxConversion(row, baseCurrency);
     if (conversion) {
       activities.push(...conversion);
       continue;
@@ -280,11 +304,13 @@ function parseIbkrActivities(xml: string): BrokerActivity[] {
     const rawSymbol = row.symbol?.trim();
     if (!rawSymbol || !row.buySell) continue;
     const symbol = canonicalSecuritySymbol(rawSymbol);
+    const timing = executionTiming(row);
     activities.push({
       broker: "ibkr",
       brokerRecordId: row.ibExecID || row.tradeID || row.transactionID || stableFallback([row.accountId, row.dateTime, symbol, row.buySell, row.quantity, row.tradePrice]),
       activityType: row.buySell.toUpperCase().startsWith("B") ? "BUY" : "SELL",
-      ...executionTiming(row),
+      ...timing,
+      metadata: { ...timing.metadata, ...executionEvidence(row, baseCurrency) },
       symbol,
       symbolName: row.description,
       exchangeMic: mic(row.listingExchange || row.exchange),
@@ -357,25 +383,35 @@ function parseIbkrActivities(xml: string): BrokerActivity[] {
 
 function flexDay(value?: string): string | undefined {
   const digits = value?.replace(/\D/g, "") ?? "";
-  return digits.length >= 8 ? `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}` : undefined;
+  if (digits.length < 8) return undefined;
+  const date = `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+  const stamp = Date.parse(date);
+  return Number.isFinite(stamp) && new Date(stamp).toISOString().slice(0, 10) === date ? date : undefined;
 }
 
 export function parseIbkrFlexReport(xml: string): IbkrFlexReport {
-  const activities = parseIbkrActivities(xml);
+  const brokerAccountId = singleBrokerAccount(xml);
   const statement = elements(xml, "FlexStatement")[0] ?? {};
   const account = elements(xml, "AccountInformation")[0] ?? {};
   const baseCurrency = (statement.baseCurrency || account.currency)?.toUpperCase() || undefined;
+  const activities = parseIbkrActivities(xml, baseCurrency);
   const from = flexDay(statement.fromDate);
   const to = flexDay(statement.toDate);
+  const atReportEnd = (row: Record<string, string>) => {
+    const reported = row.reportDate || row.toDate;
+    return !reported || !to || flexDay(reported) === to;
+  };
   const endingCashByCurrency: Record<string, number> = {};
-  for (const row of elements(xml, "CashReportCurrency")) {
+  for (const row of elements(xml, "CashReportCurrency").filter(atReportEnd)) {
     const currency = row.currency?.toUpperCase();
     const endingCash = signedNumber(row.endingCash);
     if (!currency || currency === "BASE_SUMMARY" || row.levelOfDetail?.toUpperCase() === "BASECURRENCY" || endingCash === undefined) continue;
     endingCashByCurrency[currency] = endingCash;
   }
   const openPositionValueByCurrency: Record<string, number> = {};
-  const allOpenPositionRows = elements(xml, "OpenPosition");
+  const positionHistory = elements(xml, "OpenPosition");
+  const allOpenPositionRows = positionHistory.filter(atReportEnd);
+  const hasEndingPositions = /<OpenPositions\b/i.test(xml) && (!positionHistory.length || allOpenPositionRows.length > 0);
   const summaryOpenPositionRows = allOpenPositionRows.filter((row) => row.levelOfDetail?.toUpperCase() === "SUMMARY");
   const openPositionRows = summaryOpenPositionRows.length > 0 ? summaryOpenPositionRows : allOpenPositionRows;
   for (const row of openPositionRows) {
@@ -385,19 +421,21 @@ export function parseIbkrFlexReport(xml: string): IbkrFlexReport {
     openPositionValueByCurrency[currency] = (openPositionValueByCurrency[currency] ?? 0) + positionValue;
   }
 
-  const navRows = elements(xml, "ChangeInNAV");
-  const nav = navRows.find((row) => !baseCurrency || row.currency?.toUpperCase() === baseCurrency) ?? navRows[0];
-  const equityRows = elements(xml, "EquitySummaryByReportDateInBase");
+  const navRows = elements(xml, "ChangeInNAV").filter(atReportEnd);
+  const nav = navRows.find(row => row.currency?.toUpperCase() === baseCurrency)
+    ?? navRows.find(row => !row.currency || row.currency.toUpperCase() === "BASE_SUMMARY");
+  const equityRows = elements(xml, "EquitySummaryByReportDateInBase").filter(atReportEnd);
   const reportedNavBase = signedNumber(nav?.endingValue)
     ?? signedNumber(equityRows.at(-1)?.total);
   const warnings: string[] = [];
   if (!baseCurrency) warnings.push("IBKR Flex Query is missing Account Information currency.");
   if (Object.keys(endingCashByCurrency).length === 0) warnings.push("IBKR Flex Query is missing Cash Report currency balances; cash cannot be reconciled.");
-  if (!/<OpenPositions\b/i.test(xml)) warnings.push("IBKR Flex Query is missing Open Positions; broker marks cannot be compared with ledger quotes.");
+  if (!hasEndingPositions) warnings.push("IBKR Flex Query is missing Open Positions at period end; broker marks cannot be compared with ledger quotes.");
   if (reportedNavBase === undefined) warnings.push("IBKR Flex Query is missing Change in NAV (or NAV in Base); total value cannot be reconciled.");
 
   return {
     activities,
+    brokerAccountId,
     audit: {
       period: from && to ? { from, to } : undefined,
       baseCurrency,
@@ -406,8 +444,15 @@ export function parseIbkrFlexReport(xml: string): IbkrFlexReport {
       openPositionValueByCurrency,
       reportedNavBase,
       fxExecutions: elements(xml, "Trade").filter((row) => row.assetCategory?.toUpperCase() === "CASH" && isExecution(row)).length,
+      conversionRates: elements(xml, "ConversionRate").flatMap(row => {
+        const day = flexDay(row.reportDate || row.date || row.dateTime);
+        const rate = positiveDecimal(row.rate);
+        const from = row.fromCurrency?.toUpperCase(), to = row.toCurrency?.toUpperCase();
+        return day && rate && from && to && /^[A-Z]{3}$/.test(from) && /^[A-Z]{3}$/.test(to) && from !== to
+          ? [{ day, from, to, rate }] : [];
+      }),
       openPositions: openPositionRows.length,
-      statementPositions: /<OpenPositions\b/i.test(xml) ? openPositionRows
+      statementPositions: hasEndingPositions ? openPositionRows
         .filter(row => row.symbol && row.position !== undefined && row.currency)
         .map(row => ({symbol: canonicalSecuritySymbol(row.symbol), quantity: row.position, currency: row.currency,
           mic: mic(row.listingExchange || row.exchange), price: row.markPrice, fxToBase: row.fxRateToBase})) : undefined,

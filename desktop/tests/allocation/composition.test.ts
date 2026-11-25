@@ -37,23 +37,22 @@ function snapshot(etfKey: string, holdings: UnderlyingHolding[]): EtfHoldingsSna
 }
 
 describe("portfolio composition", () => {
-  it("folds the tail of every fund into a single Other companies slice", () => {
+  it("lists every company above 1% and combines smaller holdings across sectors and funds", () => {
+    const large = Array.from({ length: 13 }, (_, index) => stock(`L${index}`, 0.075));
     const exposure = buildExposureModel({
       holdings: [etf("AAA", 1000), etf("BBB", 1000)],
       snapshots: new Map([
-        ["XASX:AAA", snapshot("XASX:AAA", [stock("A1", 0.4), stock("A2", 0.3), stock("A3", 0.2), stock("A4", 0.1)])],
-        ["XASX:BBB", snapshot("XASX:BBB", [stock("B1", 0.4), stock("B2", 0.3), stock("B3", 0.2), stock("B4", 0.1)])],
+        ["XASX:AAA", snapshot("XASX:AAA", [...large, stock("EXACT", 0.02), stock("SMALL", 0.005, "Financials")])],
+        ["XASX:BBB", snapshot("XASX:BBB", [stock("BIG", 0.96), stock("ABOVE", 0.02002), stock("BELOW", 0.01998, "Energy")])],
       ]),
       totalAud: 2000,
     });
 
-    const slices = buildComposition(exposure, 3);
+    const { named, otherAud } = buildComposition(exposure, 2000);
 
-    const others = slices.filter((slice) => slice.kind === "other-companies");
-    expect(others).toHaveLength(1);
-    expect(others[0].label).toBe("Other companies");
-    expect(others[0].memberCount).toBe(5);
-    expect(new Set(slices.map((slice) => slice.label)).size).toBe(slices.length);
+    expect(named.map((slice) => slice.ticker)).toEqual(["BIG", ...large.map((row) => row.symbol), "ABOVE"]);
+    expect(otherAud).toBeCloseTo(20 + 5 + 19.98);
+    expect(named.reduce((sum, row) => sum + row.totalAud, otherAud)).toBeCloseTo(2000);
   });
 
   it("ranks companies across the whole portfolio so none loses value hidden in one fund's tail", () => {
@@ -67,9 +66,20 @@ describe("portfolio composition", () => {
       totalAud: 2000,
     });
 
-    const nflx = buildComposition(exposure, 3).find((slice) => slice.ticker === "NFLX");
+    const nflx = buildComposition(exposure, 2000).named.find((slice) => slice.ticker === "NFLX");
 
-    expect(nflx?.valueAud).toBeCloseTo(50 + 500);
+    expect(nflx?.totalAud).toBeCloseTo(50 + 500);
+  });
+
+  it("folds exact 1% ETF exposures into Other despite floating-point noise", () => {
+    const exposure = buildExposureModel({
+      holdings: [etf("AAA", 0.1), holding("cash", "AUD", "cash", 0.9)],
+      snapshots: new Map([["XASX:AAA", snapshot("XASX:AAA", [stock("EXACT", 0.1), stock("BIG", 0.9)])]]),
+      totalAud: 1,
+    });
+    const { named, otherAud } = buildComposition(exposure, 1);
+    expect(named.map((row) => row.ticker)).not.toContain("EXACT");
+    expect(otherAud).toBeCloseTo(0.01);
   });
 
   it("adds up to the whole portfolio with cash and unopened funds as their own slices", () => {
@@ -84,41 +94,67 @@ describe("portfolio composition", () => {
       totalAud: 2000,
     });
 
-    const slices = buildComposition(exposure, 12);
+    const { named, otherAud, waiting } = buildComposition(exposure, 2000);
 
-    expect(slices.reduce((sum, slice) => sum + (slice.weight ?? 0), 0)).toBeCloseTo(1);
-    expect(slices.filter((slice) => slice.kind === "cash")).toHaveLength(1);
-    expect(slices.find((slice) => slice.kind === "cash")?.valueAud).toBeCloseTo(200 + 100);
-    expect(slices.find((slice) => slice.kind === "unresolved")).toMatchObject({ label: "Fund holdings not available", valueAud: 500 });
-    expect(slices.map((slice) => slice.kind)).toEqual(["company", "company", "cash", "unresolved"]);
+    expect(named.reduce((sum, slice) => sum + slice.weight, 0)).toBeCloseTo(1);
+    expect(otherAud).toBe(0);
+    expect(named.filter((slice) => slice.type === "cash")).toMatchObject([{ totalAud: 300, directAud: 200, viaEtfsAud: 100 }]);
+    expect(named.find((slice) => slice.ticker === "NVDA")).toMatchObject({ directAud: 300, viaEtfsAud: 600 });
+    expect(named.find((slice) => slice.type === "etf")).toMatchObject({ ticker: "OPAQUE", totalAud: 500 });
+    expect(waiting.map((row) => row.ticker)).toEqual(["OPAQUE"]);
   });
 
-  it("splits Other companies by sector", () => {
+  it("adds unattributed fund value and small cash balances to Other", () => {
     const exposure = buildExposureModel({
-      holdings: [etf("AAA", 1000)],
-      snapshots: new Map([["XASX:AAA", snapshot("XASX:AAA", [stock("BIG", 0.5), stock("T1", 0.2), stock("T2", 0.1), stock("F1", 0.2, "Financials")])]]),
-      totalAud: 1000,
+      holdings: [etf("AAA", 1000), holding("cash", "AUD", "cash", 5)],
+      snapshots: new Map([["XASX:AAA", snapshot("XASX:AAA", [
+        stock("BIG", 0.8),
+        { name: "Other constituents", weight: 0.1, underlyingType: "other" },
+      ])]]),
+      totalAud: 1005,
     });
 
-    const other = buildComposition(exposure, 1).find((slice) => slice.kind === "other-companies");
-
-    expect(other?.bySector).toEqual([
-      { sector: "Information Technology", valueAud: 300, weight: 0.3, count: 2 },
-      { sector: "Financials", valueAud: 200, weight: 0.2, count: 1 },
-    ]);
+    const { named, otherAud } = buildComposition(exposure, 1005);
+    expect(named.map((row) => row.ticker)).toEqual(["BIG"]);
+    expect(otherAud).toBeCloseTo(205);
   });
 
-  it("keeps where each slice comes from, direct and through funds", () => {
+  it("leaves shares unavailable when the portfolio total cannot be valued", () => {
     const exposure = buildExposureModel({
       holdings: [etf("AAA", 1000), holding("nvda", "NVDA", "stock", 300)],
       snapshots: new Map([["XASX:AAA", snapshot("XASX:AAA", [stock("NVDA", 0.5), stock("MSFT", 0.5)])]]),
-      totalAud: 1300,
+      totalAud: null,
     });
 
-    const nvda = buildComposition(exposure, 12).find((slice) => slice.ticker === "NVDA");
+    expect(buildComposition(exposure, null)).toMatchObject({ named: [], otherAud: 0, otherBuckets: [] });
+  });
 
-    expect(nvda).toMatchObject({ directAud: 300, viaEtfsAud: 500 });
-    expect(nvda?.sources.map((source) => [source.kind, source.amountAud])).toEqual([["etf", 500], ["direct", 300]]);
+  it("decomposes Other by ETF and direct tail while conserving total value", () => {
+    const exposure = buildExposureModel({
+      holdings: [
+        holding("big", "BIG", "stock", 600),
+        holding("tiny", "TINY", "stock", 5),
+        etf("VGS", 300),
+        etf("OPAQUE", 95),
+      ],
+      snapshots: new Map([
+        [
+          "XASX:VGS",
+          snapshot("XASX:VGS", [stock("BIG", 0.5), stock("ASML", 0.02)]),
+        ],
+      ]),
+      totalAud: 1000,
+    });
+
+    const result = buildComposition(exposure, 1000);
+    expect(result.otherAud).toBeCloseTo(155);
+    expect(result.otherBuckets.map((b) => [b.ticker, Math.round(b.valueAud)])).toEqual([
+      ["未穿透余项", 144],
+      ["VGS", 6],
+      ["直接小仓位", 5],
+    ]);
+    expect(result.otherBuckets.find((b) => b.ticker === "VGS")?.members.map((m) => m.ticker)).toEqual(["ASML"]);
+    expect(result.otherBuckets.reduce((s, b) => s + b.valueAud, 0)).toBeCloseTo(result.otherAud);
   });
 });
 

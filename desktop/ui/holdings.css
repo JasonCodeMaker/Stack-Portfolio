@@ -1,0 +1,167 @@
+.holdings {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+}
+
+.holdings-tools input {
+  width: 220px;
+}
+
+.holdings-totals {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 22px;
+  padding: 10px 14px;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.holdings-total-value {
+  font-size: 16px;
+}
+
+.card.holdings-card {
+  --table-edge: 10px;
+  --table-inset: calc(var(--card-pad) - var(--table-edge));
+  padding: var(--card-pad) var(--table-edge) 6px;
+  container-type: inline-size;
+}
+
+.holdings-card-head {
+  padding-inline: var(--table-inset);
+}
+
+.holdings-table-scroll {
+  overflow-x: auto;
+}
+
+.holdings-card :is(th, td):first-child {
+  padding-inline-start: var(--table-inset);
+}
+
+.holdings-card :is(th, td):last-child {
+  padding-inline-end: var(--table-inset);
+}
+
+.holdings-sort {
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 0;
+  font: inherit;
+  gap: 4px;
+}
+
+.holdings-sort:hover {
+  color: var(--l1);
+}
+
+.holdings-name {
+  display: inline-block;
+  vertical-align: bottom;
+  max-width: min(20cqw, 260px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container (max-width: 1000px) {
+  .holdings-card td:first-child {
+    width: 100%;
+    min-width: 7ch;
+    max-width: 0;
+  }
+  .holdings-security {
+    display: flex;
+    align-items: center;
+  }
+  .holdings-security .ticker {
+    flex: none;
+  }
+}
+
+.holdings-cash {
+  color: var(--l2);
+}
+
+.holdings-card tr.holdings-arrival {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+}
+
+.holdings-card tr.sel td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.holdings-card tr {
+  transition: background-color var(--fast);
+}
+
+.modal-inner:has(> .holdings-detail) > header h2 {
+  font: 600 20px/28px var(--display);
+}
+
+.holdings-detail {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.holdings-detail .dl {
+  margin: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.holdings-detail .dl b {
+  overflow-wrap: anywhere;
+}
+
+.holdings-detail h3 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  color: var(--l2);
+}
+
+.holdings-detail th[scope="row"] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.holdings-detail tbody tr:last-child th {
+  border-bottom: 0;
+}
+
+.holdings-detail td small {
+  max-width: 24cqw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.holdings-repairs {
+  gap: 6px;
+}
+[data-aspect="21:9"] .holdings {
+  display: grid;
+  grid-template-columns: minmax(0, 1.48fr) minmax(390px, 1fr);
+  align-items: start;
+  gap: var(--gap);
+}
+.holdings-master {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+}
+.holdings-inspector {
+  min-width: 0;
+  position: sticky;
+  top: 0;
+}
+.holdings-inspector > .insp {
+  width: 100%;
+  max-height: calc(100vh - var(--head-h) - 2 * var(--pad));
+  border: 1px solid var(--sep);
+  border-radius: 12px;
+}

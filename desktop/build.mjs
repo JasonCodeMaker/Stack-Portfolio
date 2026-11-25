@@ -14,7 +14,7 @@ const shared = {
 await Promise.all([
   build({
     ...shared,
-    entryPoints: ["main.cjs", "ledger.js", "flows.js", "services.js", "demo.js", "performance.js", "reviewMarket.js"].map((x) =>
+    entryPoints: ["main.cjs", "ledger.js", "flows.js", "services.js", "demo.js", "performance.js", "periodSummary.js", "reviewMarket.js", "windowState.js", "liveQuotes.js", "marketDays.js", "adaptiveLayout.js"].map((x) =>
       path.join(desktop, x),
     ),
     platform: "node",
@@ -30,6 +30,8 @@ await Promise.all([
     platform: "browser",
     target: "chrome130",
     outfile: path.join(output, "app.js"),
+    loader: { ".png":"file", ".jpg":"file" },
+    assetNames: "guide-images/[name]-[hash]",
     minify: true,
     legalComments: "eof",
     define: { "process.env.NODE_ENV": '"production"' },

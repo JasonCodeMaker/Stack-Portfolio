@@ -1,17 +1,9 @@
-.review-filters,
-.review-filters form,
 .review-readout,
-.review-readout span {
+.review-readout > span {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-}
-.review-filters .tabs {
-  margin-left: auto;
-}
-.review-filters input {
-  font-variant-numeric: tabular-nums;
 }
 .review-status {
   display: flex;
@@ -20,8 +12,8 @@
   margin: 0;
   padding: 9px 14px;
   border-radius: 9px;
-  background: #eaf3e6;
-  color: #23513c;
+  background: var(--surface2);
+  color: var(--accent);
   font-size: 13px;
 }
 .review-status svg {
@@ -29,90 +21,63 @@
 }
 .review-body {
   display: grid;
-  gap: 20px;
+  gap: var(--gap);
   transition: opacity 0.15s;
 }
+.review-layout, .review-main, .review-rail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--gap);
+  min-width: 0;
+}
+[data-aspect="21:9"] .review-layout {
+  grid-template-columns: minmax(0, 1.35fr) minmax(440px, 1fr);
+  align-items: start;
+}
+.review-main, .review-rail { container-type: inline-size; }
 /* The previous result stays in place while the next one is worked out. */
 .review-body.stale {
   opacity: 0.5;
   pointer-events: none;
 }
-.review-metrics,
-.review-sources {
+.kpis.review-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@container (max-width: 900px) {
+  .kpis.review-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.review-metrics .k {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+}
+.review-metrics .v {
+  display: block;
+}
+.review-metrics .v i {
+  font: normal 12px var(--display);
+  vertical-align: .2em;
+  margin-inline-end: 4px;
+}
+.review-metrics .kpi .d {
+  font-weight: 400;
+  white-space: normal;
+}
+.review-metrics small {
+  display: block;
+}
+.review-day-controls {
   display: grid;
-  gap: 14px;
-}
-.review-metrics {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-.review-metric {
-  padding: 18px 20px;
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  background: var(--paper);
-  display: grid;
-  gap: 4px;
-  align-content: start;
-}
-.review-metric h2 {
-  display: flex;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
-  font-size: 15px;
+  margin-block-end: 12px;
 }
-.review-metric h2 i {
-  width: 16px;
-  height: 3px;
-  display: inline-block;
-  border-radius: 2px;
-}
-.review-metric strong {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: clamp(22px, 2.1vw, 32px);
-  line-height: 1.45;
-  letter-spacing: -0.8px;
-  font-weight: 640;
-}
-.review-metric strong i {
-  font-style: normal;
-  font-size: 0.5em;
-  transform: translateY(-0.25em);
-}
-.review-primary strong {
-  font-size: clamp(27px, 2.6vw, 40px);
-  letter-spacing: -1.2px;
-}
-.review-metric > span {
-  font-size: 13px;
-  color: #3f5247;
-  font-variant-numeric: tabular-nums;
-}
-.review-metric b {
-  font-weight: 600;
-  color: var(--deep);
-}
-.review-metric small {
-  margin-top: 4px;
-}
-.review-primary {
-  background: #144b38;
-  color: white;
-  border-color: #144b38;
-}
-.review-primary > span,
-.review-primary b {
-  color: #f1f7ee;
-}
-.review-primary small {
-  color: #cee0d3;
-}
-.review-hint {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 12.5px;
+.review-day-controls > .tabs {
+  justify-self: start;
+  max-width: 100%;
 }
 .review-readout {
   color: var(--muted);
@@ -120,84 +85,53 @@
   gap: 8px 20px;
   font-variant-numeric: tabular-nums;
 }
-.review-readout span {
+.review-readout > span {
   gap: 6px;
 }
 .review-readout b {
   color: var(--deep);
 }
-.review-readout b.gain {
-  color: var(--gain);
-}
-.review-readout b.loss {
-  color: var(--loss);
-}
-.review-sources {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 14px 0 4px;
-}
-.review-sources > div {
-  display: grid;
-  gap: 2px;
-}
-.review-sources span {
-  color: var(--muted);
-  font-size: 13px;
-}
-.review-details {
-  border-top: 1px solid var(--line);
-  margin-top: 12px;
-  padding: 9px 0 0;
-}
-.review-details summary {
-  font-size: 13px;
-  color: var(--green);
+.review-method > summary {
   cursor: pointer;
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
 }
-.review-details .table-scroll {
-  margin-top: 10px;
-  max-height: 420px;
-}
-.review-data > summary {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  list-style-position: outside;
-}
-.review-data > summary h2 {
-  display: inline;
-}
-.review-data > summary::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-right: 2px solid var(--green);
-  border-bottom: 2px solid var(--green);
-  transform: rotate(-45deg);
-  align-self: center;
-  margin-right: 4px;
-  transition: transform 0.12s;
-}
-.review-data[open] > summary::before {
-  transform: rotate(45deg);
-}
-.review-data > summary span {
+.review-methods {
+  margin: 8px 0 16px;
   font-size: 13px;
-  font-weight: 400;
 }
-.review-data p,
-.review-outages,
+.review-methods > div {
+  padding: 8px 0;
+  border-top: 1px solid var(--sep);
+}
+.review-methods dt {
+  font-weight: 600;
+}
+.review-methods dd {
+  margin: 3px 0 0;
+  color: var(--l2);
+  overflow-wrap: anywhere;
+}
 .review-feedback {
   font-size: 13px;
   margin: 8px 0;
 }
-.review-outages {
-  padding-left: 18px;
+.insp .review-daily .table-scroll {
+  max-height: 245px;
+  margin-bottom: 12px;
 }
-.review-outages li {
-  padding: 2px 0;
+.review-daily th {
+  white-space: normal;
 }
+.review-daily :is(th, td) {
+  padding-inline: 5px;
+}
+.review-daily .text-btn {
+  padding-inline: 0;
+  white-space: nowrap;
+}
+
 .review-note-form {
   display: grid;
   gap: 10px;
@@ -211,8 +145,8 @@
   overflow-wrap: anywhere;
 }
 .review-changed {
-  color: #91521a;
-  background: #fff6e7;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 10%, var(--surface));
   font-weight: 650;
 }
 .review-notes {
@@ -236,14 +170,111 @@
   white-space: nowrap;
 }
 .review-note-open {
-  color: var(--green);
+  color: var(--accent);
   font-size: 13px;
 }
-@media (max-width: 1080px) {
-  .review-filters .tabs {
-    margin-left: 0;
+.review-tools,
+.review-benchmarks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.review-benchmarks .btn.sm {
+  height: 28px;
+  padding-inline: 10px;
+  font-size: 13px;
+}
+.review-benchmarks [aria-pressed="true"] {
+  background: var(--surface2);
+  color: var(--l1);
+  border-color: var(--l3);
+  font-weight: 600;
+}
+.review-benchmarks button > i {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.review-breakdown {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.review-breakdown button {
+  border: 0;
+  border-radius: 0;
+  border-inline-start: 1px solid var(--sep);
+  background: transparent;
+  text-align: start;
+  padding: 6px 14px;
+}
+.review-breakdown button:first-child {
+  border: 0;
+}
+.review-breakdown button:is(:hover, [aria-expanded="true"]) {
+  background: var(--surface2);
+  border-radius: 6px;
+}
+.review-breakdown b {
+  display: block;
+  font-size: 16px;
+  line-height: 22px;
+}
+.review-drill {
+  margin-top: 10px;
+}
+@container (max-width: 620px) {
+  .review-breakdown {
+    grid-template-columns: 1fr;
   }
-  .review-metric {
-    padding: 14px;
+  .review-breakdown button {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border: 0;
+    border-top: 1px solid var(--sep);
+    padding: 8px 6px;
   }
+}
+
+.review-contributions {
+  display: grid;
+  grid-template-columns: minmax(52px, auto) minmax(0, 1fr) auto;
+  column-gap: 10px;
+}
+.review-contribution {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: start;
+  font-size: 13px;
+}
+button.review-contribution:hover {
+  background: var(--surface2);
+}
+.review-contribution > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.review-contribution .ch-diverge {
+  display: block;
+}
+.review-contribution-amount {
+  justify-self: end;
+}
+.review-fold {
+  grid-column: 1 / -1;
+  min-height: 28px;
+  margin-block: 4px;
+  background: var(--surface2);
+  color: var(--l2);
+  border: 0;
+  border-radius: 6px;
+  font-size: 12px;
 }

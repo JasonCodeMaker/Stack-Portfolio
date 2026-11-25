@@ -1,5 +1,6 @@
 import { day, savePrice, transaction } from "./ledger.js";
-import { marketFor, shiftDay } from "./marketDays.js";
+import { marketFor, marketSession, shiftDay } from "./marketDays.js";
+import { tMain } from "./i18n/index.js";
 
 export const benchmarks = [
   { id: "SP500TR", name: "标普 500", source: "Yahoo Finance · ^SP500TR" },
@@ -11,20 +12,20 @@ export const closeSource = "Yahoo Finance 日收盘";
 export function reviewDates(from, to) {
   from = day(from);
   to = day(to);
-  if (from > to) throw Error("复盘起点须早于或等于终点。");
+  if (from > to) throw Error(tMain("mkt.invalidRangeOrder"));
   if (from < "1900-01-01" || to > shiftDay(new Date().toISOString().slice(0, 10), 1))
-    throw Error("请选择已发生的复盘日期。");
+    throw Error(tMain("mkt.futureDatesNotAllowed"));
   return { from, to };
 }
 
 async function get(request, url) {
   const response = await request({ method: "GET", url: url.toString() });
-  if (response.status !== 200) throw Error("数据源返回 HTTP " + response.status);
+  if (response.status !== 200) throw Error(tMain("mkt.httpError", { status: response.status }));
   return response.body;
 }
 function positive(value) {
   const n = Number(value);
-  if (!Number.isFinite(n) || n <= 0) throw Error("数据源返回了无效的点位或汇率。");
+  if (!Number.isFinite(n) || n <= 0) throw Error(tMain("mkt.invalidValue"));
   return n;
 }
 function localDates(timeZone) {
@@ -50,15 +51,20 @@ async function yahooCloses(request, symbol, from, to, expect) {
     meta.dataGranularity !== "1d" ||
     !meta.exchangeTimezoneName
   )
-    throw Error(expect.exchanges ? "证券、币种或交易所不可核实" : "序列标识、币种或频率不匹配。");
+    throw Error(expect.exchanges ? tMain("mkt.listingMismatch") : tMain("mkt.seriesMismatch"));
   const rows = new Map();
   if (!data.timestamp?.length) return rows;
   const dates = localDates(meta.exchangeTimezoneName);
   const closes = data.indicators?.quote?.[0]?.close;
-  if (!Array.isArray(closes) || closes.length !== data.timestamp.length) throw Error("缺少完整的日线字段。");
-  const today = dates.format(new Date());
+  if (!Array.isArray(closes) || closes.length !== data.timestamp.length) throw Error(tMain("mkt.incompleteDaily"));
+  const now = expect.now ?? Date.now();
+  const today = dates.format(now);
   const session = meta.currentTradingPeriod?.regular;
-  const finishedToday = session?.end * 1000 <= Date.now() && dates.format(session.end * 1000) === today;
+  const listed = expect.market && marketSession(now, expect.market);
+  const completed = listed?.completed === today &&
+    (expect.market !== "ASX" || listed.minute >= listed.officialAfter + 20);
+  const finishedToday = session?.end * 1000 <= now && dates.format(session.end * 1000) === today &&
+    (!expect.market || completed);
   // Closes before a split are restated by the source. The ledger holds the original
   // quantities, so only closes from the latest split onwards remain comparable.
   const splits = Object.values(data.events?.splits || {}).map((s) => dates.format(s.date * 1000));
@@ -83,7 +89,7 @@ async function fredCloses(request, from, to) {
   const url = new URL("https://fred.stlouisfed.org/graph/fredgraph.csv");
   url.search = new URLSearchParams({ id: "NASDAQXNDX", cosd: from, coed: to }).toString();
   const [header, ...lines] = (await get(request, url)).trim().split(/\r?\n/);
-  if (!/^(observation_date|DATE),NASDAQXNDX$/.test(header)) throw Error("未收到 Nasdaq 总回报序列。");
+  if (!/^(observation_date|DATE),NASDAQXNDX$/.test(header)) throw Error(tMain("mkt.noNasdaqSeries"));
   const rows = new Map();
   for (const line of lines) {
     const [raw, level] = line.split(",");
@@ -113,9 +119,9 @@ export async function refreshBenchmarks(db, args, request) {
     to = range.to;
   const pair = { currency: "USD", kinds: ["CURRENCY"] };
   const feeds = [
-    { ...benchmarks[0], read: () => yahooCloses(request, "^SP500TR", from, to, index) },
-    { ...benchmarks[1], read: () => nasdaqCloses(request, from, to) },
-    { id: "FX", name: "澳元汇率", source: fxSource, read: () => yahooCloses(request, "AUDUSD=X", from, to, pair) },
+    { ...benchmarks[0], name: tMain("mkt.benchmark.SP500TR"), read: () => yahooCloses(request, "^SP500TR", from, to, index) },
+    { ...benchmarks[1], name: tMain("mkt.benchmark.XNDX"), read: () => nasdaqCloses(request, from, to) },
+    { id: "FX", name: tMain("mkt.fxAudName"), source: fxSource, read: () => yahooCloses(request, "AUDUSD=X", from, to, pair) },
   ];
   const results = await Promise.allSettled(feeds.map((feed) => feed.read()));
   const insert = db.prepare(
@@ -123,8 +129,8 @@ export async function refreshBenchmarks(db, args, request) {
   );
   return results.map((result, i) => {
     const { id, name, source } = feeds[i];
-    if (result.status === "rejected") return { name, error: result.reason.message || "获取失败" };
-    if (!result.value.size) return { name, error: "所选期间没有日线" };
+    if (result.status === "rejected") return { name, error: result.reason.message || tMain("mkt.fetchFailed") };
+    if (!result.value.size) return { name, error: tMain("mkt.noDailyBars") };
     transaction(db, () => {
       for (const [date, value] of result.value) {
         if (id === "FX") savePrice(db, "FX:AUD/USD", date, value, source, 6);
@@ -164,12 +170,14 @@ export async function refreshCloses(db, assets, args, request) {
   const insert = db.prepare("INSERT OR IGNORE INTO sp_prices VALUES(?,?,?,?,?)");
   const read = async (asset) => {
     const listing = publicListing(asset);
-    if (!listing) throw Error("该交易所暂不支持自动收盘价");
+    if (!listing) throw Error(tMain("mkt.exchangeNotSupported"));
     return yahooCloses(request, listing.symbol, shiftDay(from, -7), to, {
       currency: asset.currency,
       kinds: ["EQUITY", "ETF"],
       exchanges: listing.exchanges,
       splits: true,
+      market: marketFor(asset),
+      now: args.now,
     });
   };
   const results = [];
@@ -180,8 +188,8 @@ export async function refreshCloses(db, assets, args, request) {
     settled.forEach((result, j) => {
       const asset = group[j];
       if (result.status === "rejected")
-        return results.push({ id: asset.id, name: asset.symbol, error: result.reason.message || "获取失败" });
-      if (!result.value.size) return results.push({ id: asset.id, name: asset.symbol, error: "所选期间没有收盘价" });
+        return results.push({ id: asset.id, name: asset.symbol, error: result.reason.message || tMain("mkt.fetchFailed") });
+      if (!result.value.size) return results.push({ id: asset.id, name: asset.symbol, error: tMain("mkt.noClosesInRange") });
       let added = 0;
       transaction(db, () => {
         for (const [date, value] of result.value)
@@ -189,57 +197,6 @@ export async function refreshCloses(db, assets, args, request) {
       });
       results.push({ id: asset.id, name: asset.symbol, count: result.value.size, added });
     });
-  }
-  return results;
-}
-
-// The ledger already posts dividends separately. Fetch contemporaneous, unadjusted
-// closes so that neither dividends nor corporate actions are applied twice.
-export async function refreshReviewPrices(db, assets, args, key, request) {
-  if (!key) throw Error("请在「数据与设置」保存 Twelve Data API Key 后补齐持仓收盘价。");
-  const { from, to } = reviewDates(args.from, args.to);
-  const results = [];
-  for (const asset of assets) {
-    try {
-      const rows = new Map();
-      for (let start = shiftDay(from, -7); start <= to; ) {
-        const end = [shiftDay(start, 4800), to].sort()[0];
-        const url = new URL("https://api.twelvedata.com/time_series");
-        url.search = new URLSearchParams({
-          symbol: asset.symbol,
-          interval: "1day",
-          adjust: "none",
-          outputsize: "5000",
-          start_date: start,
-          end_date: end,
-          apikey: key,
-        }).toString();
-        if (asset.mic) url.searchParams.set("mic_code", asset.mic);
-        const data = JSON.parse(await get(request, url));
-        if (
-          data.meta?.symbol !== asset.symbol ||
-          data.meta.currency !== asset.currency ||
-          (asset.mic && data.meta.mic_code !== asset.mic) ||
-          data.meta.interval !== "1day" ||
-          !Array.isArray(data.values)
-        )
-          throw Error("证券、币种、交易所或日线不可核实");
-        const today = localDates(data.meta.exchange_timezone || "UTC").format(new Date());
-        for (const row of data.values) {
-          const date = day(row.datetime);
-          if (date >= start && date <= end && date < today && row.close != null)
-            rows.set(date, positive(row.close));
-        }
-        start = shiftDay(end, 1);
-      }
-      if (!rows.size) throw Error("所选期间没有收盘价");
-      transaction(db, () => {
-        for (const [date, value] of rows) savePrice(db, asset.id, date, value, "Twelve Data 日收盘", 24);
-      });
-      results.push({ name: asset.symbol, count: rows.size });
-    } catch (e) {
-      results.push({ name: asset.symbol, error: e.message });
-    }
   }
   return results;
 }

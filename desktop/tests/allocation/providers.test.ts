@@ -36,7 +36,7 @@ describe("ETF provider resolver", () => {
         '"BRKB","BERKSHIRE HATHAWAY INC CLASS B","Financials","Equity","1","0.01","United States","NYSE","USD"',
       ].join("\n"),
     });
-    const providers = createProviders({ api: { network: { request } } } as never, {});
+    const providers = createProviders({ api: { network: { request } } } as never);
     const result = await resolveEtfHoldings(etf, providers, { mode: "auto", force: true });
 
     expect(request).toHaveBeenCalledWith(expect.objectContaining({
@@ -64,7 +64,7 @@ describe("ETF provider resolver", () => {
         '"AAPL","APPLE","EQUITY","Information Technology","Equity","1","1","1","270.00","United States","NASDAQ","USD","1.00","USD","-","91.26","91.26"',
       ].join("\n"),
     });
-    const providers = createProviders({ api: { network: { request } } } as never, {});
+    const providers = createProviders({ api: { network: { request } } } as never);
     const result = await resolveEtfHoldings(etf, providers, { mode: "auto", force: true });
 
     expect(result.snapshot?.provider).toBe("ishares");
@@ -90,7 +90,7 @@ describe("ETF provider resolver", () => {
         ],
       }),
     });
-    const providers = createProviders({ api: { network: { request } } } as never, {});
+    const providers = createProviders({ api: { network: { request } } } as never);
     const result = await resolveEtfHoldings(spmo, providers, { mode: "auto", force: true });
 
     expect(request).toHaveBeenCalledWith(expect.objectContaining({
@@ -112,7 +112,7 @@ describe("ETF provider resolver", () => {
     const request = vi.fn()
       .mockResolvedValueOnce({ status: 406, headers: {}, body: "" })
       .mockResolvedValueOnce({ status: 200, headers: {}, body: good });
-    const providers = createProviders({ api: { network: { request } } } as never, {});
+    const providers = createProviders({ api: { network: { request } } } as never);
     const result = await resolveEtfHoldings(spmo, providers, { mode: "auto", force: true });
 
     expect(request).toHaveBeenCalledTimes(2);
@@ -129,7 +129,7 @@ describe("ETF provider resolver", () => {
       headers: {},
       body: JSON.stringify({ effectiveDate: "2026-09-16", holdings: [{ ticker: "NVDA", issuerName: "NVIDIA Corp", percentageOfTotalNetAssets: 100, securityTypeName: "Common Stock" }] }),
     });
-    const providers = createProviders({ api: { network: { request } } } as never, {});
+    const providers = createProviders({ api: { network: { request } } } as never);
     const result = await resolveEtfHoldings(etfWithCusip, providers, { mode: "auto", force: true });
 
     expect(request).toHaveBeenCalledTimes(1);

@@ -127,6 +127,28 @@ describe("Flex report activities", () => {
       warnings: [],
     });
   });
+
+  it("keeps the native/base pair and accepts only dated positive daily FX; prior-day balances cannot become ending NAV", () => {
+    const xml = `<FlexStatement baseCurrency="CAD" fromDate="20261119" toDate="20261120">
+      <Trades><Trade currency="USD" assetCategory="STK" symbol="ABC" buySell="BUY" tradeDate="20261119"
+        reportDate="20261120" quantity="1" tradePrice="12" fxRateToBase="1.36" closePrice="13" tradeID="receipt" /></Trades>
+      <ConversionRates><ConversionRate fromCurrency="AUD" toCurrency="USD" dateTime="20261120;160000" rate="0.65"/>
+        <ConversionRate fromCurrency="USD" toCurrency="AUD" reportDate="20261131" rate="1.52"/>
+        <ConversionRate fromCurrency="USD" toCurrency="AUD" reportDate="20261120" rate="-1.52"/></ConversionRates>
+      <OpenPositions><OpenPosition currency="USD" symbol="ABC" position="1" reportDate="20261119"/></OpenPositions>
+      <CashReportCurrency currency="CAD" endingCash="14" reportDate="20261119"/>
+      <ChangeInNAV currency="USD" endingValue="800" reportDate="20261120"/>
+      <EquitySummaryByReportDateInBase total="900" reportDate="20261119"/>
+      </FlexStatement>`;
+    const { activities, audit } = parseIbkrFlexReport(xml);
+    expect(activities[0].metadata?.ibkrExecution).toMatchObject({
+      tradeDate:"2026-11-19",reportDate:"2026-11-20",currency:"USD",baseCurrency:"CAD",fxRateToBase:"1.36",closePrice:"13",
+    });
+    expect(audit.conversionRates).toEqual([{day:"2026-11-20",from:"AUD",to:"USD",rate:"0.65"}]);
+    expect(audit.endingCashByCurrency).toEqual({});
+    expect(audit.statementPositions).toBeUndefined();
+    expect(audit.reportedNavBase).toBeUndefined();
+  });
 });
 
 describe("fetchIbkrFlexReport", () => {

@@ -1,85 +1,177 @@
-import type { AllocationRow, AssetType, ExposureModel, ExposureRow, ExposureSource, RebalanceModel, RebalanceRow } from "./types";
+import type { AllocationRow, AssetType, ExposureModel, ExposureRow, RebalanceModel, RebalanceRow } from "./types";
 
-export type CompositionKind = "company" | "other-companies" | "cash" | "fixed-income" | "other-assets" | "unresolved";
-
-export interface SectorShare {
-  sector: string;
-  valueAud: number;
-  weight: number | null;
-  count: number;
-}
-
-/** One part of the portfolio composition. Slices always add up to the whole portfolio. */
-export interface CompositionSlice {
+export interface TailMember {
   key: string;
-  label: string;
   ticker?: string;
-  kind: CompositionKind;
+  label: string;
   valueAud: number;
   weight: number | null;
-  directAud: number;
-  viaEtfsAud: number;
+}
+
+export type OtherBucketKind = "etf" | "small-direct" | "opaque" | "residual" | "small-cash" | "other-assets";
+
+export interface OtherBucket {
+  key: string;
+  kind: OtherBucketKind;
+  ticker: string;
+  label: string;
+  subtitle?: string;
+  valueAud: number;
+  weight: number | null;
+  shareOfOther: number | null;
   memberCount: number;
-  sector?: string;
-  sources: ExposureSource[];
-  bySector: SectorShare[];
+  members: TailMember[];
+  restValueAud: number;
+  restCount: number;
 }
 
-const BUCKETS: Array<{ kind: CompositionKind; label: string; types: AssetType[] }> = [
-  { kind: "cash", label: "Cash", types: ["cash"] },
-  { kind: "fixed-income", label: "Bonds & fixed income", types: ["fixed-income"] },
-  { kind: "other-assets", label: "Other assets", types: ["derivative", "other", "unknown"] },
-  { kind: "unresolved", label: "Fund holdings not available", types: ["etf"] },
-];
-
-/**
- * Ranks companies across the whole portfolio and folds everything below the top
- * `topCompanies` into one "Other companies" slice. Pass the untruncated exposure model:
- * a per-fund top-N model hides part of a company's value in each fund's own remainder.
- */
-export function buildComposition(exposure: ExposureModel, topCompanies = 12): CompositionSlice[] {
-  const companies = exposure.rows.filter((row) => row.type === "stock").sort((a, b) => b.totalAud - a.totalAud);
-  const slices = companies.slice(0, topCompanies).map((row) => toSlice(row.key, displayName(row.label), "company", [row], exposure.totalAud, row.ticker));
-  const tail = companies.slice(topCompanies);
-  if (tail.length) slices.push(toSlice("composition:other-companies", "Other companies", "other-companies", tail, exposure.totalAud));
-  for (const bucket of BUCKETS) {
-    const rows = exposure.rows.filter((row) => bucket.types.includes(row.type));
-    if (rows.length) slices.push(toSlice(`composition:${bucket.kind}`, bucket.label, bucket.kind, rows, exposure.totalAud));
+function buildOtherBuckets(
+  foldedRows: ExposureRow[],
+  totalAud: number | null,
+  maxTailMembersPerBucket = 14,
+): OtherBucket[] {
+  interface BucketAcc {
+    key: string;
+    kind: OtherBucketKind;
+    ticker: string;
+    label: string;
+    subtitle?: string;
+    valueAud: number;
+    unattributedAud: number;
+    members: Map<string, { key: string; ticker?: string; label: string; valueAud: number }>;
   }
-  return slices;
-}
-
-function toSlice(key: string, label: string, kind: CompositionKind, rows: ExposureRow[], totalAud: number, ticker?: string): CompositionSlice {
-  const valueAud = rows.reduce((sum, row) => sum + row.totalAud, 0);
-  const weight = (value: number) => (totalAud > 0 ? value / totalAud : null);
-  return {
-    key,
-    label,
-    ticker,
-    kind,
-    valueAud,
-    weight: weight(valueAud),
-    directAud: rows.reduce((sum, row) => sum + row.directAud, 0),
-    viaEtfsAud: rows.reduce((sum, row) => sum + row.viaEtfsAud, 0),
-    memberCount: rows.length,
-    sector: kind === "company" ? rows[0].sector : undefined,
-    sources: rows.flatMap((row) => row.sources),
-    bySector: kind === "other-companies" ? sectorShares(rows, weight) : [],
+  const bucketMap = new Map<string, BucketAcc>();
+  const ensure = (key: string, kind: OtherBucketKind, ticker: string, label: string, subtitle?: string): BucketAcc => {
+    let acc = bucketMap.get(key);
+    if (!acc) {
+      acc = { key, kind, ticker, label, subtitle, valueAud: 0, unattributedAud: 0, members: new Map() };
+      bucketMap.set(key, acc);
+    }
+    return acc;
   };
+  const addMember = (acc: BucketAcc, row: ExposureRow, amountAud: number) => {
+    const existing = acc.members.get(row.key);
+    if (existing) existing.valueAud += amountAud;
+    else {
+      acc.members.set(row.key, {
+        key: row.key,
+        ticker: row.ticker,
+        label: displayName(row.label),
+        valueAud: amountAud,
+      });
+    }
+  };
+
+  for (const row of foldedRows) {
+    if (row.totalAud <= 0) continue;
+    if (row.type === "cash") {
+      const acc = ensure("small-cash", "small-cash", "现金", "小额现金");
+      acc.valueAud += row.totalAud;
+      continue;
+    }
+    if (!row.sources.length) {
+      const acc = ensure("other-assets", "other-assets", "其他资产", "其他资产");
+      acc.valueAud += row.totalAud;
+      addMember(acc, row, row.totalAud);
+      continue;
+    }
+    const isSyntheticOthers = row.type === "other" && (!row.ticker || row.key.startsWith("others-etf:"));
+    for (const source of row.sources) {
+      if (source.amountAud <= 0) continue;
+      if (source.kind === "etf") {
+        const sym = source.etfSymbol || source.etfKey;
+        const acc = ensure(`etf:${sym}`, "etf", sym, sym);
+        acc.valueAud += source.amountAud;
+        if (isSyntheticOthers) acc.unattributedAud += source.amountAud;
+        else addMember(acc, row, source.amountAud);
+      } else if (source.kind === "opaque") {
+        const sym = source.etfSymbol || source.etfKey;
+        const acc = ensure(`opaque:${sym}`, "opaque", sym, `${sym}（未穿透）`, source.reason || "缺少成分表");
+        acc.valueAud += source.amountAud;
+      } else if (source.kind === "residual") {
+        const acc = ensure("residual", "residual", "未穿透余项", "未穿透基金余项", "成分表未覆盖的 ETF 尾项");
+        acc.valueAud += source.amountAud;
+      } else if (row.type === "stock") {
+        const acc = ensure("small-direct", "small-direct", "直接小仓位", "直接持有小仓位", "单家占比 ≤ 1%");
+        acc.valueAud += source.amountAud;
+        addMember(acc, row, source.amountAud);
+      } else {
+        const acc = ensure("other-assets", "other-assets", "其他资产", "其他资产");
+        acc.valueAud += source.amountAud;
+        if (!isSyntheticOthers) addMember(acc, row, source.amountAud);
+        else acc.unattributedAud += source.amountAud;
+      }
+    }
+  }
+
+  const raw = [...bucketMap.values()].filter((b) => b.valueAud > 0).sort((a, b) => b.valueAud - a.valueAud);
+  const otherTotal = raw.reduce((sum, b) => sum + b.valueAud, 0);
+  const weightOf = (v: number) => (totalAud != null && totalAud > 0 ? v / totalAud : null);
+
+  return raw.map((acc) => {
+    const sorted = [...acc.members.values()].sort((a, b) => b.valueAud - a.valueAud);
+    const visible = sorted.slice(0, maxTailMembersPerBucket);
+    const hidden = sorted.slice(maxTailMembersPerBucket);
+    const restValueAud = hidden.reduce((sum, m) => sum + m.valueAud, 0) + acc.unattributedAud;
+    return {
+      key: acc.key,
+      kind: acc.kind,
+      ticker: acc.ticker,
+      label: acc.label,
+      subtitle: acc.subtitle,
+      valueAud: acc.valueAud,
+      weight: weightOf(acc.valueAud),
+      shareOfOther: otherTotal > 0 ? acc.valueAud / otherTotal : null,
+      memberCount: sorted.length,
+      members: visible.map((m) => ({
+        key: m.key,
+        ticker: m.ticker,
+        label: m.label,
+        valueAud: m.valueAud,
+        weight: weightOf(m.valueAud),
+      })),
+      restValueAud,
+      restCount: hidden.length + (acc.unattributedAud > 0 ? 1 : 0),
+    };
+  });
 }
 
-function sectorShares(rows: ExposureRow[], weight: (value: number) => number | null): SectorShare[] {
-  const sectors = new Map<string, { valueAud: number; count: number }>();
-  for (const row of rows) {
-    const sector = row.sector ?? "Unclassified";
-    const entry = sectors.get(sector) ?? { valueAud: 0, count: 0 };
-    entry.valueAud += row.totalAud;
-    entry.count += 1;
-    sectors.set(sector, entry);
+/** Use the untruncated exposure model so direct and ETF positions count toward one company weight. */
+export function buildComposition(exposure: ExposureModel, totalAud: number | null) {
+  const companies = exposure.rows
+    .filter((row) => row.type === "stock" && row.totalAud > 0)
+    .slice(0, 5)
+    .map((row) => ({ ...row, label: displayName(row.label) }));
+  const cash = exposure.rows.filter((row) => row.type === "cash");
+  const cashAud = cash.reduce((sum, row) => sum + row.totalAud, 0);
+  const cashDirectAud = cash.reduce((sum, row) => sum + row.directAud, 0);
+  const cashViaEtfsAud = cash.reduce((sum, row) => sum + row.viaEtfsAud, 0);
+  const waiting = exposure.rows.filter((row) => row.type === "etf" && row.sources.some((s) => s.kind === "opaque"));
+  const entries = [
+    ...exposure.rows.filter((row) => row.type !== "cash"),
+    { key: "composition:cash", label: "Cash", ticker: undefined, type: "cash" as const, totalAud: cashAud,
+      directAud: cashDirectAud, viaEtfsAud: cashViaEtfsAud, sources: cash.flatMap((row) => row.sources) },
+  ];
+  const named = [];
+  let otherAud = 0;
+  const foldedRows: ExposureRow[] = [];
+  if (totalAud != null && totalAud > 0) {
+    for (const row of entries) {
+      if (row.totalAud <= 0) continue;
+      const weight = row.totalAud / totalAud;
+      const isUnattributed = (row.type === "etf" && row.sources.every((s) => s.kind === "residual"))
+        || (row.type === "other" && (!row.ticker || row.key.startsWith("others-etf:")));
+      if (weight - 0.01 > Number.EPSILON && !isUnattributed) {
+        const { key, label, ticker, type, totalAud, directAud, viaEtfsAud } = row;
+        named.push({ key, label: displayName(label), ticker, type, totalAud, directAud, viaEtfsAud, weight });
+      } else {
+        otherAud += row.totalAud;
+        foldedRows.push(row as ExposureRow);
+      }
+    }
   }
-  return [...sectors]
-    .map(([sector, entry]) => ({ sector, valueAud: entry.valueAud, weight: weight(entry.valueAud), count: entry.count }))
-    .sort((a, b) => b.valueAud - a.valueAud);
+  const otherBuckets = buildOtherBuckets(foldedRows, totalAud);
+  return { named, otherAud, otherBuckets, companies, waiting };
 }
 
 /** Provider constituent names often arrive upper-case ("ALPHABET INC CLASS A"). */

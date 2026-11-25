@@ -7,32 +7,24 @@ import {
   openDatabase, checkIntegrity, isPlainDatabase, encryptedCopy, publishFile,
   lockForReplacement, assertNoJournal,
 } from "./bookStorage.cjs";
+import { day, dayOf } from "./periods.js";
+import { tMain } from "./i18n/index.js";
 
 // Existing ledgers and Wealthfolio migrations use these preference scopes.
 export const ALLOCATION = "portfolio-xray";
 export const BROKER = "broker-sync";
-export const dayOf = (date) => String(date || "").slice(0, 10);
-export function day(value) {
-  const text = dayOf(value);
-  if (
-    !/^\d{4}-\d\d-\d\d$/.test(text) ||
-    !Number.isFinite(Date.parse(text)) ||
-    new Date(text).toISOString().slice(0, 10) !== text
-  )
-    throw Error("请输入有效日期。");
-  return text;
-}
+export { day, dayOf } from "./periods.js";
 export function money(value, nonnegative = false) {
-  if (value === "" || value == null) throw Error("缺少金额或数量。");
+  if (value === "" || value == null) throw Error(tMain("ledger.missingAmountOrQty"));
   const n = new Decimal(value);
-  if (!n.isFinite() || (nonnegative && n.isNegative())) throw Error("金额或数量无效。");
+  if (!n.isFinite() || (nonnegative && n.isNegative())) throw Error(tMain("ledger.invalidAmountOrQty"));
   return n.toFixed();
 }
 export function currency(value) {
   const code = String(value || "")
     .trim()
     .toUpperCase();
-  if (!/^[A-Z]{3}$/.test(code)) throw Error("请输入三位币种代码。");
+  if (!/^[A-Z]{3}$/.test(code)) throw Error(tMain("ledger.invalidCurrency"));
   return code;
 }
 export function transaction(db, fn) {
@@ -57,8 +49,13 @@ CREATE INDEX IF NOT EXISTS sp_assets_symbol ON sp_assets(symbol,currency,mic);
 CREATE TABLE IF NOT EXISTS sp_events(id TEXT PRIMARY KEY, account TEXT NOT NULL REFERENCES sp_accounts(id), day TEXT NOT NULL, data TEXT NOT NULL, original TEXT);
 CREATE INDEX IF NOT EXISTS sp_events_account ON sp_events(account,day);
 CREATE TABLE IF NOT EXISTS sp_anchors(account TEXT NOT NULL, day TEXT NOT NULL, positions TEXT NOT NULL, cash TEXT NOT NULL, PRIMARY KEY(account,day));
+CREATE TABLE IF NOT EXISTS sp_holding_evidence(id INTEGER PRIMARY KEY, account TEXT NOT NULL REFERENCES sp_accounts(id), asset TEXT NOT NULL REFERENCES sp_assets(id), day TEXT NOT NULL, quantity TEXT NOT NULL, reported INTEGER NOT NULL, local_cost TEXT, aud_cost TEXT, reference TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS sp_evidence_account ON sp_holding_evidence(account,asset,day);
 CREATE TABLE IF NOT EXISTS sp_prices(asset TEXT NOT NULL, day TEXT NOT NULL, price TEXT NOT NULL, source TEXT NOT NULL, priority INTEGER NOT NULL, PRIMARY KEY(asset,day,source));
+CREATE TABLE IF NOT EXISTS sp_broker_prices(account TEXT NOT NULL REFERENCES sp_accounts(id), asset TEXT NOT NULL, day TEXT NOT NULL, price TEXT NOT NULL, source TEXT NOT NULL, priority INTEGER NOT NULL, PRIMARY KEY(account,asset,day,source));
 CREATE INDEX IF NOT EXISTS sp_prices_date ON sp_prices(asset,day);
+CREATE TABLE IF NOT EXISTS sp_live_prices(asset TEXT PRIMARY KEY, observed INTEGER NOT NULL, data TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sp_live_fx(bucket INTEGER PRIMARY KEY, observed INTEGER NOT NULL, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sp_archive(account TEXT NOT NULL, day TEXT NOT NULL, total TEXT, cash TEXT, invested TEXT, base TEXT, status TEXT, PRIMARY KEY(account,day));
 CREATE TABLE IF NOT EXISTS sp_prefs(scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(scope,key));
 CREATE TABLE IF NOT EXISTS sp_statements(id TEXT PRIMARY KEY, account TEXT NOT NULL, day TEXT NOT NULL, source TEXT NOT NULL, data TEXT NOT NULL);
@@ -74,15 +71,47 @@ export function createBook(filename, key) {
   const db = openDatabase(filename, key);
   try {
     if (hasTable(db, "sp_meta") && db.prepare("SELECT value FROM sp_meta WHERE key='version'").get()?.value !== "1")
-      throw Error("此账本版本需要更新的 Stock Portfolio。");
+      throw Error(tMain("ledger.newerVersionRequired"));
     transaction(db, () => {
+      const scopeOldQuotes = hasTable(db, "sp_prices") && !hasTable(db, "sp_broker_prices");
       db.exec(schema);
+      if (scopeOldQuotes) migrateIbkrQuotes(db);
       db.prepare("INSERT OR IGNORE INTO sp_meta VALUES('version','1')").run();
     });
     return db;
   } catch (e) {
     db.close();
     throw e;
+  }
+}
+
+// 1.4.0 stored statement quotes without an account column. Only attribute them where the old book proves an owner.
+function migrateIbkrQuotes(db) {
+  const old = db.prepare("SELECT * FROM sp_prices WHERE source IN ('IBKR 结单报价','IBKR 结单汇率')").all();
+  if (!old.length) return;
+  const accounts = db.prepare(`SELECT id AS account FROM sp_accounts WHERE id IN (
+    SELECT account FROM sp_broker_values WHERE source='IBKR Flex'
+    UNION SELECT account FROM sp_batches WHERE json_extract(data,'$.broker')='ibkr'
+    UNION SELECT account FROM sp_events WHERE json_extract(data,'$.sourceSystem')='IBKR'
+      OR json_extract(data,'$.metadata.brokerSync.broker')='ibkr')`).all();
+  const insert = db.prepare("INSERT OR IGNORE INTO sp_broker_prices VALUES(?,?,?,?,?,?)");
+  if (accounts.length === 1) {
+    for (const r of old) insert.run(accounts[0].account,r.asset,r.day,r.price,r.source,r.priority);
+    return;
+  }
+  const statements = db.prepare(`SELECT account, day, data, 'AUD' AS base FROM sp_broker_values WHERE source='IBKR Flex'
+    UNION ALL SELECT account, json_extract(data,'$.statement.date'),json_extract(data,'$.statement'),json_extract(data,'$.statement.base')
+      FROM sp_batches WHERE account IN (SELECT id FROM sp_accounts) AND json_extract(data,'$.broker')='ibkr' AND json_type(data,'$.statement')='object'`).all();
+  for (const s of statements) {
+    if (!s.day) continue;
+    const statement = json(s.data, {});
+    for (const p of statement.positions || []) {
+      const asset = listingMatch(db, { account:s.account, symbol:p.symbol, currency:p.currency, mic:p.mic }).match;
+      if (asset && Number(p.price) > 0) insert.run(s.account,asset.id,s.day,money(p.price),"IBKR 结单报价",30);
+      const fx = p.fxToBase ?? p.fx;
+      if (s.base === "AUD" && p.currency && p.currency !== "AUD" && Number(fx) > 0)
+        insert.run(s.account,"FX:"+p.currency+"/AUD",s.day,money(fx),"IBKR 结单汇率",30);
+    }
   }
 }
 export function preference(db, scope, key) {
@@ -108,9 +137,9 @@ export function inspectSource(file, key = null) {
   try {
     db.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF");
     if (!["accounts", "activities", "assets"].every((t) => hasTable(db, t)))
-      throw Error("请选择 Wealthfolio 的 SQLite 账本或未加密 .db 备份。");
+      throw Error(tMain("ledger.selectWealthfolioDb"));
     if (db.prepare("SELECT 1 FROM sqlite_schema WHERE lower(name) GLOB 'sp_*' LIMIT 1").get())
-      throw Error("来源包含投资账本专用的数据库对象。请检查来源，或使用恢复备份。");
+      throw Error(tMain("ledger.alreadyStockPortfolioDb"));
     const count = (scope) =>
       hasTable(db, "addon_storage")
         ? db.prepare("SELECT COUNT(*) n FROM addon_storage WHERE addon_id=?").get(scope).n
@@ -162,7 +191,7 @@ export function inspectSource(file, key = null) {
 }
 export function savePrice(db, asset, date, price, source, priority = 20) {
   const value = money(price, true);
-  if (new Decimal(value).lte(0)) throw Error("报价必须大于零。");
+  if (new Decimal(value).lte(0)) throw Error(tMain("ledger.quotePositive"));
   db.prepare("INSERT OR REPLACE INTO sp_prices VALUES(?,?,?,?,?)").run(
     asset,
     day(date),
@@ -173,15 +202,44 @@ export function savePrice(db, asset, date, price, source, priority = 20) {
 }
 export function account(db, id) {
   const row = db.prepare("SELECT * FROM sp_accounts WHERE id=?").get(String(id));
-  if (!row) throw Error("找不到该账户。");
+  if (!row) throw Error(tMain("ledger.accountNotFound"));
   return row;
 }
 export function createAccount(db, name, ccy = "AUD") {
   name = String(name).trim();
-  if (!name || name.length > 120) throw Error("请输入账户名称（最多 120 个字符）。");
+  if (!name || name.length > 120) throw Error(tMain("ledger.accountNameInvalid"));
   const id = randomUUID();
   db.prepare("INSERT INTO sp_accounts VALUES(?,?,?,?,?)").run(id, name, currency(ccy), 1, "TRANSACTIONS");
   return id;
+}
+export function listingMatch(db, { account: accountId, source, record, symbol, currency: ccy, mic }) {
+  const ticker = String(symbol || "")
+    .trim()
+    .toUpperCase();
+  const code = ccy ? currency(ccy) : "";
+  const market = String(mic || "")
+    .trim()
+    .toUpperCase();
+  const candidates = db
+    .prepare(
+      `SELECT id,symbol,name,currency,mic,kind FROM sp_assets
+    WHERE upper(symbol)=? AND (?='' OR currency=?) AND (?='' OR upper(mic)=?) ORDER BY name,mic,currency`,
+    )
+    .all(ticker, code, code, market, market);
+  const key = JSON.stringify([accountId, source, record, ticker, code, market]);
+  const prior = candidates.length > 1 && preference(db, "listing-choice", key);
+  return {
+    key,
+    candidates,
+    match: candidates.length === 1 ? candidates[0] : candidates.find((r) => r.id === prior),
+  };
+}
+export function rememberListing(db, args) {
+  account(db, args.account);
+  if (!args.source || !args.record) throw Error(tMain("ledger.selectSourceRecord"));
+  const { candidates, key } = listingMatch(db, args);
+  if (!candidates.some((r) => r.id === args.assetId)) throw Error(tMain("ledger.listingRecordMismatch"));
+  putPref(db, "listing-choice", key, args.assetId);
 }
 export function resolveAsset(db, asset, ccy, create = true) {
   if (!asset?.symbol) return null;
@@ -189,10 +247,10 @@ export function resolveAsset(db, asset, ccy, create = true) {
     code = currency(asset.quoteCcy || ccy),
     mic = String(asset.exchangeMic || "").toUpperCase();
   const found = db.prepare("SELECT * FROM sp_assets WHERE upper(symbol)=? AND currency=?").all(symbol, code);
+  if (!mic && found.length > 1) throw Error(tMain("ledger.specifyListing", { symbol }));
   const exact = found.find((a) => a.mic === mic);
   if (exact) return exact.id;
-  if (found.length === 1 && (!mic || !found[0].mic)) return found[0].id;
-  if (!mic && found.length > 1) throw Error(`请为 ${symbol} 指定交易所。`);
+  if (found.length === 1 && (!mic || (!found[0].mic && !asset.requireMarketMatch))) return found[0].id;
   if (!create) return null;
   const id = randomUUID();
   db.prepare("INSERT INTO sp_assets VALUES(?,?,?,?,?,?,?,?)").run(
@@ -250,13 +308,13 @@ export function saveBrokerValue(db, accountId, input, write = true) {
     !Array.isArray(input.positions) ||
     !Object.keys(input.cash || {}).length
   )
-    throw Error("券商估值需要日期、来源、分币种现金和完整持仓。");
+    throw Error(tMain("ledger.brokerValueFields"));
   const cash = Object.fromEntries(Object.entries(input.cash).map(([c, n]) => [currency(c), money(n)]));
   const positions = input.positions.map((p) => {
     const symbol = String(p.symbol || "")
       .trim()
       .toUpperCase();
-    if (!symbol) throw Error("券商估值缺少证券代码。");
+    if (!symbol) throw Error(tMain("ledger.brokerValueMissingSymbol"));
     return {
       symbol,
       currency: currency(p.currency),
@@ -268,7 +326,7 @@ export function saveBrokerValue(db, accountId, input, write = true) {
   });
   const cashTotal = input.cashTotal == null ? null : money(input.cashTotal),
     securities = input.securities == null ? null : money(input.securities);
-  if (input.nav == null && (cashTotal == null || securities == null)) throw Error("券商估值缺少账户总额。");
+  if (input.nav == null && (cashTotal == null || securities == null)) throw Error(tMain("ledger.brokerValueMissingNav"));
   const nav = input.nav == null ? new Decimal(cashTotal).plus(securities).toFixed() : money(input.nav);
   const data = {
     cash,
@@ -368,16 +426,16 @@ function loadLegacy(db, source) {
 }
 export function backupMode(db) {
   // Additive tables are created when an older backup is opened.
-  const addedTables = new Set(["sp_broker_values", "sp_benchmark_levels", "sp_review_notes"]);
+  const addedTables = new Set(["sp_broker_values", "sp_broker_prices", "sp_benchmark_levels", "sp_review_notes", "sp_holding_evidence"]);
   const requiredTables = [...schema.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)/g)]
     .map((match) => match[1]).filter((name) => !addedTables.has(name));
   if (!requiredTables.every((t) => hasTable(db, t)) ||
       db.prepare("SELECT value FROM sp_meta WHERE key='version'").get()?.value !== "1")
-    throw Error("请选择支持的投资账本备份。");
+    throw Error(tMain("ledger.unsupportedBackup"));
   if (db.prepare(`SELECT 1 FROM sqlite_schema WHERE
       (type IN ('trigger','view') AND (lower(name) GLOB 'sp_*' OR lower(tbl_name) GLOB 'sp_*'))
       OR (lower(name) GLOB 'sp_*' AND upper(sql) LIKE 'CREATE VIRTUAL TABLE%') LIMIT 1`).get())
-    throw Error("备份中有不受支持的账本对象。");
+    throw Error(tMain("ledger.unsupportedObjects"));
   return preference(db, "app", "demo") === "1" ? "demo" : "real";
 }
 
@@ -400,7 +458,7 @@ export function protectOldBook(file, key) {
 }
 export function migrate(source, destination, key) {
   inspectSource(source);
-  if (existsSync(destination)) throw Error("正式账本已存在，迁移不会覆盖它。");
+  if (existsSync(destination)) throw Error(tMain("ledger.realExistsNoOverwrite"));
   mkdirSync(path.dirname(destination), { recursive: true });
   return publishFile(destination, (stage) => {
     const legacy = openDatabase(source, null, { readonly: true, existing: true });
@@ -419,7 +477,7 @@ export function migrate(source, destination, key) {
         for (const [table, name] of [
           ["sp_accounts", "accounts"], ["sp_events", "activities"], ["sp_assets", "assets"],
         ])
-          if (rowCount(db, table) !== summary[name]) throw Error("迁移记录数不一致。");
+          if (rowCount(db, table) !== summary[name]) throw Error(tMain("ledger.migrationCountMismatch"));
         putPref(db, "app", "migration", JSON.stringify({ ...summary, at: new Date().toISOString() }));
       });
       checkIntegrity(db);

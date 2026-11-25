@@ -1,0 +1,818 @@
+/* Design system (spec §1) and adaptive shell (spec §3). Tokens and base classes follow prototypes/_kit/kit.css. */
+
+/* ---------- Tokens: light, dark follows the system ---------- */
+:root {
+  --bg: #ecf1ea;
+  --surface: #fbfcfa;
+  --surface2: #e3eae1;
+  --sep: #d3ddd1;
+  --l1: #17221c;
+  --l2: #4f6056;
+  --l3: #6a7c71;
+  --accent: #126548;
+  --on-accent: #fff;
+  --hero-bg: #124f3c;
+  --hero-text: #fff;
+  --up: #2a7310;
+  --down: #b42318;
+  --warn: #8f5300;
+  --sb: #e3eae1;
+  --sb-text: #33443a;
+  --sb-muted: #53655a;
+  --sb-on-bg: #fbfcfa;
+  --sb-on-text: #0e5239;
+  /* Chart series, fixed order; 1 is always 我的组合／总资产. */
+  --s1: #17805b;
+  --s2: #2871c9;
+  --s3: #d36132;
+  --s4: #6250d6;
+  --s5: #eda100;
+  --s6: #e87ba4;
+  /* Spacing and sizes (spec §1.4). */
+  --pad: 28px;
+  --gap: 14px;
+  --card-pad: 22px;
+  --focus-inset: 8px;
+  --sb-w: 198px;
+  --head-h: 76px;
+  --fast: 120ms;
+  --text: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  --display: "Segoe UI Variable Display", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  color-scheme: light;
+}
+:root[data-aspect="21:9"] {
+  --sb-w: 212px;
+  --pad: 26px;
+  --focus-inset: 18px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0e1410;
+    --surface: #161d18;
+    --surface2: #202a23;
+    --sep: #2a352e;
+    --l1: #e9f0ea;
+    --l2: #a3b3a8;
+    --l3: #728277;
+    --accent: #5cc99a;
+    --on-accent: #06140e;
+    --hero-bg: #1a4a39;
+    --hero-text: #f2f7f3;
+    --up: #8bd45a;
+    --down: #ff7a6e;
+    --warn: #f2b450;
+    --sb: #121a15;
+    --sb-text: #c3d0c7;
+    --sb-muted: #8fa095;
+    --sb-on-bg: #243028;
+    --sb-on-text: #8fe0b9;
+    --s1: #2fa87a;
+    --s2: #3987e5;
+    --s3: #d95926;
+    --s4: #9085e9;
+    --s5: #c98500;
+    --s6: #d55181;
+    color-scheme: dark;
+  }
+}
+/* Viewport lower than 720: short header and 16 px card padding. Compact tier: icon bar and short header. */
+:root[data-short="1"] {
+  --card-pad: 16px;
+  --head-h: 52px;
+}
+:root[data-tier="compact"] {
+  --sb-w: 64px;
+  --head-h: 52px;
+}
+
+/* ---------- Base ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--bg);
+  color: var(--l1);
+  font: 14px/20px var(--text);
+  font-variant-numeric: tabular-nums;
+  font-synthesis: none;
+}
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+:focus-visible,
+.date-pick:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+:where(.pane, .insp, .welcome, dialog) {
+  scroll-padding-block: var(--focus-inset);
+}
+.hero :focus-visible,
+.toast :focus-visible {
+  outline-color: var(--hero-text);
+}
+.disp {
+  font-family: var(--display);
+}
+.up {
+  color: var(--up);
+}
+.down {
+  color: var(--down);
+}
+.warn {
+  color: var(--warn);
+}
+.cap {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--l2);
+}
+.sp {
+  flex: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* ---------- Controls ---------- */
+.btn {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--sep);
+  background: var(--surface);
+  color: var(--l1);
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: background-color var(--fast), border-color var(--fast);
+}
+.btn:hover:where(:not(:disabled)) {
+  background: var(--surface2);
+}
+.btn.pri {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.btn.pri:hover:where(:enabled),
+.primary:hover:where(:enabled) {
+  background: color-mix(in srgb, var(--accent) 86%, var(--l1));
+  border-color: transparent;
+}
+.btn.sm {
+  height: 26px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+input.btn,
+select.btn {
+  border-color: var(--l3);
+  cursor: text;
+}
+select.btn {
+  cursor: pointer;
+  min-inline-size: 0;
+  max-inline-size: 240px;
+  text-overflow: ellipsis;
+}
+.seg {
+  display: inline-flex;
+  background: var(--surface2);
+  border-radius: 6px;
+  padding: 2px;
+}
+.seg > button,
+.seg > span {
+  padding: 0 12px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--l2);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--fast), color var(--fast);
+}
+.seg > .on {
+  background: var(--surface);
+  color: var(--l1);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--sep);
+}
+.seg > button:where(:hover:not(.on, :disabled)) {
+  background: color-mix(in srgb, var(--surface) 55%, var(--surface2));
+  color: var(--l1);
+}
+.tag {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 4px;
+  background: var(--surface2);
+  color: var(--l2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+a.lnk {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+.asof {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+  color: var(--warn);
+  font-weight: 600;
+  font-size: 13px;
+}
+.asof :is(a, button) {
+  color: var(--accent);
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+  border: 0;
+  background: none;
+  padding: 0;
+}
+
+/* ---------- Global filters (FilterControls.jsx) ---------- */
+.account-scope {
+  min-width: 0;
+  max-width: 240px;
+}
+.account-scope > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.account-scope > svg {
+  flex: none;
+}
+.date-pick {
+  position: relative;
+  flex: none;
+  border-color: var(--l3);
+  cursor: pointer;
+}
+.date-pick input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.period-row .period-range {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.period-row input[type="date"].btn {
+  width: 136px;
+}
+.range-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 2px 0 10px;
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--l1);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.range-chip button {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--l2);
+  font: inherit;
+  cursor: pointer;
+}
+.range-chip button:hover {
+  background: var(--surface);
+  color: var(--l1);
+}
+
+/* ---------- Panels ---------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  padding: var(--card-pad);
+  min-width: 0;
+}
+.card h2 {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+h3.sec {
+  font: 600 20px/28px var(--display);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.row.m0 {
+  margin: 0;
+}
+.kpis {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: 1.35fr 1fr 1fr 1fr;
+}
+@container (max-width: 900px) {
+  .kpis {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.kpi .k {
+  color: var(--l2);
+  font-size: 12px;
+  line-height: 16px;
+}
+.kpi .v {
+  font: 600 30px/36px var(--display);
+  letter-spacing: -0.01em;
+}
+.kpi :is(.k, .v, .d) {
+  overflow-wrap: anywhere;
+}
+.kpi .d {
+  font-weight: 600;
+}
+.hero {
+  background: var(--hero-bg);
+  border-color: var(--hero-bg);
+  color: var(--hero-text);
+}
+.hero:where(button:hover:enabled) {
+  background: color-mix(in srgb, var(--hero-bg) 88%, var(--hero-text));
+}
+.hero :is(.k, .cap, .up, .down) {
+  color: var(--hero-text);
+}
+.hero :is(.k, .cap) {
+  opacity: 0.82;
+}
+.chart {
+  width: 100%;
+  display: block;
+  position: relative;
+}
+.chart svg {
+  display: block;
+}
+.note {
+  background: var(--surface2);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  font-size: 13px;
+}
+.dl {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 14px 0;
+}
+.dl > div {
+  background: var(--surface2);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.dl b {
+  display: block;
+  font-size: 18px;
+  line-height: 24px;
+}
+
+/* ---------- Tables (13/18, rows 38, figures right-aligned, first column left) ---------- */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+th {
+  font-weight: 400;
+  color: var(--l2);
+  text-align: right;
+  height: 34px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--sep);
+  white-space: nowrap;
+  padding: 0 0 0 10px;
+}
+td {
+  text-align: right;
+  height: 38px;
+  border-bottom: 1px solid var(--sep);
+  white-space: nowrap;
+  padding: 0 0 0 10px;
+}
+tr:last-child td {
+  border-bottom: 0;
+}
+th:first-child,
+td:first-child {
+  text-align: left;
+  padding-left: 0;
+}
+td:first-child i {
+  font-style: normal;
+  color: var(--l2);
+  margin-left: 6px;
+}
+tbody tr.click {
+  cursor: pointer;
+}
+tbody tr.click:hover,
+tr.sel {
+  background: var(--surface2);
+}
+@container (max-width: 700px) {
+  .hide-n,
+  td:first-child i {
+    display: none;
+  }
+}
+
+/* ---------- Content grid ---------- */
+.cols {
+  display: grid;
+  gap: var(--gap);
+  align-items: start;
+}
+.col {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+  container-type: inline-size;
+}
+.pair {
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  align-items: start;
+}
+.pair.eq {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+@container (max-width: 760px) {
+  .pair,
+  .pair.eq {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---------- Shell ---------- */
+.shell {
+  display: grid;
+  grid-template-columns: var(--sb-w) minmax(0, 1fr) auto;
+  height: 100vh;
+  overflow: hidden;
+}
+.side {
+  background: var(--sb);
+  border-right: 1px solid var(--sep);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 20px 12px 14px;
+  min-height: 0;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 8px 18px;
+  font: 600 18px/1.05 var(--display);
+  color: var(--l1);
+}
+.brand small {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--sb-muted);
+}
+.mark {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--accent);
+  display: inline-flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  padding: 8px 7px;
+  flex: none;
+}
+.mark i {
+  width: 5px;
+  border-radius: 2px;
+  background: var(--on-accent);
+}
+.mark i:nth-child(1) {
+  height: 8px;
+}
+.mark i:nth-child(2) {
+  height: 13px;
+}
+.mark i:nth-child(3) {
+  height: 18px;
+}
+.side .nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  height: 38px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--sb-text);
+  font: inherit;
+  font-weight: 400;
+  text-align: left;
+  justify-content: flex-start;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color var(--fast), color var(--fast);
+}
+.side .nav-item svg {
+  flex: none;
+}
+.side .nav-item:hover {
+  background: color-mix(in srgb, var(--sb-on-bg) 55%, transparent);
+}
+.side .nav-item.on {
+  background: var(--sb-on-bg);
+  color: var(--sb-on-text);
+  font-weight: 600;
+  box-shadow: 0 0 0 1px var(--sep);
+}
+.side hr {
+  border: 0;
+  border-top: 1px solid var(--sep);
+  margin: 8px 6px;
+  align-self: stretch;
+}
+.ledger {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 6px 0;
+  border: 0;
+  border-top: 1px solid var(--sep);
+  border-radius: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  line-height: 17px;
+  font-weight: 400;
+  text-align: left;
+  justify-content: flex-start;
+  color: var(--sb-text);
+  cursor: pointer;
+  position: relative;
+}
+.ledger .av {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--sb-text) 14%, transparent);
+  flex: none;
+}
+.ledger:hover .av {
+  background: color-mix(in srgb, var(--sb-text) 24%, transparent);
+}
+.ledger .tx {
+  min-width: 0;
+}
+.ledger small {
+  display: block;
+  color: var(--sb-muted);
+  font-size: 12px;
+}
+.demo {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--warn);
+  color: var(--surface);
+  font-weight: 600;
+}
+[data-tier="compact"] .side {
+  padding: 16px 8px 12px;
+  align-items: center;
+}
+[data-tier="compact"] .side :is(.brand > div, .nav-item > span, .ledger .tx) {
+  display: none;
+}
+[data-tier="compact"] .side .brand {
+  padding: 0 0 12px;
+}
+[data-tier="compact"] .side .nav-item {
+  width: 44px;
+  height: 40px;
+  padding: 0;
+  justify-content: center;
+}
+[data-tier="compact"] .ledger {
+  padding: 10px 0 0;
+  justify-content: center;
+  align-self: stretch;
+}
+[data-tier="compact"] .ledger .demo {
+  position: absolute;
+  top: 4px;
+  right: -2px;
+  font-size: 10px;
+  padding: 0 3px;
+}
+/* Icon bar: the page name shows on hover or keyboard focus. */
+[data-tier="compact"] .side :is(.nav-item, .ledger):is(:hover, :focus-visible)::after {
+  content: attr(aria-label);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 20;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--l1);
+  color: var(--bg);
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 400;
+  white-space: nowrap;
+  pointer-events: none;
+}
+[data-tier="compact"] .ledger:is(:hover, :focus-visible)::after {
+  top: calc(50% + 5px);
+}
+
+.work {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+/* Keep header controls aligned with the content when a vertical scrollbar appears. */
+.head,
+.pane {
+  scrollbar-gutter: stable;
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 var(--pad);
+  height: var(--head-h);
+  min-width: 0;
+  overflow: hidden;
+}
+.head h1 {
+  font: 600 28px/36px var(--display);
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+:is([data-short="1"], [data-tier="compact"]) .head h1 {
+  font-size: 20px;
+  line-height: 28px;
+}
+.head .header-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+.pane {
+  overflow: auto;
+  padding: var(--focus-inset) var(--pad) var(--pad);
+  min-width: 0;
+  min-height: 0;
+}
+/* Pages without a grid of their own still stack their panels with the card gap. */
+.page {
+  display: grid;
+  gap: var(--gap);
+  align-content: start;
+  min-width: 0;
+  container-type: inline-size;
+  max-width: 1760px;
+  margin-inline: auto;
+}
+[data-aspect="21:9"] .page {
+  max-width: none;
+}
+
+/* ---------- Inspector (wide tier) and dialogs ---------- */
+.insp {
+  width: clamp(380px, 26vw, 520px);
+  border-left: 1px solid var(--sep);
+  background: var(--surface);
+  overflow: auto;
+  padding: 20px 22px;
+  container-type: inline-size;
+  min-height: 0;
+}
+.insp > header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.insp > header h2 {
+  font: 600 20px/28px var(--display);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.insp > header .btn {
+  margin-left: auto;
+  flex: none;
+}
+dialog {
+  width: min(640px, 92vw);
+  max-height: 83vh;
+  border: 0;
+  border-radius: 12px;
+  padding: 0;
+  background: var(--surface);
+  color: var(--l1);
+  container-type: inline-size;
+}
+dialog.wide {
+  width: min(860px, 94vw);
+}
+dialog::backdrop {
+  background: rgba(10, 20, 14, 0.45);
+}
+.modal-inner {
+  padding: 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+.modal-inner > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.modal-inner > header h2 {
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+}
+.modal-inner > header .icon {
+  flex: none;
+}

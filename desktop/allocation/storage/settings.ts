@@ -8,7 +8,6 @@ export const DEFAULT_ALLOCATION_SETTINGS: AllocationSettings = {
   selectionInitialized: false,
   selectedAccountIds: [],
   acknowledgedAccountIds: [],
-  liveFxPolling: true,
   providerModes: {},
   pinnedProviders: {},
   providerIdentities: {},
@@ -24,19 +23,22 @@ function sanitizeSettings(value: unknown): AllocationSettings {
   const typeOverrides = Object.fromEntries(
     Object.entries(candidate.typeOverrides ?? {}).filter(([, type]) => validType(type)),
   ) as Record<string, AssetType>;
+  const pinnedProviders = Object.fromEntries(
+    Object.entries(candidate.pinnedProviders ?? {}).filter(([, provider]) => provider !== "alpha-vantage"),
+  );
   const providerModes = Object.fromEntries(
-    Object.entries(candidate.providerModes ?? {}).filter(([, mode]) => mode === "auto" || mode === "pinned"),
+    Object.entries(candidate.providerModes ?? {}).filter(([key, mode]) =>
+      mode === "auto" || (mode === "pinned" && candidate.pinnedProviders?.[key] !== "alpha-vantage"),
+    ),
   ) as Record<string, "auto" | "pinned">;
   return {
     ...DEFAULT_ALLOCATION_SETTINGS,
-    ...candidate,
     schemaVersion: 1,
     selectionInitialized: Boolean(candidate.selectionInitialized),
     selectedAccountIds: Array.isArray(candidate.selectedAccountIds) ? candidate.selectedAccountIds.filter((id): id is string => typeof id === "string") : [],
     acknowledgedAccountIds: Array.isArray(candidate.acknowledgedAccountIds) ? candidate.acknowledgedAccountIds.filter((id): id is string => typeof id === "string") : [],
-    liveFxPolling: candidate.liveFxPolling !== false,
     providerModes,
-    pinnedProviders: typeof candidate.pinnedProviders === "object" && candidate.pinnedProviders ? candidate.pinnedProviders as Record<string, string> : {},
+    pinnedProviders,
     providerIdentities: typeof candidate.providerIdentities === "object" && candidate.providerIdentities ? candidate.providerIdentities as Record<string, string> : {},
     typeOverrides,
     aliases: typeof candidate.aliases === "object" && candidate.aliases ? candidate.aliases as Record<string, string> : {},

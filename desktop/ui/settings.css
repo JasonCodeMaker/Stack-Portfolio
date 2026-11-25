@@ -1,0 +1,293 @@
+/* Settings (spec §4.6) and welcome page (spec §4.7), following prototypes/maintenance variant A.
+   Loaded after styles.css so the old page rules underneath do not leak in. */
+
+/* ---------- Forms, shared by settings, the welcome page and their dialogs ---------- */
+:where(.settings, .welcome) p {
+  line-height: inherit;
+}
+:is(.settings, .welcome) .fg {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px 14px;
+  margin: 12px 0;
+  max-width: 760px;
+}
+:is(.settings, .welcome) .fg.end {
+  align-items: end;
+}
+:is(.settings, .welcome) .fg > .btn {
+  justify-self: start;
+}
+:is(.settings, .welcome) .f {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+:is(.settings, .welcome) .f > span {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--l2);
+}
+:is(.settings, .welcome) .f :is(input, select) {
+  height: 32px;
+  border: 1px solid var(--l3);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--l1);
+  font: inherit;
+  padding: 0 10px;
+  min-width: 0;
+  width: 100%;
+}
+:is(.settings, .welcome) .chk {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+  font-size: 13px;
+}
+:is(.settings, .welcome) .acts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 12px;
+}
+:is(.settings, .welcome) .muted {
+  color: var(--l2);
+  font-size: 13px;
+  max-width: 72ch;
+  margin: 6px 0;
+}
+:is(.settings, .welcome) button.lnk {
+  border: 0;
+  background: none;
+  padding: 0;
+  height: auto;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+}
+:is(.settings, .welcome) button.lnk:hover {
+  background: none;
+  text-decoration: underline;
+}
+:is(.settings, .welcome) .btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---------- Settings ---------- */
+.settings > .row {
+  flex-wrap: wrap;
+}
+.settings .stack {
+  display: grid;
+  gap: var(--gap);
+  min-width: 0;
+  container-type: inline-size;
+}
+.settings {
+  max-width: 1240px;
+}
+[data-aspect="21:9"] .settings {
+  max-width: 1820px;
+}
+.settings-zoom output {
+  min-width: 4ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.settings .card > .row h2 {
+  margin: 0;
+}
+.settings .card details {
+  border-top: 1px solid var(--sep);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+.settings .card details > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 400;
+  margin: 0;
+}
+.settings details.card > summary {
+  cursor: pointer;
+  color: var(--l1);
+  font-size: 16px;
+  line-height: 22px;
+  font-weight: 600;
+  margin: 0;
+}
+.settings .notice {
+  display: block;
+  border: 0;
+  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  color: var(--warn);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+.settings .status {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.settings .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--l3);
+  display: inline-block;
+}
+.settings .dot.up {
+  background: var(--up);
+}
+.settings .dot.warn {
+  background: var(--warn);
+}
+.settings .bsum {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+.settings .bsum .av {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--surface2);
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+  flex: none;
+}
+.settings .mini {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.settings .mini span {
+  background: var(--surface2);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--l2);
+}
+.settings .mini b {
+  display: block;
+  font-size: 16px;
+  color: var(--l1);
+}
+.settings .sub {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 16px 0 4px;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.settings :is(td, th).l {
+  text-align: left;
+}
+.settings td.account-name {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Welcome page: no shell, two cards side by side, stacked below 900 ---------- */
+.welcome {
+  height: 100vh;
+  overflow: auto;
+  padding: 0 var(--pad) var(--pad);
+}
+.wel {
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  padding-top: var(--pad);
+}
+.wel > header {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  font: 600 18px/1 var(--display);
+}
+.wel > main {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 22px;
+  padding: 24px 0;
+}
+.wel .intro {
+  text-align: center;
+  margin: 0;
+}
+.wel .intro h1 {
+  font: 600 28px/36px var(--display);
+}
+.wel .intro p {
+  color: var(--l2);
+  margin-top: 4px;
+}
+.wc {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: var(--gap);
+  width: min(920px, 92%);
+}
+[data-aspect="21:9"] .wc { width: min(960px, 92%); }
+.wc .card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  justify-items: start;
+}
+.wc .card h2 .demo {
+  vertical-align: 2px;
+}
+.wc p {
+  color: var(--l2);
+  font-size: 13px;
+}
+.wc svg {
+  color: var(--accent);
+}
+.wc .hero :is(svg, p) {
+  color: var(--hero-text);
+}
+.wc .hero p {
+  opacity: 0.85;
+}
+.wc .hero .btn {
+  background: var(--hero-text);
+  color: var(--hero-bg);
+  border-color: var(--hero-text);
+  font-weight: 600;
+}
+.wc .hero .btn:hover {
+  background: color-mix(in srgb, var(--hero-text) 90%, var(--hero-bg));
+  border-color: transparent;
+}
+.wc .hero .f > span {
+  color: var(--hero-text);
+  opacity: 0.85;
+}
+.wf {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+@media (max-width: 900px) {
+  .wc {
+    grid-template-columns: 1fr;
+  }
+}

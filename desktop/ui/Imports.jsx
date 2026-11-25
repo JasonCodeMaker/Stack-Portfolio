@@ -1,21 +1,13 @@
-import React, { useEffect, useState } from "react";
-import { FileUp, CloudDownload, FileText, Check, History, ArrowRight } from "lucide-react";
-import { ImportPreview } from "./ImportPreview";
-import {
-  api,
-  num,
-  fmt,
-  aud,
-  types,
-  Table,
-  Card,
-  Field,
-  Tabs,
-  Empty,
-  Modal,
-  AccountSelect,
-  parseCash,
-} from "./common";
+import React, { useEffect, useState, useRef } from "react";
+import { FileUp, CloudDownload, FileText } from "lucide-react";
+import { HoldingEditor, SecurityFields, listingLabel, marketNames } from "./HoldingEditor";
+import { BrokerResult } from "./ImportPreview";
+import { Detail, Grid, useRowKeys, useShell } from "./Shell";
+import { checkLayout, quantityGaps, syncLayout } from "./importsLayout.js";
+import { api, num, fmt, types, Empty, Modal } from "./common";
+import { tMain, useI18n } from "./i18n.jsx";
+import "./imports.css";
+
 const blank = {
   type: "DEPOSIT",
   currency: "AUD",
@@ -31,44 +23,283 @@ const blank = {
   kind: "EQUITY",
   group: "",
 };
-function parsePositions(text, opening = false) {
-  if (!text.trim()) return [];
-  return text
-    .trim()
-    .split(/\r?\n/)
-    .map((s) => {
-      const [symbol, quantity, currency, mic, price, kind] = s.trim().split(/[\s,，]+/);
-      if (!symbol || quantity == null || !Number.isFinite(Number(quantity)) || (opening && !currency))
-        throw Error("请核对持仓行中的代码、数量及币种。");
-      return { symbol, quantity, currency, mic, price, kind };
-    });
+const tabIds = ["file", "check", "history", "opening"];
+const brokerIds = ["both", "ibkr", "webull"];
+const PAGE = 100;
+
+function Seg({ items, value, onChange }) {
+  return (
+    <span className="seg">
+      {items.map(([id, label]) => (
+        <button
+          type="button"
+          key={id}
+          aria-pressed={value === id}
+          className={value === id ? "on" : ""}
+          onClick={() => onChange(id)}
+        >
+          {label}
+        </button>
+      ))}
+    </span>
+  );
+}
+function F({ label, children }) {
+  return (
+    <label className="f">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+function Panel({ title, action, children, className = "" }) {
+  return (
+    <section className={"card " + className} aria-label={title}>
+      <div className="row">
+        <h2>{title}</h2>
+        <span className="sp" />
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+function AccountOptions({ d, value, set, className }) {
+  const { t } = useI18n();
+  return (
+    <select className={className} aria-label={t("app.accountSelectAria")} value={value || ""} onChange={(e) => set(e.target.value)}>
+      {!value && <option value="">{t("app.selectAccount")}</option>}
+      {d.accounts
+        .filter((a) => a.active)
+        .map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.name}
+          </option>
+        ))}
+    </select>
+  );
+}
+
+function StatementLines({ cash, setCash, positions, setPositions, listings = [], opening = false }) {
+  const { t, marketLabel } = useI18n();
+  const change = (rows, set, i, patch) => set(rows.map((v, n) => (n === i ? { ...v, ...patch } : v)));
+  const remove = (rows, set, i) => (
+    <button type="button" className="btn" onClick={() => set(rows.filter((_, n) => n !== i))}>
+      {t("app.remove")}
+    </button>
+  );
+  return (
+    <>
+      <div className="sub">{t("imports.cashSection")}</div>
+      {cash.map((v, i) => (
+        <div className="line" key={i}>
+          <input
+            aria-label={t("imports.cashCcyAria", { n: i + 1 })}
+            placeholder={t("imports.cashCcyPlaceholder")}
+            maxLength={3}
+            value={v.currency}
+            onChange={(e) => change(cash, setCash, i, { currency: e.target.value.toUpperCase() })}
+          />
+          <input
+            aria-label={t("imports.cashBalAria", { n: i + 1 })}
+            placeholder={t("imports.cashBalPlaceholder")}
+            type="number"
+            step="any"
+            value={v.value}
+            onChange={(e) => change(cash, setCash, i, { value: e.target.value })}
+          />
+          {remove(cash, setCash, i)}
+        </div>
+      ))}
+      <button type="button" className="lnk cap" onClick={() => setCash([...cash, { currency: "", value: "" }])}>
+        {t("imports.addCurrency")}
+      </button>
+      <div className="sub">{t("imports.securitiesSection")}</div>
+      {positions.map((v, i) =>
+        opening ? (
+          <div className="line full" key={i}>
+            <F label={t("editor.symbol")}>
+              <input
+                value={v.symbol}
+                onChange={(e) =>
+                  change(positions, setPositions, i, { symbol: e.target.value.toUpperCase(), assetId: "", mic: "" })
+                }
+              />
+            </F>
+            <F label={t("imports.qtyPlaceholder")}>
+              <input
+                type="number"
+                step="any"
+                value={v.quantity}
+                onChange={(e) => change(positions, setPositions, i, { quantity: e.target.value })}
+              />
+            </F>
+            {listings.some((a) => a.symbol === v.symbol) && (
+              <F label={t("imports.existingListing")}>
+                <select
+                  value={v.assetId || ""}
+                  onChange={(e) => {
+                    const match = listings.find((a) => a.id === e.target.value);
+                    change(
+                      positions,
+                      setPositions,
+                      i,
+                      match
+                        ? { assetId: match.id, mic: match.mic, currency: match.currency, kind: match.kind }
+                        : { assetId: "", mic: "" },
+                    );
+                  }}
+                >
+                  <option value="">{t("imports.manualMarketCurrency")}</option>
+                  {listings
+                    .filter((a) => a.symbol === v.symbol)
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {listingLabel(a, marketLabel)}
+                      </option>
+                    ))}
+                </select>
+              </F>
+            )}
+            <F label={t("editor.tradeCurrency")}>
+              <input
+                readOnly={!!v.assetId}
+                value={v.currency || ""}
+                maxLength={3}
+                onChange={(e) => change(positions, setPositions, i, { currency: e.target.value.toUpperCase() })}
+              />
+            </F>
+            <F label={t("editor.exchangeMarket")}>
+              <input
+                readOnly={!!v.assetId}
+                list="statement-markets"
+                value={v.mic || ""}
+                onChange={(e) => change(positions, setPositions, i, { mic: e.target.value.toUpperCase() })}
+              />
+            </F>
+            <F label={t("imports.dayPriceOpt")}>
+              <input
+                type="number"
+                step="any"
+                value={v.price || ""}
+                onChange={(e) => change(positions, setPositions, i, { price: e.target.value })}
+              />
+            </F>
+            <F label={t("imports.categoryLabel")}>
+              <select
+                value={v.kind || "EQUITY"}
+                onChange={(e) => change(positions, setPositions, i, { kind: e.target.value })}
+              >
+                <option value="EQUITY">{t("editor.type.EQUITY")}</option>
+                <option value="ETF">{t("editor.type.ETF")}</option>
+              </select>
+            </F>
+            {remove(positions, setPositions, i)}
+          </div>
+        ) : (
+          <div className="line" key={i}>
+            <input
+              aria-label={t("imports.tickerAria", { n: i + 1 })}
+              placeholder={t("imports.tickerPlaceholder")}
+              value={v.symbol}
+              onChange={(e) =>
+                change(positions, setPositions, i, { symbol: e.target.value.toUpperCase(), assetId: "", mic: "" })
+              }
+            />
+            <input
+              aria-label={t("imports.qtyAria", { n: i + 1 })}
+              placeholder={t("imports.qtyPlaceholder")}
+              type="number"
+              step="any"
+              value={v.quantity}
+              onChange={(e) => change(positions, setPositions, i, { quantity: e.target.value })}
+            />
+            {remove(positions, setPositions, i)}
+          </div>
+        ),
+      )}
+      <button
+        type="button"
+        className="lnk cap"
+        onClick={() => setPositions([...positions, { symbol: "", quantity: "", currency: opening ? "AUD" : "" }])}
+      >
+        {t("imports.addSecurity")}
+      </button>
+      {opening && (
+        <datalist id="statement-markets">
+          {Object.keys(marketNames).map((mic) => (
+            <option key={mic} value={mic}>
+              {marketLabel(mic)}
+            </option>
+          ))}
+        </datalist>
+      )}
+    </>
+  );
+}
+function cashAmounts(entries) {
+  const amounts = {};
+  for (const v of entries) {
+    if (v.value === "" && !v.currency) continue;
+    if (v.value === "" || !/^[A-Z]{3}$/.test(v.currency) || v.currency in amounts)
+      throw Error(tMain("imports.cashDuplicateLineError"));
+    amounts[v.currency] = v.value;
+  }
+  return amounts;
+}
+function ListingChoices({ choices, resolve }) {
+  const { t, marketLabel } = useI18n();
+  if (!choices?.length) return null;
+  return (
+    <div className="fg">
+      {choices.map((c) => (
+        <F key={c.record + c.symbol} label={t("imports.multiListingChoice", { symbol: c.symbol })}>
+          <select defaultValue="" onChange={(e) => e.target.value && resolve(c, e.target.value)}>
+            <option value="">{t("editor.selectListing")}</option>
+            {c.candidates.map((a) => (
+              <option key={a.id} value={a.id}>
+                {listingLabel(a, marketLabel)}
+              </option>
+            ))}
+          </select>
+        </F>
+      ))}
+    </div>
+  );
 }
 export function Imports({ d, mode, run, initial = {}, onPage }) {
+  const { t, formatDateTime, typeLabel, sourceLabel } = useI18n();
+  const { cols } = useShell();
   const [tab, setTab] = useState(initial.tab || "file"),
-    [broker, setBroker] = useState("webull");
+    [broker, setBroker] = useState(initial.broker || "both");
   const defaultAccount =
-    initial.account || d.accounts.find((a) => /webull/i.test(a.name))?.id || d.selected[0] || "";
+    initial.account ||
+    (initial.broker &&
+      d.accounts.find((a) => a.active && a.name.toLowerCase().includes(initial.broker))?.id) ||
+    d.selected[0] ||
+    "";
   const [account, setAccount] = useState(defaultAccount),
-    [preview, setPreview] = useState(null),
-    [last, setLast] = useState(null);
+    [reports, setReports] = useState({});
+  const started = useRef(false);
+  const requests = useRef({});
   const [ledger, setLedger] = useState([]),
     [offset, setOffset] = useState(0),
     [search, setSearch] = useState(""),
     [modal, setModal] = useState(null);
   const [form, setForm] = useState({ ...blank, date: d.date }),
     [date, setDate] = useState(d.date),
-    [cash, setCash] = useState(""),
-    [pos, setPos] = useState(""),
+    [cash, setCash] = useState([{ currency: "AUD", value: "" }]),
+    [pos, setPos] = useState([]),
+    [noSecurities, setNoSecurities] = useState(false),
     [compare, setCompare] = useState(null),
     [flow, setFlow] = useState(false);
-  const [openCash, setOpenCash] = useState(""),
-    [openPos, setOpenPos] = useState("");
-  const [mapping, setMapping] = useState({
-    ibkr: d.accounts.find((a) => /ibkr|interactive/i.test(a.name))?.id || "",
-    webull: d.accounts.find((a) => /webull/i.test(a.name))?.id || "",
-  });
+  const [openCash, setOpenCash] = useState([]),
+    [openPos, setOpenPos] = useState([]);
+  const [mapping, setMapping] = useState(() => initial.account && ["ibkr","webull"].includes(initial.broker)
+    ? {...d.brokerAccounts,[initial.broker]:initial.account} : d.brokerAccounts);
   const [nav, setNav] = useState("");
   const [amend, setAmend] = useState(null),
+    [amendForm, setAmendForm] = useState({}),
     [revisions, setRevisions] = useState([]),
     [voided, setVoided] = useState(false);
   const demo = mode === "demo",
@@ -77,21 +308,22 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     if (next === account) return;
     setAccount(next);
     if (!keepImport) {
-      setPreview(null);
-      setLast(null);
+      setReports({});
     }
     setCompare(null);
     setFlow(false);
-    setCash("");
-    setPos("");
+    setCash([{ currency: "AUD", value: "" }]);
+    setPos([]);
+    setNoSecurities(false);
     setNav("");
     setOffset(0);
+    setAmend(null);
   }
   useEffect(() => {
     let a = true;
     if (tab === "history" && account)
       api
-        .history({ account, limit: 100, offset, text: search })
+        .history({ account, limit: PAGE, offset, text: search })
         .then((v) => {
           if (a) setLedger(v);
         })
@@ -100,58 +332,79 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       a = false;
     };
   }, [tab, account, offset, search, d]);
-  function accountFor(b) {
-    return (
-      d.accounts.find((a) => (b === "ibkr" ? /ibkr|interactive/i : /webull/i).test(a.name))?.id || account
-    );
+  function chooseTab(next) {
+    setTab(next);
+    setAmend(null);
   }
   function chooseBroker(b) {
+    requests.current = {};
     setBroker(b);
-    if (b !== "both") selectAccount(accountFor(b));
-    setPreview(null);
-    setLast(null);
+    if (b !== "both") selectAccount(mapping[b] || "");
+    setReports({});
   }
-  async function prepare(source) {
+  function updateReport(b, result) {
+    setReports((prev) => ({ ...prev, [b]: result }));
+  }
+  async function prepare(source, which = broker, id = which === "both" ? "" : mapping[which]) {
+    if (which === "both") {
+      if (mapping.ibkr && mapping.ibkr === mapping.webull)
+        return run(() => {
+          throw Error(t("imports.distinctAccountsError"));
+        }, false);
+      return Promise.all(["ibkr", "webull"].map((b) => prepare(source, b, mapping[b])));
+    }
+    const request = Symbol();
+    requests.current[which] = request;
+    if (source !== "file") updateReport(which, { broker: which, loading: true });
     await run(async () => {
-      const v = await api.preview({ source, broker, account, mapping });
-      if (v) {
-        setPreview(v);
-        setLast(null);
+      try {
+        if (!id) throw Error(t("imports.selectTargetError"));
+        const v = await api.preview({ source, broker: which, account: id });
+        if (v && requests.current[which] === request) updateReport(which, { ...v, sourceKind: source });
+      } catch (e) {
+        if (requests.current[which] === request)
+          updateReport(which, {
+            broker: which,
+            account: id,
+            sourceKind: source,
+            error: String(e.message).replace(/^Error invoking remote method '.*?': (?:Error: )?/, ""),
+          });
       }
     }, false);
   }
-  async function commit() {
+  useEffect(() => {
+    if (!initial.sync || started.current) return;
+    started.current = true;
+    prepare(demo ? "sample" : "live", initial.broker);
+  }, []);
+  async function commit(r) {
     await run(async () => {
-      const v = await api.commit({ token: preview.token });
-      setLast(v);
-      setPreview(null);
-    });
+      const v = await api.commit({ token: r.token });
+      updateReport(r.broker, { ...v, done: true });
+    }, t("imports.savedBrokerMsg"));
   }
   function useStatement(v) {
     setDate(v.date);
-    setCash(
-      Object.entries(v.cash || {})
-        .map(([k, n]) => k + " " + n)
-        .join("\n"),
-    );
-    setPos((v.positions || []).map((p) => [p.symbol, p.quantity, p.currency, p.mic].filter(v => v != null && v !== "").join(" ")).join("\n"));
+    setCash(Object.entries(v.cash || {}).map(([currency, value]) => ({ currency, value })));
+    setNoSecurities(Array.isArray(v.positions) && v.positions.length === 0);
+    setPos((v.positions || []).map((p) => ({ ...p })));
     setNav(v.base === "AUD" && v.nav != null ? String(v.nav) : "");
     setCompare(null);
     setFlow(false);
-    setTab("check");
+    chooseTab("check");
   }
   function compareArgs() {
     return {
       account,
       date,
-      cash: parseCash(cash),
-      positions: pos.trim() ? parsePositions(pos) : undefined,
+      cash: cashAmounts(cash),
+      positions: pos.length || noSecurities ? pos : undefined,
       nav: nav.trim() || null,
       flowsReviewed: flow,
-      source: webullSample ? "示例 Webull 月结单" : "券商结单",
+      source: webullSample ? t("imports.sampleStatementSource") : t("imports.brokerStatementSource"),
     };
   }
-  function openManual(sample = false) {
+  function openManual(sample = false, type = "DEPOSIT") {
     setForm(
       sample
         ? {
@@ -161,18 +414,21 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             currency: "AUD",
             amount: "1000",
             reference: "WB-OCT-DEP-01",
-            note: "月结单 · 银行入金",
+            note: t("imports.sampleDepositNote"),
           }
-        : { ...blank, date: d.date },
+        : { ...blank, date: d.date, type },
     );
     setModal("manual");
   }
+  const accountName = d.accounts.find((a) => a.id === account)?.name;
+  const accountReports = d.quantityReports
+    .filter((r) => r.account === account)
+    .sort((a, b) => b.day.localeCompare(a.day));
   const change = (k, v) => setForm({ ...form, [k]: v });
+  const changeAmend = (k, v) => setAmendForm({ ...amendForm, [k]: v });
   async function edit(v) {
     setAmend(v);
-    setRevisions(await api.corrections({ id: v.id }));
-    setForm({
-      ...blank,
+    setAmendForm({
       date: String(v.date).slice(0, 10),
       currency: v.currency,
       amount: String(v.amount ?? ""),
@@ -182,7 +438,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       note: v.comment || "",
       reason: "",
     });
-    setModal("amend");
+    setRevisions([]);
+    setRevisions(await api.corrections({ id: v.id }));
   }
   const batches = d.batches.filter((b) =>
     broker === "both" ? Object.values(mapping).includes(b.account) : b.account === account,
@@ -190,512 +447,763 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   // A booked record replaced by its broker original stays in the book but out of the default list.
   const superseded = (v) => v.metadata?.supersededBy || String(v.status).toUpperCase() === "VOID";
   const entries = ledger.filter((v) => voided || !superseded(v));
-  const sources = { MANUAL: "手工录入", WEBULL: "Webull", IBKR: "IBKR" };
+  const sources = { MANUAL: t("source.manual"), WEBULL: "Webull", IBKR: "IBKR" };
+  const rowKeys = useRowKeys(
+    entries.map((v) => v.id),
+    amend?.id,
+    (id) => {
+      const v = entries.find((e) => e.id === id);
+      if (v) run(() => edit(v), false);
+    },
+  );
   if (!d.accounts.some((a) => a.active))
     return (
-      <Card title="导入与对账">
-        <Empty>请先建立一个券商账户。</Empty>
-        <button className="primary" onClick={() => onPage("settings")}>
-          建立账户
-        </button>
-      </Card>
-    );
-  return (
-    <>
-      <div className="page-controls">
-        <Tabs
-          items={[
-            ["file", "导入与同步"],
-            ["check", "结单对账"],
-            ["history", "交易流水"],
-            ["opening", "期初余额"],
-          ]}
-          value={tab}
-          onChange={setTab}
-        />
-        {(tab !== "file" || broker !== "both") && <AccountSelect data={d} value={account} set={selectAccount} />}
+      <div className="imp imp-page">
+        <Panel title={t("imports.needAccountTitle")} className="cap880">
+          <Empty>{t("imports.needAccountEmpty")}</Empty>
+          <button className="btn pri" onClick={() => onPage("settings", { tab: "book" })}>
+            {t("imports.createAccountBtn")}
+          </button>
+        </Panel>
       </div>
-      {tab === "file" && (
-        <>
-          <Card
-            title="选择券商数据"
-            action={
-              <Tabs
-                items={[
-                  ["webull", "Webull AU"],
-                  ["ibkr", "IBKR"],
-                  ["both", "两家一起"],
-                ]}
-                value={broker}
-                onChange={chooseBroker}
-              />
+    );
+
+  const brokers = broker === "both" ? ["ibkr", "webull"] : [broker];
+  const update = (
+    <Panel
+      title={t("imports.updatePanelTitle")}
+      action={<Seg items={brokerIds.map((id) => [id, t(`imports.broker.${id}`)])} value={broker} onChange={chooseBroker} />}
+    >
+      <div className="opts">
+        <button type="button" onClick={() => prepare(demo ? "sample" : "live")}>
+          <CloudDownload size={22} strokeWidth={1.8} />
+          <b>{t("imports.opt.sync")}</b>
+          <small>{t(demo ? "imports.opt.syncDemo" : "imports.opt.syncLive")}</small>
+        </button>
+        <button type="button" onClick={() => setModal("file")}>
+          <FileUp size={22} strokeWidth={1.8} />
+          <b>{t("imports.opt.file")}</b>
+          <small>{t("imports.opt.fileSub")}</small>
+        </button>
+        <button type="button" onClick={() => setModal("entry")}>
+          <FileText size={22} strokeWidth={1.8} />
+          <b>{t("imports.opt.manual")}</b>
+          <small>{t("imports.opt.manualSub")}</small>
+        </button>
+      </div>
+      <details
+        className="account-mapping"
+        open={Object.keys(mapping).some((b) => brokers.includes(b) && !mapping[b]) || undefined}
+      >
+        <summary>
+          {t("imports.mappingSummary", {
+            names: brokers.map((b) => d.accounts.find((a) => a.id === mapping[b])?.name || t("imports.pendingSelect")).join(t("common.comma")),
+          })}
+        </summary>
+        <div className="fg">
+          {brokers.map((b) => (
+            <F key={b} label={t("imports.targetAccountLabel", { broker: b.toUpperCase() })}>
+              <select
+                value={mapping[b]}
+                onChange={(e) => {
+                  delete requests.current[b];
+                  setMapping({ ...mapping, [b]: e.target.value });
+                  if (!reports[b]?.error) updateReport(b, null);
+                  if (broker === b) selectAccount(e.target.value, true);
+                }}
+              >
+                <option value="">{t("app.selectAccount")}</option>
+                {d.accounts
+                  .filter((a) => a.active && a.mode === "TRANSACTIONS")
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+              </select>
+            </F>
+          ))}
+        </div>
+      </details>
+    </Panel>
+  );
+  const previews = ["ibkr", "webull"].filter((b) => reports[b]);
+  const brokerCard = (r) => (
+    <BrokerResult
+      report={r}
+      accounts={d.accounts}
+      onConfirm={() => commit(r)}
+      onClose={() => updateReport(r.broker, null)}
+      onRetry={() => prepare(r.sourceKind, r.broker)}
+      onConnect={demo ? null : () => onPage("settings", { tab: "connections", broker: r.broker })}
+      onReconcile={(result) => {
+        selectAccount(result.account, true);
+        useStatement(result.statement || { date: d.date });
+      }}
+    >
+      <ListingChoices
+        choices={r.choices}
+        resolve={(c, id) =>
+          run(async () => {
+            await api.rememberListing({ ...c, assetId: id });
+            updateReport(r.broker, { ...(await api.preview({ token: r.token })), sourceKind: r.sourceKind });
+          }, false)
+        }
+      />
+    </BrokerResult>
+  );
+  const batchCard = batches.length > 0 && (
+    <Panel title={t("imports.recentBatches")}>
+      <div className="tw">
+        <table>
+          <thead>
+            <tr>
+              <th>{t("imports.col.source")}</th>
+              <th className="l">{t("imports.col.time")}</th>
+              <th>{t("imports.col.imported")}</th>
+              <th>{t("imports.col.duplicate")}</th>
+              <th>{t("imports.col.repaired")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {batches.slice(0, 8).map((b) => (
+              <tr key={b.id}>
+                <td>{sourceLabel(b.source)}</td>
+                <td className="l">{formatDateTime(b.created)}</td>
+                <td>{b.data.imported}</td>
+                <td>{b.data.duplicate}</td>
+                <td>{(b.data.updated || 0) + (b.data.repaired || 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Panel>
+  );
+
+  const evidence = accountReports.length > 0 && (
+    <Panel title={t("imports.evidenceTitle")}>
+      {accountReports.map((r) => (
+        <div className="ev" key={r.day + r.asset}>
+          <b>
+            {r.symbol} · {r.day}
+          </b>
+          <span>
+            {t("imports.evidenceDesc", {
+              ref: sourceLabel(r.reference),
+              qty: num(r.quantity),
+              ledgerQty: num(r.ledgerQuantity),
+            })}
+          </span>
+          <b className={Number(r.difference) ? "warn" : "up"}>
+            {Number(r.difference)
+              ? t("imports.evidenceGap", { diff: num(Math.abs(r.difference)) })
+              : t("imports.evidenceMatch")}
+          </b>
+          <button
+            type="button"
+            className="lnk"
+            onClick={() => {
+              setSearch(r.symbol);
+              setOffset(0);
+              chooseTab("history");
+            }}
+          >
+            {t("imports.viewRelatedActivity")}
+          </button>
+        </div>
+      ))}
+    </Panel>
+  );
+  const statement = (
+    <Panel
+      title={t("imports.reconcileTitle")}
+      action={
+        webullSample ? (
+          <button type="button" className="btn sm" onClick={() => setModal("statement")}>
+            {t("imports.viewSampleStatement")}
+          </button>
+        ) : null
+      }
+    >
+      <div className="fg">
+        <F label={t("imports.statementDate")}>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => {
+              setDate(e.target.value);
+              setCompare(null);
+            }}
+          />
+        </F>
+      </div>
+      <StatementLines
+        cash={cash}
+        setCash={(v) => {
+          setCash(v);
+          setCompare(null);
+        }}
+        positions={pos}
+        setPositions={(v) => {
+          setPos(v);
+          setCompare(null);
+        }}
+      />
+      {!pos.length && (
+        <label className="chk">
+          <input
+            type="checkbox"
+            checked={noSecurities}
+            onChange={(e) => {
+              setNoSecurities(e.target.checked);
+              setCompare(null);
+            }}
+          />
+          {t("imports.zeroHoldings")}
+        </label>
+      )}
+      <div className="fg">
+        <F label={t("imports.statementNavOpt")}>
+          <input
+            type="number"
+            step=".01"
+            value={nav}
+            onChange={(e) => {
+              setNav(e.target.value);
+              setCompare(null);
+            }}
+          />
+        </F>
+      </div>
+      <div className="acts">
+        <button
+          type="button"
+          className="btn pri"
+          onClick={() => run(async () => setCompare(await api.compare(compareArgs())), false)}
+        >
+          {t("imports.compareBtn")}
+        </button>
+        <button type="button" className="btn" onClick={() => openManual(false)}>
+          {t("imports.addOneFlowBtn")}
+        </button>
+        {!demo && nav.trim() && (
+          <button
+            type="button"
+            className="btn"
+            onClick={() =>
+              run(() => api.recordAccountValue({ ...compareArgs(), positions: pos }), t("imports.brokerNavSaved"))
             }
           >
-            {broker === "both" && (
-              <div className="form-grid">
-                {[
-                  ["ibkr", "IBKR 入账账户"],
-                  ["webull", "Webull 入账账户"],
-                ].map(([k, l]) => (
-                  <Field key={k} label={l}>
-                    <select
-                      value={mapping[k]}
-                      onChange={(e) => {
-                        setMapping({ ...mapping, [k]: e.target.value });
-                        setPreview(null);
-                        setLast(null);
-                      }}
-                    >
-                      <option value="">选择账户</option>
-                      {d.accounts
-                        .filter((a) => a.active)
-                        .map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.name}
-                          </option>
-                        ))}
-                    </select>
-                  </Field>
-                ))}
-              </div>
-            )}
-            <div className="import-options">
-              {broker !== "both" && (
-                <button onClick={() => prepare("file")}>
-                  <FileUp />
-                  <b>选择{broker === "ibkr" ? " Flex XML" : "成交 CSV"}</b>
-                  <small>查看本次新增和修改</small>
-                </button>
-              )}
-              {demo ? (
-                <button onClick={() => prepare("sample")}>
-                  <FileText />
-                  <b>载入示例文件</b>
-                  <small>
-                    {broker === "both" ? "分别查看 IBKR 结单和 Webull 成交" : broker === "ibkr" ? "一笔 AAPL 买入和同期现金、持仓结单" : "一笔 BHP 买入，可重复导入"}
-                  </small>
-                </button>
-              ) : (
-                <button onClick={() => prepare("live")}>
-                  <CloudDownload />
-                  <b>从券商拉取</b>
-                  <small>
-                    {broker === "both" ? "IBKR Flex 报表和 Webull AU 近六个月流水及账户金额" : broker === "ibkr" ? "最近 365 天的 Activity Flex 记录" : "最近六个月的流水及本次账户金额"}
-                  </small>
-                </button>
-              )}
-            </div>
-            {!demo && (
-              <button className="text-btn" onClick={() => onPage("settings", { tab: "connections" })}>
-                管理券商连接 <ArrowRight size={15} />
-              </button>
-            )}
-          </Card>
-          {(preview || last) && (
-            <ImportPreview
-              key={preview?.token || "result"}
-              result={preview || last}
-              done={Boolean(last)}
-              accounts={d.accounts}
-              confirm={commit}
-              close={() => { setPreview(null); setLast(null); }}
-              reconcile={(r) => {
-                selectAccount(r.account, true);
-                useStatement(r.statement || { date: d.date });
-              }}
-            />
-          )}
-          {!preview && !last && batches.length > 0 && (
-            <Card title="最近导入批次">
-              <Table head={["文件或连接", "时间", ["新增", "num"], ["重复", "num"], ["更正", "num"]]}>
-                {batches.slice(0, 8).map((b) => (
-                  <tr key={b.id}>
-                    <td>{b.source}</td>
-                    <td>{new Date(b.created).toLocaleString("zh-CN")}</td>
-                    <td className="num">{b.data.imported}</td>
-                    <td className="num">{b.data.duplicate}</td>
-                    <td className="num">{(b.data.updated || 0) + (b.data.repaired || 0)}</td>
+            {t("imports.adoptBrokerNavBtn")}
+          </button>
+        )}
+      </div>
+      {compare && (
+        <>
+          <ListingChoices
+            choices={compare.choices}
+            resolve={(c, id) =>
+              run(async () => {
+                await api.rememberListing({ ...c, assetId: id });
+                setCompare(await api.compare(compareArgs()));
+              }, false)
+            }
+          />
+          {!compare.choices.length &&
+            quantityGaps(compare.rows, accountName, t).map((line) => (
+              <p className="warn result" key={line}>
+                {line}
+              </p>
+            ))}
+          <div className="tw">
+            <table>
+              <thead>
+                <tr>
+                  <th>{t("imports.col.item")}</th>
+                  <th>{t("imports.col.statement")}</th>
+                  <th>{t("imports.col.local")}</th>
+                  <th>{t("imports.col.diff")}</th>
+                  <th>{t("imports.col.ledgerLink")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compare.rows.map((r) => (
+                  <tr key={r.label}>
+                    <td>{r.label}</td>
+                    <td>{num(r.expected)}</td>
+                    <td>{num(r.actual)}</td>
+                    <td className={r.delta == null || Number(r.delta) !== 0 ? "warn" : "up"}>
+                      {r.delta == null ? t("common.pending") : num(r.delta).replace(/^-/, "−")}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="lnk"
+                        onClick={() => {
+                          setSearch(r.symbol ? r.symbol : "");
+                          chooseTab("history");
+                        }}
+                      >
+                        {t("imports.viewLedger")}
+                      </button>
+                    </td>
                   </tr>
                 ))}
-              </Table>
-            </Card>
+              </tbody>
+            </table>
+          </div>
+          <p className={(compare.ok ? "up" : "warn") + " result"}>
+            {compare.ok ? t("imports.matchOk") : t("imports.matchMismatch")} {compare.warnings.join(" ")}
+          </p>
+          {compare.ok && (
+            <>
+              <label className="chk">
+                <input type="checkbox" checked={flow} onChange={(e) => setFlow(e.target.checked)} />
+                {t("imports.flowsChecked")}
+              </label>
+              <button
+                type="button"
+                className="btn pri"
+                disabled={!flow}
+                onClick={() =>
+                  run(async () => {
+                    await api.confirmStatement(compareArgs());
+                    setCompare(null);
+                    setFlow(false);
+                    onPage("overview");
+                  }, t("imports.reconcileSaved"))
+                }
+              >
+                {t("imports.completeReconcile")}
+              </button>
+            </>
           )}
         </>
       )}
-      {tab === "check" && (
-        <>
-          <Card
-            title="核对同日券商结单"
-            action={
-              webullSample ? (
-                <button
-                  className="soft"
-                  onClick={() => {
-                    setModal("statement");
-                  }}
-                >
-                  查看示例月结单
-                </button>
-              ) : null
-            }
-          >
-            <div className="form-grid">
-              <Field label="结单日期">
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => {
-                    setDate(e.target.value);
-                    setCompare(null);
-                  }}
-                />
-              </Field>
-              <Field label="各币种期末现金（每行一项）">
-                <textarea
-                  value={cash}
-                  placeholder={"AUD 7600\nUSD 2000"}
-                  onChange={(e) => {
-                    setCash(e.target.value);
-                    setCompare(null);
-                  }}
-                />
-              </Field>
-              <Field label="结单持仓（代码和数量，每行一项）">
-                <textarea
-                  value={pos}
-                  placeholder={"BHP 150\nA200 200"}
-                  onChange={(e) => {
-                    setPos(e.target.value);
-                    setCompare(null);
-                  }}
-                />
-              </Field>
-              <Field label="结单同日总资产（AUD，可选）">
-                <input
-                  type="number"
-                  step=".01"
-                  value={nav}
-                  onChange={(e) => {
-                    setNav(e.target.value);
-                    setCompare(null);
-                  }}
-                />
-              </Field>
-            </div>
-            <div className="actions">
-              <button
-                className="primary"
-                onClick={() => run(async () => setCompare(await api.compare(compareArgs())), false)}
-              >
-                比较结单
-              </button>
-              <button onClick={() => openManual(false)}>补录一笔流水</button>
-              {!demo && nav.trim() && (
-                <button onClick={() => run(() => api.recordAccountValue({ ...compareArgs(), positions: parsePositions(pos) }), "已保存同日券商估值")}>
-                  核对现金及持仓，采用券商净值
-                </button>
-              )}
-            </div>
-            {compare && (
-              <>
-                <Table head={["核对项", "结单", "本地账本", "差异", "来源"]}>
-                  {compare.rows.map((r) => (
-                    <tr key={r.label}>
-                      <td>{r.label}</td>
-                      <td>{num(r.expected)}</td>
-                      <td>{num(r.actual)}</td>
-                      <td className={r.delta == null || Number(r.delta) !== 0 ? "warning" : "positive"}>
-                        {r.delta == null ? "待核对" : num(r.delta)}
-                      </td>
-                      <td>
-                        <button
-                          className="text-btn"
-                          onClick={() => {
-                            setSearch(r.label.startsWith("总资产") ? "" : r.label.split(" ")[0]);
-                            setTab("history");
-                          }}
-                        >
-                          查流水
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
-                <p className={compare.ok ? "positive" : "warning"}>
-                  {compare.ok ? "本地账本与所填结单一致。" : "请检查凭证及相关流水，再次比较。"}{" "}
-                  {compare.warnings.join(" ")}
-                </p>
-                {compare.ok && (
-                  <>
-                    <label className="check">
-                      <input type="checkbox" checked={flow} onChange={(e) => setFlow(e.target.checked)} />
-                      已核对期间资金流水及所有币种余额
-                    </label>
-                    <button
-                      className="primary"
-                      disabled={!flow}
-                      onClick={() =>
-                        run(async () => {
-                          await api.confirmStatement(compareArgs());
-                          setCompare(null);
-                          setFlow(false);
-                          onPage("overview");
-                        }, "对账已保存")
-                      }
-                    >
-                      完成对账并查看总览
-                    </button>
-                  </>
-                )}
-              </>
-            )}
-          </Card>
-        </>
-      )}
-      {tab === "history" && (
-        <Card
-          title="交易与资金流水"
-          action={
-            <button className="primary" onClick={() => openManual(false)}>
-              补录流水
-            </button>
-          }
-        >
-          <div className="toolbar">
-            <input
-              aria-label="筛选流水"
-              placeholder="按证券、来源或凭证搜索"
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setOffset(0);
-              }}
-            />
-            <label className="check">
-              <input type="checkbox" checked={voided} onChange={(e) => setVoided(e.target.checked)} />
-              显示已冲销的重复记录
-            </label>
-          </div>
-          {entries.length ? (
-            <Table
-              head={["日期", "类型", "证券", ["数量 × 单价", "num"], ["金额", "num"], ["费用", "num"], "来源 / 凭证", ""]}
-            >
+    </Panel>
+  );
+
+  const history = (
+    <Panel
+      title={t("imports.historyTitle")}
+      action={
+        <button type="button" className="btn pri" onClick={() => openManual(false)}>
+          {t("imports.addEntryBtn")}
+        </button>
+      }
+    >
+      <div className="row">
+        <input
+          className="btn history-search"
+          aria-label={t("imports.filterLedgerAria")}
+          placeholder={t("imports.filterLedgerPlaceholder")}
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setOffset(0);
+          }}
+        />
+        <label className="chk">
+          <input type="checkbox" checked={voided} onChange={(e) => setVoided(e.target.checked)} />
+          {t("imports.showVoided")}
+        </label>
+      </div>
+      {entries.length ? (
+        <div className="tw">
+          <table>
+            <thead>
+              <tr>
+                <th>{t("imports.col.date")}</th>
+                <th className="l">{t("imports.col.type")}</th>
+                <th className="l">{t("imports.col.security")}</th>
+                <th>{t("imports.col.qtyPrice")}</th>
+                <th>{t("imports.col.amount")}</th>
+                <th className="hide-n">{t("imports.col.fee")}</th>
+                <th className="l hide-n">{t("imports.col.sourceRef")}</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody onKeyDown={rowKeys}>
               {entries.map((v) => {
                 const traded = Number(v.quantity) && v.unitPrice != null;
                 const amount = v.amount ?? (traded ? Number(v.quantity) * Number(v.unitPrice) : null);
+                const execution = v.metadata?.ibkrExecution,
+                  fx = v.metadata?.fx;
                 return (
-                  <tr key={v.id}>
+                  <tr
+                    key={v.id}
+                    data-row={v.id}
+                    className={"click" + (amend?.id === v.id ? " sel" : "")}
+                    onClick={() => run(() => edit(v), false)}
+                  >
                     <td>{String(v.date).slice(0, 10)}</td>
-                    <td>
+                    <td className="l">
                       {v.metadata?.fx
-                        ? "换汇" + (v.activityType === "TRANSFER_OUT" ? "卖出" : "买入")
-                        : types[v.activityType] || v.activityType}
-                      {superseded(v) && <small>已冲销重复流水</small>}
+                        ? (v.activityType === "TRANSFER_OUT" ? t("imports.fxSell") : t("imports.fxBuy"))
+                        : typeLabel(v.activityType)}
+                      {superseded(v) && <small>{t("imports.voidedTag")}</small>}
+                      {fx?.sourceCurrency && fx.destinationCurrency && (
+                        <small>
+                          {execution?.autoFx && t("imports.autoFxTag")}
+                          {fx.sourceCurrency} → {fx.destinationCurrency}
+                        </small>
+                      )}
                     </td>
-                    <td>{v.assetSymbol || "—"}</td>
-                    <td className="num">
-                      {Number(v.quantity) ? num(v.quantity) + (v.unitPrice != null ? " × " + num(v.unitPrice) : "") : "—"}
-                    </td>
-                    <td className="num">{amount == null ? "—" : v.currency + " " + fmt(amount, 2)}</td>
-                    <td className="num">{Number(v.fee) ? fmt(v.fee, 2) : "—"}</td>
+                    <td className="l">{v.assetSymbol || "—"}</td>
                     <td>
-                      {sources[v.sourceSystem] || v.sourceSystem || "原账本"}
+                      {Number(v.quantity)
+                        ? num(v.quantity) + (v.unitPrice != null ? " × " + num(v.unitPrice) : "")
+                        : fx?.sourceCurrency && Number(fx.impliedRate) > 0
+                          ? "1 " + fx.sourceCurrency + " = " + num(fx.impliedRate) + " " + fx.destinationCurrency
+                          : "—"}
+                    </td>
+                    <td>{amount == null ? "—" : v.currency + " " + fmt(amount, 2)}</td>
+                    <td className="hide-n">{Number(v.fee) ? v.currency + " " + num(v.fee) : "—"}</td>
+                    <td className="l hide-n">
+                      {sources[v.sourceSystem] || sourceLabel(v.sourceSystem || "旧账本")}
                       <small>{v.sourceRecordId || v.comment}</small>
                     </td>
                     <td>
-                      <button onClick={() => run(() => edit(v), false)}>核对 / 更正</button>
+                      <button type="button" className="lnk">
+                        {t("imports.amendBtn")}
+                      </button>
                     </td>
                   </tr>
                 );
               })}
-            </Table>
-          ) : (
-            <Empty>{ledger.length ? "这一页只有已冲销的重复记录。" : "没有找到流水。"}</Empty>
-          )}
-          <div className="actions">
-            <button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 100))}>
-              上一页
-            </button>
-            <button disabled={ledger.length < 100} onClick={() => setOffset(offset + 100)}>
-              下一页
-            </button>
-          </div>
-        </Card>
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <Empty>{ledger.length ? t("imports.onlyVoidedOnPage") : t("imports.noEntries")}</Empty>
       )}
-      {tab === "opening" && (
-        <Card title="从一份结单建立期初余额">
-          <p>选择开始跟踪的日期，按结单分别填写证券和现金。期初资产会作为计算起点。</p>
-          <div className="form-grid">
-            <Field label="期初日期">
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </Field>
-            <Field label="现金（币种 余额）">
-              <textarea
-                value={openCash}
-                onChange={(e) => setOpenCash(e.target.value)}
-                placeholder="AUD 10000"
-              />
-            </Field>
-            <Field label="持仓（代码 数量 币种 交易所 单价 类型）">
-              <textarea
-                value={openPos}
-                onChange={(e) => setOpenPos(e.target.value)}
-                placeholder="AAPL 10 USD XNAS 180 EQUITY"
-              />
-            </Field>
+      <div className="acts">
+        <button type="button" className="btn" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
+          {t("imports.prevPage")}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={ledger.length < PAGE}
+          onClick={() => setOffset(offset + PAGE)}
+        >
+          {t("imports.nextPage")}
+        </button>
+        {ledger.length > 0 && (
+          <span className="cap">
+            {t("imports.pageRange", { from: offset + 1, to: offset + ledger.length })}
+          </span>
+        )}
+      </div>
+    </Panel>
+  );
+
+  const opening = (
+    <Panel title={t("imports.openingTitle")}>
+      <p className="muted">{t("imports.openingDesc")}</p>
+      <div className="fg">
+        <F label={t("imports.openingDate")}>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </F>
+      </div>
+      <StatementLines
+        cash={openCash}
+        setCash={setOpenCash}
+        positions={openPos}
+        setPositions={setOpenPos}
+        listings={d.listings}
+        opening
+      />
+      <div className="acts">
+        <button
+          type="button"
+          className="btn pri"
+          onClick={() =>
+            run(async () => {
+              await api.opening({ account, date, cash: cashAmounts(openCash), positions: openPos });
+              chooseTab("history");
+            }, t("imports.openingSaved"))
+          }
+        >
+          {t("imports.saveOpening")}
+        </button>
+      </div>
+    </Panel>
+  );
+
+  return (
+    <div className="imp imp-page">
+      <div className="row m0">
+        <Seg items={tabIds.map((id) => [id, t(`imports.tab.${id}`)])} value={tab} onChange={chooseTab} />
+        <span className="sp" />
+        {tab !== "file" && <AccountOptions className="btn" d={d} value={account} set={selectAccount} />}
+      </div>
+      {tab === "file" && (
+        <Grid
+          layout={syncLayout(previews, { batches: !!batchCard })}
+          panels={{
+            update,
+            batches: batchCard,
+            ...Object.fromEntries(previews.map((b) => [b, brokerCard(reports[b])])),
+          }}
+        />
+      )}
+      {tab === "check" && (
+        <div className={cols > 1 && evidence ? "cap1760" : "cap880"}>
+          <Grid layout={checkLayout(!!evidence)} panels={{ statement, evidence }} />
+        </div>
+      )}
+      {tab === "history" && history}
+      {tab === "opening" && <div className="stack cap880">{opening}</div>}
+
+      {tab === "history" && amend && (
+        <Detail title={t("imports.amendModalTitle")} onClose={() => setAmend(null)}>
+          <div className="imp">
+            <div className="dl">
+              <div>
+                <span className="cap">
+                  {String(amend.date).slice(0, 10)} · {typeLabel(amend.activityType)}
+                </span>
+                <b>{amend.assetSymbol || amend.currency}</b>
+              </div>
+              <div>
+                <span className="cap">{t("imports.amend.amount")}</span>
+                <b>
+                  {amend.amount != null
+                    ? amend.currency + " " + fmt(amend.amount, 2)
+                    : Number(amend.quantity) && amend.unitPrice != null
+                      ? amend.currency + " " + fmt(Number(amend.quantity) * Number(amend.unitPrice), 2)
+                      : "—"}
+                </b>
+              </div>
+            </div>
+            <div className="cap">
+              {t("imports.sourceWord")} {sources[amend.sourceSystem] || sourceLabel(amend.sourceSystem || "旧账本")}
+              {amend.sourceRecordId && " · " + amend.sourceRecordId}
+            </div>
+            <div className="fg w">
+              {[
+                ["date", t("imports.field.date"), "date"],
+                ...(["BUY", "SELL"].includes(amend.activityType)
+                  ? [
+                      ["quantity", t("imports.amend.qty"), "number"],
+                      ["price", t("imports.amend.price"), "number"],
+                      ["fee", t("imports.amend.fee"), "number"],
+                    ]
+                  : amend.assetId && Number(amend.quantity) > 0
+                    ? [["quantity", t("imports.amend.qty"), "number"]]
+                    : [["amount", t("imports.amend.amount"), "number"]]),
+                ["note", t("imports.field.note"), "text"],
+                ["reason", t("imports.amend.reason"), "text"],
+              ].map(([k, l, kindType]) => (
+                <F key={k} label={l}>
+                  <input
+                    type={kindType}
+                    step="any"
+                    value={amendForm[k] ?? ""}
+                    onChange={(ev) => changeAmend(k, ev.target.value)}
+                  />
+                </F>
+              ))}
+            </div>
+            {revisions.map((v, i) => (
+              <p className="cap" key={i}>
+                {v.created.slice(0, 10)} · {v.reason}
+              </p>
+            ))}
+            <div className="acts">
+              <button
+                type="button"
+                className="btn pri"
+                onClick={() =>
+                  run(async () => {
+                    await api.amend({ ...blank, ...amendForm, account, id: amend.id, prior: JSON.stringify(amend) });
+                    setAmend(null);
+                  }, t("imports.amendSaved"))
+                }
+              >
+                {t("imports.saveAmend")}
+              </button>
+              <button type="button" className="btn" onClick={() => setAmend(null)}>
+                {t("app.cancel")}
+              </button>
+            </div>
           </div>
-          <button
-            className="primary"
-            onClick={() =>
-              run(async () => {
-                await api.opening({
-                  account,
-                  date,
-                  cash: parseCash(openCash),
-                  positions: parsePositions(openPos, true),
-                });
-                setTab("history");
-              }, "期初余额已保存")
-            }
-          >
-            保存期初余额
-          </button>
-        </Card>
+        </Detail>
+      )}
+
+      {modal === "file" && (
+        <Modal title={t("imports.fileModalTitle")} close={() => setModal(null)}>
+          <div className="imp">
+            {["ibkr", "webull"].map((b) => (
+              <div className="fg" key={b} style={{ alignItems: "end" }}>
+                <F label={t("imports.targetAccountLabel", { broker: b.toUpperCase() })}>
+                  <AccountOptions d={d} value={mapping[b]} set={(id) => setMapping({ ...mapping, [b]: id })} />
+                </F>
+                <button
+                  type="button"
+                  className="btn"
+                  style={{ justifySelf: "start" }}
+                  disabled={!mapping[b]}
+                  onClick={() => {
+                    setModal(null);
+                    prepare("file", b, mapping[b]);
+                  }}
+                >
+                  {t(b === "ibkr" ? "imports.chooseIbkrXml" : "imports.chooseWebullCsv")}
+                </button>
+              </div>
+            ))}
+          </div>
+        </Modal>
+      )}
+      {modal === "entry" && (
+        <Modal title={t("imports.manualPickTitle")} close={() => setModal(null)}>
+          <div className="imp">
+            <div className="fg">
+              <F label={t("imports.belongAccount")}>
+                <AccountOptions d={d} value={account} set={selectAccount} />
+              </F>
+            </div>
+            <div className="acts">
+              <button type="button" className="btn" onClick={() => openManual(false, "BUY")}>
+                {t("imports.manualBuySell")}
+              </button>
+              <button type="button" className="btn" onClick={() => setModal("position")}>
+                {t("imports.manualHolding")}
+              </button>
+              <button type="button" className="btn" onClick={() => openManual()}>
+                {t("imports.manualCashFlow")}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {modal === "position" && (
+        <HoldingEditor d={d} run={run} account={account} action="position" close={() => setModal(null)} />
       )}
       {modal === "statement" && (
-        <Modal title="Webull Australia · 示例月结单" close={() => setModal(null)}>
-          <dl>
-            <dt>结单日期</dt>
-            <dd>2026-10-30</dd>
-            <dt>期末持仓</dt>
-            <dd>A200 200 股 · BHP 150 股</dd>
-            <dt>期末现金</dt>
-            <dd>AUD 7,600.00</dd>
-            <dt>10 月 28 日 · 银行入金</dt>
-            <dd>AUD 1,000.00</dd>
-            <dt>入金凭证</dt>
-            <dd>WB-OCT-DEP-01</dd>
-          </dl>
-          <div className="actions">
-            <button
-              className="primary"
-              onClick={() => {
-                useStatement({
-                  date: "2026-10-30",
-                  cash: { AUD: 7600 },
-                  positions: [
-                    { symbol: "A200", quantity: 200 },
-                    { symbol: "BHP", quantity: 150 },
-                  ],
-                });
-                setModal(null);
-              }}
-            >
-              填入结单用于比较
-            </button>
-            <button onClick={() => openManual(true)}>按凭证补录入金</button>
+        <Modal title={t("imports.sampleModalTitle")} close={() => setModal(null)}>
+          <div className="imp">
+            <table>
+              <tbody>
+                {[
+                  [t("imports.statementDate"), "2026-10-30"],
+                  [t("imports.sampleEndingPositions"), t("imports.sampleEndingPositionsVal")],
+                  [t("imports.sampleEndingCash"), "AUD 7,600.00"],
+                  [t("imports.sampleDepositDate"), "AUD 1,000.00"],
+                  [t("imports.sampleDepositRef"), "WB-OCT-DEP-01"],
+                ].map(([k, v]) => (
+                  <tr key={k}>
+                    <td>{k}</td>
+                    <td>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div className="acts">
+              <button
+                type="button"
+                className="btn pri"
+                onClick={() => {
+                  useStatement({
+                    date: "2026-10-30",
+                    cash: { AUD: 7600 },
+                    positions: [
+                      { symbol: "A200", quantity: 200 },
+                      { symbol: "BHP", quantity: 150 },
+                    ],
+                  });
+                  setModal(null);
+                }}
+              >
+                {t("imports.fillForCompare")}
+              </button>
+              <button type="button" className="btn" onClick={() => openManual(true)}>
+                {t("imports.addSampleDeposit")}
+              </button>
+            </div>
           </div>
         </Modal>
       )}
       {modal === "manual" && (
-        <Modal title="补录账本流水" close={() => setModal(null)}>
+        <Modal title={t("imports.manualModalTitle")} close={() => setModal(null)}>
           <form
+            className="imp"
             onSubmit={(e) => {
               e.preventDefault();
               run(async () => {
                 await api.manual({ account, ...form });
                 setModal(null);
                 setCompare(null);
-              }, "流水已入账");
+              }, t("imports.entryBooked"));
             }}
           >
-            <div className="form-grid">
-              <Field label="类型">
-                <select value={form.type} onChange={(e) => change("type", e.target.value)}>
-                  {Object.entries(types).map(([k, v]) => (
+            <div className="fg">
+              <F label={t("imports.field.type")}>
+                <select
+                  value={form.type}
+                  onChange={(e) =>
+                    setForm({ ...form, type: e.target.value, assetId: "", symbol: "", mic: "", linkDividend: false })
+                  }
+                >
+                  {Object.keys(types).map((k) => (
                     <option key={k} value={k}>
-                      {v}
+                      {typeLabel(k)}
                     </option>
                   ))}
                 </select>
-              </Field>
+              </F>
+              {["BUY", "SELL", "DIVIDEND"].includes(form.type) &&
+              (form.type !== "DIVIDEND" || form.symbol || form.linkDividend) ? (
+                <SecurityFields d={d} form={form} setForm={setForm} />
+              ) : (
+                form.type === "DIVIDEND" && (
+                  <button type="button" className="lnk" onClick={() => change("linkDividend", true)}>
+                    {t("imports.linkDividend")}
+                  </button>
+                )
+              )}
               {[
-                ["date", "日期", "date"],
-                ["currency", "币种", "text"],
+                ["date", t("imports.field.date"), "date"],
+                ...(["BUY", "SELL"].includes(form.type) ||
+                (form.type === "DIVIDEND" && (form.linkDividend || form.symbol))
+                  ? []
+                  : [["currency", t("imports.field.currency"), "text"]]),
                 ...(["BUY", "SELL"].includes(form.type)
                   ? [
-                      ["symbol", "证券代码", "text"],
-                      ["mic", "交易所代码", "text"],
-                      ["quantity", "成交数量", "number"],
-                      ["price", "成交价", "number"],
-                      ["fee", "手续费", "number"],
+                      ["quantity", t("imports.field.qty"), "number"],
+                      ["price", t("imports.field.price"), "number"],
+                      ["fee", t("imports.field.fee"), "number"],
                     ]
-                  : [["amount", "金额", "number"]]),
-                ...(form.type.startsWith("TRANSFER") ? [["group", "两端共用划转编号", "text"]] : []),
-                ["reference", "结单凭证编号", "text"],
-                ["note", "备注", "text"],
-              ].map(([k, l, t]) => (
-                <Field key={k} label={l}>
+                  : [["amount", t("imports.field.amount"), "number"]]),
+                ...(form.type.startsWith("TRANSFER") ? [["group", t("imports.field.transferGroup"), "text"]] : []),
+                ["reference", t("imports.field.reference"), "text"],
+                ["note", t("imports.field.note"), "text"],
+              ].map(([k, l, kindType]) => (
+                <F key={k} label={l}>
                   <input
                     required={!["note", "fee", "mic", "group"].includes(k)}
-                    type={t}
+                    type={kindType}
                     step="any"
                     value={form[k]}
                     onChange={(e) => change(k, e.target.value)}
                   />
-                </Field>
+                </F>
               ))}
             </div>
-            <button className="primary" type="submit">
-              确认记入 {d.accounts.find((a) => a.id === account)?.name}
-            </button>
+            <div className="acts">
+              <button className="btn pri" type="submit">
+                {t("imports.confirmBookTo", { account: accountName })}
+              </button>
+              <button type="button" className="btn" onClick={() => setModal(null)}>
+                {t("app.cancel")}
+              </button>
+            </div>
           </form>
         </Modal>
       )}
-      {modal === "amend" && amend && (
-        <Modal title="按凭证更正流水" close={() => setModal(null)}>
-          <p>
-            {types[amend.activityType] || amend.activityType} · {amend.assetSymbol || amend.currency} ·{" "}
-            {amend.sourceRecordId || "原账本"}
-          </p>
-          <div className="form-grid">
-            {[
-              ["date", "日期", "date"],
-              ...(["BUY", "SELL"].includes(amend.activityType)
-                ? [
-                    ["quantity", "数量", "number"],
-                    ["price", "单价", "number"],
-                    ["fee", "费用", "number"],
-                  ]
-                : amend.assetId && Number(amend.quantity) > 0
-                  ? [["quantity", "数量", "number"]]
-                  : [["amount", "金额", "number"]]),
-              ["note", "备注", "text"],
-              ["reason", "更正依据 / 原始凭证", "text"],
-            ].map(([k, l, t]) => (
-              <Field key={k} label={l}>
-                <input type={t} step="any" value={form[k]} onChange={(ev) => change(k, ev.target.value)} />
-              </Field>
-            ))}
-          </div>
-          {revisions.map((v, i) => (
-            <p key={i}>
-              {v.created.slice(0, 10)} · {v.reason}
-            </p>
-          ))}
-          <button
-            className="primary"
-            onClick={() =>
-              run(async () => {
-                await api.amend({ ...form, account, id: amend.id, prior: JSON.stringify(amend) });
-                setModal(null);
-              }, "流水已更正，原始记录及依据已保留")
-            }
-          >
-            保存更正
-          </button>
-        </Modal>
-      )}
-    </>
+    </div>
   );
 }
