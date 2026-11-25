@@ -4,6 +4,7 @@ import { AssetComposition, CloseDrivers } from "./DailyOverviewDetails";
 
 export function ClassicOverviewLayout({ wide, panels }) {
   const { t } = useI18n();
+  const returnDetails = <>{panels.breakdown}{panels.fx}</>;
   return (
     <div className="overview-layout">
       <div className="overview-main">
@@ -16,14 +17,13 @@ export function ClassicOverviewLayout({ wide, panels }) {
         </section>
         <div className="overview-primary">
           {panels.trend}
-          {!wide && panels.breakdown}
+          {!wide && returnDetails}
           {panels.holdings}
         </div>
       </div>
       <div className="overview-rail">
         {panels.accounts}
-        {panels.fx}
-        {wide && panels.breakdown}
+        {wide && returnDetails}
       </div>
     </div>
   );
@@ -77,11 +77,10 @@ export function DailyOverviewLayout({ d, wide, panels, openAssets }) {
             </div>
           </div>
           <div className="daily-period-details">
-            {!wide && <div className="daily-native-part">{panels.breakdown}</div>}
+            <div className="daily-native-part">{panels.breakdown}</div>
             <div className="daily-native-part">
               {panels.fx}
             </div>
-            {wide && <div className="daily-native-part">{panels.breakdown}</div>}
           </div>
         </section>
       </div>

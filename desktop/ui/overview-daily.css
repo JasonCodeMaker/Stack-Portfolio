@@ -101,8 +101,8 @@
   padding: var(--band-block) var(--band-inline); background: var(--band-secondary); border-block: 1px solid var(--band-edge);
 }
 
-.daily-period-details { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px; }
-.daily-period-details > .daily-native-part + .daily-native-part { border-inline-start: 1px solid var(--band-edge); padding-inline-start: 24px; }
+.daily-period-details { display: grid; grid-template-columns: minmax(0,1fr); gap: 12px; }
+.daily-period-details > .daily-native-part + .daily-native-part { border-top: 1px solid var(--band-edge); padding-top: 12px; }
 .daily-period-details .overview-breakdown dl { display: block; }
 .daily-period-details .overview-breakdown dl > div { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 4px 0; gap: 2px 8px; border: 0; }
 .daily-period-details .breakdown-track { grid-column: 1 / -1; margin: 0; }
@@ -111,10 +111,10 @@
   .daily-positions .holding-result { grid-column: auto; }
 }
 @container (max-width: 670px) {
-  .daily-balance-summary, .daily-period-details { grid-template-columns: minmax(0,1fr); }
+  .daily-balance-summary { grid-template-columns: minmax(0,1fr); }
   .daily-assets .overview-account-list { grid-template-columns: minmax(0,1fr); }
   .daily-balance-summary .daily-native-part > .overview-total { border-radius: 7px 7px 0 0; }
-  .daily-assets .account-block + .account-block, .daily-period-details > .daily-native-part + .daily-native-part {
+  .daily-assets .account-block + .account-block {
     padding-inline-start: 0; border-inline-start: 0; padding-top: 12px; border-top: 1px solid var(--band-edge);
   }
 }
@@ -128,8 +128,6 @@
 [data-aspect="21:9"] .daily-groups { --band-block: 8px; --band-inline: 14px; }
 [data-aspect="21:9"] .daily-wide-accounts { padding: var(--band-block) var(--band-inline); }
 [data-aspect="21:9"] .daily-wide-accounts .overview-account-list { max-height: min(235px, 29vh); }
-[data-aspect="21:9"] .daily-groups .daily-period-details { grid-template-columns: 1fr; gap: 12px; }
-[data-aspect="21:9"] .daily-period-details > .daily-native-part + .daily-native-part { border-inline-start: 0; padding-inline-start: 0; border-top: 1px solid var(--band-edge); padding-top: 12px; }
 [data-aspect="21:9"] .daily-assets > .daily-native-part { border-radius: 0 0 7px 7px; }
 
 [data-aspect="21:9"] .daily-groups .daily-group-head { min-height: 36px; align-items: center; }

@@ -32,11 +32,16 @@ async function verifyLayoutChoice(app, page) {
   await page.waitForFunction(() => document.querySelector(".overview-total-label time")?.dateTime === "2026-10-29");
   const prior = await total.textContent();
 
-  for (const [width, height] of [[1024, 650], [3440, 1440]]) {
+  for (const [width, height] of [[1024, 650], [1920, 1080], [3440, 1440]]) {
     await resizeContent(app, page, width, height);
     for (const choice of ["daily", "classic"]) {
       await picker.selectOption(choice);
       assert.equal(await page.locator(".daily-assets").count(), choice === "daily" ? 1 : 0);
+      const breakdown = await page.locator(".overview-breakdown").boundingBox();
+      const fx = await page.locator(".overview-fx").boundingBox();
+      const gap = fx.y - (breakdown.y + breakdown.height);
+      assert.ok(Math.abs(fx.x - breakdown.x) < 1 && gap >= 0 && gap <= 26,
+        `FX follows the breakdown in the same column at ${width}×${height} (${choice})`);
       assert.equal(await total.textContent(), prior);
       assert.equal(await date.inputValue(), "2026-10-29");
       assert.equal(await scope.innerText(), "IBKR");
@@ -124,18 +129,15 @@ async function verifyLayoutChoice(app, page) {
           rail: [...root.querySelectorAll(".overview-rail h2")].map((heading) => heading.textContent),
           singleScreen: root.closest(".pane").scrollHeight <= root.closest(".pane").clientHeight + 1,
           centeredBars: root.querySelectorAll(".pnl-track").length === root.querySelectorAll("[data-row]").length,
-          accountToFx: root.querySelector(".overview-fx").getBoundingClientRect().top -
-            root.querySelector(".overview-accounts").getBoundingClientRect().bottom,
           chartToBreakdown: root.querySelector(".overview-breakdown").getBoundingClientRect().top -
             root.querySelector(".overview-trend").getBoundingClientRect().bottom,
         }));
         assert.ok(layout.fits && layout.centeredBars, theme + " " + w);
-        assert.ok(layout.accountToFx > 0 && layout.accountToFx <= 16, "FX follows Accounts with a card gutter, got " + layout.accountToFx);
         if (state.aspect === "21:9") {
-          assert.deepEqual(layout.rail, ["账户", "汇率影响", "盈亏构成"]);
+          assert.deepEqual(layout.rail, ["账户", "盈亏构成", "汇率影响"]);
           assert.ok(layout.singleScreen, "the sample Overview fits on one ultrawide screen");
         } else {
-          assert.deepEqual(layout.rail, ["账户", "汇率影响"]);
+          assert.deepEqual(layout.rail, ["账户"]);
           assert.ok(layout.chartToBreakdown > 0 && layout.chartToBreakdown <= 16, "the breakdown follows the chart");
         }
         if (process.env.STACK_PORTFOLIO_SCREENSHOTS) {
