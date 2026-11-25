@@ -1,6 +1,7 @@
 // The Codex carousel supplies its own navigation. Add navigation only in the standalone document.
 (() => {
   const root = document.getElementById("portfolio-overview-comparison");
+  root.setAttribute("data-standalone", "");
   const screens = [...root.querySelectorAll("[data-variant]")];
   const nav = document.createElement("nav");
   nav.id = "d02-views";
