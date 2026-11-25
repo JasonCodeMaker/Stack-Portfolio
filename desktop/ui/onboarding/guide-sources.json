@@ -1,4 +1,5 @@
 {
+  "ibkrTrades": "https://trandence.com/help/broker-guides/interactive-brokers/",
   "ibkrQuery": "https://www.ibkrguides.com/clientportal/performanceandstatements/activityflex.htm",
   "ibkrService": "https://www.ibkrguides.com/clientportal/performanceandstatements/flex-web-service.htm",
   "webullApplication": "https://developer.webull.com.au/apis/docs/authentication/individual-application/",

@@ -65,6 +65,181 @@
 .ob-studio-progress {
   grid-area: progress;
 }
+.ob-studio-card.single-column {
+  max-width: 720px;
+  margin-inline: auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "progress" "copy" "action";
+}
+.theme-D .ob-studio-copy h1[lang="en"] {
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+.ob-step-notes {
+  margin-block: 18px 12px;
+}
+.ob-expected {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-inline-start: 3px solid var(--l3);
+  background: var(--soft);
+  border-radius: 4px;
+}
+.ob-expected > svg {
+  flex: none;
+  color: var(--l2);
+  margin-top: 2px;
+}
+.ob-expected strong {
+  display: block;
+  color: var(--ink);
+  font-size: 14px;
+}
+.ob-expected p,
+.ob-help-topic p,
+.ob-translation p {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--sub);
+}
+.ob-help-topic {
+  border-bottom: 1px solid var(--edge);
+  padding-block: 7px;
+}
+.ob-help-topic summary {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding-block: 7px;
+  font-weight: 500;
+  color: var(--sub);
+}
+.ob-help-topic summary::-webkit-details-marker {
+  display: none;
+}
+.ob-help-topic[open] summary svg:last-child {
+  transform: rotate(180deg);
+}
+.ob-help-topic p {
+  margin: 0 10px 8px 24px;
+}
+.ob-translation,
+.ob-field-source {
+  font-size: 13px;
+  color: var(--sub);
+}
+.ob-translation {
+  margin-block: -8px 14px;
+}
+.ob-translation summary,
+.ob-field-source summary {
+  cursor: pointer;
+  width: fit-content;
+  padding-block: 4px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ob-chapter-content .ob-translation {
+  margin: 0 0 12px;
+}
+.ob-field-source {
+  margin-top: 4px;
+}
+.ob-field-source .ob-real-figure {
+  margin-block: 6px;
+}
+.ob .ob-verified {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding-block: 5px 16px;
+  color: var(--accent);
+  overflow-wrap: anywhere;
+}
+.ob .ob-shot-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  padding: 10px;
+  border-bottom: 1px solid var(--edge);
+}
+.ob .ob-shot-tabs button {
+  min-height: 32px;
+  padding: 5px 9px;
+  font-size: 13px;
+  color: var(--sub);
+}
+.ob .ob-shot-tabs button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--soft);
+  font-weight: 650;
+}
+.ob-focus-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #fff;
+}
+.ob-paired-detail {
+  text-align: left;
+}
+.ob-row-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 220fr) auto minmax(0, 146fr);
+  align-items: center;
+  background: white;
+  color: #687785;
+}
+.ob-row-detail span {
+  padding: 0 3px;
+}
+.ob-paired-detail strong {
+  display: block;
+  margin: 2px 2px 5px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.ob-paired-detail + .ob-paired-detail {
+  margin-top: 12px;
+}
+.ob-mark-halo,
+.ob-mark-ink {
+  fill: none;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+.ob-mark-halo {
+  stroke: white;
+  stroke-width: 5.5;
+}
+.ob-mark-ink {
+  stroke: #b4350b;
+  stroke-width: 2.7;
+}
+.ob .ob-open-shot {
+  min-height: 32px;
+  padding: 4px 7px;
+  font-size: 13px;
+  gap: 5px;
+}
+.ob-source svg {
+  vertical-align: middle;
+}
+.ob-shot-dark {
+  display: none;
+}
+@media (prefers-color-scheme: dark) {
+  .ob-shot-dark {
+    display: block;
+  }
+}
 .ob-studio-progress .ob-drawer-label {
   color: var(--accent);
   font-weight: 600;
@@ -408,11 +583,6 @@
   overflow: auto;
   max-height: 61vh;
   background: var(--soft);
-}
-.ob-viewer.original img {
-  width: auto;
-  max-width: none;
-  max-height: none;
 }
 .theme-D dialog:has(.ob-viewer) {
   width: min(1120px, 96vw);

@@ -94,19 +94,62 @@ async function shots(page, key) {
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     await page.waitForFunction((t) => matchMedia("(prefers-color-scheme: " + t + ")").matches, theme);
     await page
-      .locator(".ob-studio-action")
+      .locator(".ob-studio-card")
       .screenshot({ path: path.join(directory, key + "-" + theme + ".png") });
   }
 }
-async function choose(page, broker) {
+async function choose(page, broker, inspect = false) {
   await button(page, broker === "ibkr" ? /Interactive Brokers/ : /Webull Australia/).click();
-  for (let i = 0; i < (broker === "ibkr" ? 3 : 2); i++) await button(page, "下一步").click();
+  if (broker === "webull") {
+    await button(page, "下一步").click();
+    await button(page, "下一步").click();
+    return;
+  }
+  const chapters = [
+    "Create an Activity Flex Query",
+    "Name the query and open Trades",
+    "Select execution details",
+    "Include balances and cash activity",
+    "Set the account, format and period",
+    "Review and create the query",
+    "Copy the Query ID",
+    "Get your Flex Token",
+  ];
+  for (const title of chapters) {
+    await page.getByRole("heading", { name: title, exact: true }).waitFor();
+    if (inspect) {
+      const figure = page.locator(".ob-studio-context figure");
+      await figure.locator(".ob-mark-ink").first().waitFor();
+      for (const tab of await figure.locator(".ob-shot-tabs button").all()) {
+        await tab.click();
+        const box = await figure.locator(".ob-mark-ink rect").boundingBox();
+        const crop = await figure.locator(".ob-focus-image").boundingBox();
+        assert.ok(box.width >= 18 && box.height >= 12 && box.x >= crop.x && box.y >= crop.y);
+      }
+      if (title === "Create an Activity Flex Query" || title === "Select execution details") {
+        if (title === "Select execution details")
+          assert.equal(await figure.locator(".ob-mark-ink").count(), 2);
+        await shots(page, title === "Select execution details" ? "trade-fields" : "create-query");
+        await button(figure, "View full screenshot").click();
+        const view = page.getByRole("dialog", { name: "Full screenshot" });
+        await view.locator(".ob-mark-ink").first().waitFor();
+        assert.equal(await view.getByText("原始尺寸").count(), 0);
+        await page.keyboard.press("Escape");
+      }
+    }
+    await button(page, "Next").click();
+  }
 }
 async function ibkr(page, id, home = false) {
-  await choose(page, "ibkr");
+  await choose(page, "ibkr", home);
   if (home) await shots(page, "ibkr");
   await page.getByLabel("Flex Query ID", { exact: true }).fill(id);
   if (home) {
+    assert.equal(await page.locator(".ob-studio-context").count(), 0);
+    await page.getByText("在 IBKR 哪里找 Query ID？", { exact: true }).click();
+    await page.locator(".ob-field-source .ob-focus-image:visible").waitFor();
+    await page.getByText("在 IBKR 哪里找 Query ID？", { exact: true }).click();
+    assert.equal(await page.getByLabel("Flex Query ID", { exact: true }).inputValue(), id);
     await page.getByLabel("Flex Token", { exact: true }).fill("wrong");
     await button(page, "验证 IBKR 账户").click();
     await page.getByRole("alert").getByText(/1015/).waitFor();
@@ -117,6 +160,8 @@ async function ibkr(page, id, home = false) {
   await page.getByRole("heading", { name: "确认要绑定的账户" }).waitFor();
   assert.equal(await page.getByLabel("券商返回的账户", { exact: true }).inputValue(), "TEST" + id);
   if (home) await shots(page, "confirm");
+  assert.equal(await page.locator(".ob-real-figure:visible").count(), 0);
+  assert.match(await page.locator(".ob-verified").innerText(), new RegExp(id));
   await page.getByLabel("本地账户名称", { exact: true }).fill("Sample IBKR " + id);
   await button(page, "绑定此账户").click();
   await page.getByRole("heading", { name: "还要继续添加账户吗？" }).waitFor();
@@ -126,6 +171,11 @@ async function main() {
     await page.getByRole("heading", { name: "现在添加第一个账户吗？" }).waitFor();
     await button(page, "查看完整教程").click();
     const manual = page.getByRole("dialog", { name: "完整账户教程" });
+    await button(manual, /Select execution details/).click();
+    assert.equal(await manual.locator(".ob-mark-ink:visible").count(), 2);
+    await button(manual, "View full screenshot").click();
+    await page.keyboard.press("Escape");
+    assert.ok(await manual.isVisible());
     await button(manual, "Webull AU").click();
     await button(manual, /在手机上确认授权/).click();
     await button(manual, /OpenAPI Notice/).click();
@@ -133,6 +183,7 @@ async function main() {
     await button(manual, "重看手机示例").waitFor();
     await button(manual, "返回当前页面").click();
     await button(page, "添加账户").click();
+    assert.equal(await page.locator(".ob-real-figure").count(), 0);
     await ibkr(page, "1001", true);
     await button(page, "继续添加账户").click();
     await ibkr(page, "1002");

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
-import { BookOpen, Check, ChevronDown } from "lucide-react";
+import { BookOpen, ChevronDown } from "lucide-react";
+import { StepNotes, Translation, FieldSource } from "./StepNotes";
 import { Modal } from "../common";
 import { brokerNames, brokerGuides, accountChapter, importChapter } from "./brokerGuide";
 import { Screenshots } from "./Screenshots";
@@ -44,26 +45,30 @@ function Tutorial({ initialBroker, initialStep, close }) {
                 onClick={() => setExpanded(open ? -1 : index)}
               >
                 <span className="ob-chapter-number">{String(index + 1).padStart(2, "0")}</span>
-                <strong>{chapter.title}</strong>
+                <strong lang={chapter.lang}>{chapter.title}</strong>
                 <ChevronDown size={16} />
               </button>
               <div id={"guide-section-" + index} hidden={!open} className="ob-chapter-content">
                 {open && (
                   <>
-                    <p>{chapter.body}</p>
+                    {chapter.location && <small lang="en">{chapter.location}</small>}
+                    <p lang={chapter.lang}>{chapter.body}</p>
+                    <Translation chapter={chapter} />
                     {chapter.visual === "phone" ? (
                       <PhoneGuide />
                     ) : (
-                      <Screenshots key={broker + index} images={chapter.images} />
+                      <Screenshots key={broker + index} images={chapter.images} paired={chapter.paired} />
                     )}
-                    <p className="ob-checkpoint">
-                      <Check size={15} />
-                      {chapter.check}
-                    </p>
-                    <details className="ob-troubleshoot">
-                      <summary>遇到问题？</summary>
-                      <p>{chapter.recovery}</p>
-                    </details>
+                    {chapter.fields?.map((field, i) => (
+                      <FieldSource
+                        key={i}
+                        field={field}
+                        label={
+                          (broker === "ibkr" ? ["Query ID", "Current Token"] : ["App Key", "App Secret"])[i]
+                        }
+                      />
+                    ))}
+                    <StepNotes chapter={chapter} />
                   </>
                 )}
               </div>
@@ -98,7 +103,9 @@ export function TutorialLauncher({ broker, page, step = 0 }) {
         <BookOpen size={17} />
         查看完整教程
       </button>
-      {open && <Tutorial initialBroker={initialBroker} initialStep={initialStep} close={() => setOpen(false)} />}
+      {open && (
+        <Tutorial initialBroker={initialBroker} initialStep={initialStep} close={() => setOpen(false)} />
+      )}
     </>
   );
 }

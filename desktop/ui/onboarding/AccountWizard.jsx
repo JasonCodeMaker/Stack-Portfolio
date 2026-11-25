@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, ChevronRight, Layers3, PanelLeft, WalletCards } from "lucide-react";
 import { api, Field } from "../common";
 import { Mark } from "../Shell";
-import { brokerNames, brokerGuides, accountShot, welcomeShot } from "./brokerGuide";
+import { brokerNames, brokerGuides } from "./brokerGuide";
+import { FieldSource, StepNotes, Translation } from "./StepNotes";
 import { TutorialLauncher } from "./Tutorial";
 import { PhoneGuide } from "./PhoneGuide";
 import { Screenshots } from "./Screenshots";
@@ -56,6 +57,10 @@ export function AccountWizard({
     phone = chapter.visual === "phone";
   const last = added.at(-1);
   const known = [...existing.filter((b) => !added.some((a) => a.id === b.id)), ...added];
+  const english = page === "guide" && chapter.lang === "en";
+  const illustrated = page === "guide" && (phone || chapter.images?.length > 0);
+  const showAccounts = known.length > 0 && (page === "broker" || page === "bound");
+  const hasContext = illustrated || showAccounts;
   useEffect(() => {
     head.current?.focus({ preventScroll: true });
     head.current?.closest(".ob")?.scrollTo(0, 0);
@@ -125,7 +130,7 @@ export function AccountWizard({
       setPage(last ? "bound" : "welcome");
     } else if (page === "account") {
       setPage("guide");
-      setStep(ib ? 3 : 2);
+      setStep(brokerGuides[broker].findIndex((item) => item.visual === "credentials"));
       setTicket("");
     } else if (step === 0) setPage("broker");
     else {
@@ -157,7 +162,7 @@ export function AccountWizard({
         </div>
       </header>
       <main className={"ob-studio-main" + (page === "welcome" ? " is-welcome" : "")}>
-        <section className="ob-studio-card">
+        <section className={"ob-studio-card" + (hasContext ? "" : " single-column")}>
           <div
             className="ob-studio-progress"
             role="progressbar"
@@ -181,13 +186,22 @@ export function AccountWizard({
           <div className="ob-studio-copy">
             <div className="ob-kicker">
               {page === "guide"
-                ? brokerNames[broker] + " · 图文教程 " + (step + 1) + " / " + brokerGuides[broker].length
+                ? (english
+                    ? chapter.location
+                    : (isKeys ? "Stock Portfolio" : brokerNames[broker]) + " · 图文教程") +
+                  " · " +
+                  (step + 1) +
+                  " / " +
+                  brokerGuides[broker].length
                 : "账户设置"}
             </div>
-            <h1 ref={head} tabIndex={-1}>
+            <h1 ref={head} tabIndex={-1} lang={english ? "en" : undefined}>
               {page === "guide" ? chapter.title : headings[page]}
             </h1>
-            <p className="ob-lead">{page === "guide" ? chapter.body : descriptions[page]}</p>
+            <p className="ob-lead" lang={english ? "en" : undefined}>
+              {page === "guide" ? chapter.body : descriptions[page]}
+            </p>
+            {page === "guide" && <Translation key={step} chapter={chapter} />}
           </div>
           <div className="ob-studio-action">
             {page === "welcome" && (
@@ -219,29 +233,30 @@ export function AccountWizard({
                 {isKeys && (
                   <div className="ob-form">
                     {(ib ? ["Flex Query ID", "Flex Token"] : ["App Key", "App Secret"]).map((label, i) => (
-                      <Field key={label} label={label}>
-                        <input
-                          disabled={busy}
-                          type={i ? "password" : "text"}
-                          autoComplete="off"
-                          maxLength={4096}
-                          value={keys[i]}
-                          onChange={(e) =>
-                            setKeys((prev) => prev.map((v, n) => (n === i ? e.target.value : v)))
-                          }
+                      <div key={label}>
+                        <Field label={label}>
+                          <input
+                            aria-describedby={"source-" + i}
+                            disabled={busy}
+                            type={i ? "password" : "text"}
+                            autoComplete="off"
+                            maxLength={4096}
+                            value={keys[i]}
+                            onChange={(e) =>
+                              setKeys((prev) => prev.map((v, n) => (n === i ? e.target.value : v)))
+                            }
+                          />
+                        </Field>
+                        <FieldSource
+                          field={chapter.fields[i]}
+                          id={"source-" + i}
+                          label={ib ? ["Query ID", "Current Token"][i] : label}
                         />
-                      </Field>
+                      </div>
                     ))}
                   </div>
                 )}
-                <p className="ob-checkpoint">
-                  <Check size={16} />
-                  {chapter.check}
-                </p>
-                <details key={broker + step} className="ob-troubleshoot">
-                  <summary>遇到问题？</summary>
-                  <p>{chapter.recovery}</p>
-                </details>
+                <StepNotes key={broker + step} chapter={chapter} />
                 <div className="ob-actions">
                   <button
                     className="ob-primary"
@@ -263,7 +278,9 @@ export function AccountWizard({
                           ? ib
                             ? "验证 IBKR 账户"
                             : "发起 Webull 授权"
-                          : "下一步"}{" "}
+                          : english
+                            ? "Next"
+                            : "下一步"}{" "}
                     <ArrowRight size={16} />
                   </button>
                 </div>
@@ -273,7 +290,11 @@ export function AccountWizard({
               <>
                 <div className="ob-form">
                   <Field label="券商返回的账户">
-                    <select aria-label="券商返回的账户" value={remoteId} onChange={(e) => selectRemote(e.target.value)}>
+                    <select
+                      aria-label="券商返回的账户"
+                      value={remoteId}
+                      onChange={(e) => selectRemote(e.target.value)}
+                    >
                       {remote.map((a) => (
                         <option key={a.accountId} value={a.accountId}>
                           {a.accountNumber || a.accountId} {a.accountType || ""}
@@ -282,7 +303,11 @@ export function AccountWizard({
                     </select>
                   </Field>
                   <Field label="入账账户">
-                    <select aria-label="入账账户" value={localId} onChange={(e) => setLocalId(e.target.value)}>
+                    <select
+                      aria-label="入账账户"
+                      value={localId}
+                      onChange={(e) => setLocalId(e.target.value)}
+                    >
                       <option value="">创建新的本地账户</option>
                       {accounts
                         .filter(
@@ -306,7 +331,11 @@ export function AccountWizard({
                         <input maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
                       </Field>
                       <Field label="基础币种">
-                        <select aria-label="基础币种" value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                        <select
+                          aria-label="基础币种"
+                          value={currency}
+                          onChange={(e) => setCurrency(e.target.value)}
+                        >
                           <option>AUD</option>
                           <option>USD</option>
                         </select>
@@ -314,6 +343,15 @@ export function AccountWizard({
                     </>
                   )}
                 </div>
+                <p className="ob-verified">
+                  <Check size={17} aria-hidden="true" />
+                  已验证 {brokerNames[broker]} ····{" "}
+                  {(remote.find((a) => a.accountId === remoteId)?.accountNumber || remoteId).slice(-4)}
+                  <span>→</span>
+                  <strong>
+                    {localId ? accounts.find((a) => a.id === localId)?.name : name.trim() || "待命名账户"}
+                  </strong>
+                </p>
                 <button
                   className="ob-primary"
                   disabled={busy || (!localId && !name.trim())}
@@ -351,41 +389,38 @@ export function AccountWizard({
             {["guide", "broker", "account"].includes(page) && (
               <div className="ob-help">
                 <button disabled={busy} onClick={click(back)}>
-                  <ArrowLeft size={15} /> 上一步
+                  <ArrowLeft size={15} /> {english ? "Back" : "上一步"}
                 </button>
                 <button disabled={busy} onClick={leave}>
-                  稍后设置
+                  {english ? "Set up later" : "稍后设置"}
                 </button>
               </div>
             )}
           </div>
-          <div className="ob-studio-context">
-            {page === "guide" ? (
-              phone ? (
-                <PhoneGuide />
-              ) : (
-                <Screenshots key={broker + step} images={chapter.images} />
-              )
-            ) : (
-              page !== "bound" && (
-                <Screenshots key={page} images={[page === "welcome" ? welcomeShot : accountShot]} />
-              )
-            )}
-            {known.length > 0 && (
-              <section className="ob-studio-accounts">
-                <h2>已绑定账户</h2>
-                {known.map((a) => (
-                  <p key={a.id}>
-                    <strong>{a.name}</strong>
-                    <small>
-                      {brokerNames[a.broker]} ···· {a.suffix}
-                      {!a.authorized && " · 需重新授权"}
-                    </small>
-                  </p>
+          {hasContext && (
+            <div className="ob-studio-context">
+              {illustrated &&
+                (phone ? (
+                  <PhoneGuide />
+                ) : (
+                  <Screenshots key={broker + step} images={chapter.images} paired={chapter.paired} />
                 ))}
-              </section>
-            )}
-          </div>
+              {showAccounts && (
+                <section className="ob-studio-accounts">
+                  <h2>已绑定账户</h2>
+                  {known.map((a) => (
+                    <p key={a.id}>
+                      <strong>{a.name}</strong>
+                      <small>
+                        {brokerNames[a.broker]} ···· {a.suffix}
+                        {!a.authorized && " · 需重新授权"}
+                      </small>
+                    </p>
+                  ))}
+                </section>
+              )}
+            </div>
+          )}
         </section>
       </main>
     </div>
