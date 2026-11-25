@@ -7,7 +7,7 @@ import { Holdings } from "@desktop/ui/Cockpit";
 import { I18nProvider } from "@desktop/ui/i18n";
 import { Modal, aud } from "@desktop/ui/common";
 import { periodLabels } from "@desktop/ui/filters.js";
-import { CashLine, closeDrivers, CompanyExposure, DriverLine } from "./asset-information";
+import { AssetComposition, CloseDrivers } from "./asset-information";
 import "@desktop/ui/design.css";
 import "@desktop/ui/styles.css";
 import "./comparison.css";
@@ -18,8 +18,6 @@ const initial = saved => ({
   sample: ["b", "c"].includes(saved?.sample) ? saved.sample : "a",
   scope: Object.hasOwn(scopeNames, saved?.scope) ? saved.scope : "all",
   period: Object.hasOwn(periodLabels, saved?.period) ? saved.period : "ytd",
-  cash: saved?.cash !== false,
-  drivers: saved?.drivers === true,
 });
 const money = v => v == null ? "待估值" : aud(v, 2);
 function valuation(data) {
@@ -52,61 +50,53 @@ function FirstLook({ d, close }) {
     {result && <p role="status" className="d02-outcome"><b>{result.correct ? "判断正确。" : "再对照一下。"}</b>{v.complete ? "账户总额为 " + money(v.amount) + "。" : "完整总额未知。已计入现金与可定价持仓的小计为 " + money(v.amount) + "，" + v.missing.join("、") + " 缺少报价。"}</p>}
   </form></Modal>;
 }
-function Toolbar({ state, update, d, daily }) {
+function Toolbar({ state, update, d }) {
   const [check, setCheck] = useState(false);
   return <div className="d02-body experiment-controls">
     <div className="d02-samples"><span>示例账本</span><div className="seg" role="group" aria-label="行情样本">{["a","b","c"].map(k=><button type="button" key={k} aria-pressed={state.sample===k} className={state.sample===k?"on":""} onClick={()=>update({sample:k})}>样本 {k.toUpperCase()}</button>)}</div></div>
-    {daily && <div className="d02-study-options" role="group" aria-label="原型对照选项">
-      <label><input type="checkbox" checked={state.cash} onChange={e => update({cash:e.target.checked})}/> 显示现金</label>
-      <label><input type="checkbox" checked={state.drivers} onChange={e => update({drivers:e.target.checked})}/> 解释收盘变动</label>
-    </div>}
     <button className="btn d02-check" onClick={()=>setCheck(true)}>核对第一眼判断 <ChevronRight size={14}/></button>
     {check && <FirstLook d={d} close={()=>setCheck(false)} />}
   </div>;
 }
 // The current overview owns every KPI, chart, table and drill-down in all three views.
-function OverviewPage({ d, mode, state, filters, onFilters, onPage, run }) {
+function OverviewPage({ d, mode, filters, onFilters, onPage, run }) {
   const rootRef = useRef(null);
   const descriptionId = useId();
-  const [totalButton, setTotalButton] = useState(null);
-  const [holdingsHeader, setHoldingsHeader] = useState(null);
-  const [showCompany, setShowCompany] = useState(false);
+  const [targets, setTargets] = useState(null);
   const coverage = valuation(d);
   const showSubtotal = mode !== "current" && !coverage.complete;
   const daily = mode === "balance";
-  const showCash = daily && state.cash;
-  const drivers = daily && state.drivers ? closeDrivers(d.today) : [];
-  const describeTotal = showSubtotal || showCash || drivers.length > 0;
 
   useLayoutEffect(() => {
-    if (daily) setHoldingsHeader(rootRef.current.querySelector(".top-holdings > .row"));
-  }, [daily]);
+    const page = rootRef.current;
+    setTargets({
+      total: page.querySelector(".overview-total"),
+      layout: page.querySelector(".overview-layout"),
+    });
+  }, []);
 
   useLayoutEffect(() => {
-    if (!describeTotal) return;
-    const button = rootRef.current.querySelector(".overview-total");
+    if (!showSubtotal || !targets) return;
+    const button = targets.total;
     const previous = button.getAttribute("aria-describedby");
     button.setAttribute("aria-describedby", [previous, descriptionId].filter(Boolean).join(" "));
-    setTotalButton(button);
     return () => {
       if (previous) button.setAttribute("aria-describedby", previous);
       else button.removeAttribute("aria-describedby");
     };
-  }, [describeTotal, descriptionId]);
+  }, [showSubtotal, targets, descriptionId]);
 
   return <div ref={rootRef} data-reading={mode}>
     <Overview d={d} filters={filters} onFilters={onFilters} onPage={onPage} run={run}/>
-    {describeTotal && totalButton && createPortal(
-      <span id={descriptionId} className="d02-total-notes">
-        {showSubtotal && <span className="d02-subtotal">可估值小计 {money(coverage.amount)} · {coverage.missing.join("、")} 缺报价</span>}
-        {showCash && <CashLine valuation={d.valuation}/>}
-        {drivers.length > 0 && <DriverLine drivers={drivers}/>}
-      </span>, totalButton
+    {showSubtotal && targets && createPortal(
+      <span id={descriptionId} className="d02-subtotal">可估值小计 {money(coverage.amount)} · {coverage.missing.join("、")} 缺报价</span>, targets.total
     )}
-    {holdingsHeader && createPortal(
-      <button className="overview-all" type="button" onClick={() => setShowCompany(true)}>公司敞口 ›</button>, holdingsHeader
+    {daily && targets && createPortal(
+      <>
+        <AssetComposition d={d} onDetails={() => targets.total.click()}/>
+        <CloseDrivers today={d.today}/>
+      </>, targets.layout
     )}
-    {showCompany && <CompanyExposure d={d} scope={scopeNames[state.scope]} close={() => setShowCompany(false)}/>}
   </div>;
 }
 
@@ -129,7 +119,7 @@ function Screen({ mode, d, state, update }) {
     setReadOnlyNotice(true);
     return false;
   }
-  return <><Toolbar state={state} update={update} d={d} daily={mode === "balance" && !holdings}/>
+  return <><Toolbar state={state} update={update} d={d}/>
   <div className="d02-body d02-window" data-aspect="16:9">
     <header className="d02-top">
       <div className="d02-title"><span className="d02-mark"><Layers3 size={19}/></span>
@@ -145,7 +135,7 @@ function Screen({ mode, d, state, update }) {
     </header>
     <div className="d02-scroll" ref={scrollRef}><div className="d02-page">
       <div hidden={Boolean(holdings)}>
-        <OverviewPage d={d} mode={mode} state={state} filters={filters} onFilters={f => update({period:f.period})} onPage={navigate} run={readOnly}/>
+        <OverviewPage d={d} mode={mode} filters={filters} onFilters={f => update({period:f.period})} onPage={navigate} run={readOnly}/>
       </div>
       {holdings && <Holdings d={d} initial={holdings} run={readOnly}/>}
     </div></div>

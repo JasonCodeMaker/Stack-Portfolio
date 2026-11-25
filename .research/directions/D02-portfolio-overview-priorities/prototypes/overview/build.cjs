@@ -36,7 +36,7 @@ async function snapshots() {
           data[[sample, scope, period].join("/")] = Object.fromEntries([
             "selected", "accounts", "date", "end", "start", "summary", "rows", "byAccount",
             "breakdown", "holdings", "points", "fx", "valuation", "securities", "today",
-            "currentMarket", "known", "portfolio", "listings", "settings", "cumulative", "exposure",
+            "currentMarket", "known", "portfolio", "listings", "settings", "cumulative",
           ].map(key => [key, d[key]]));
         }
       }
