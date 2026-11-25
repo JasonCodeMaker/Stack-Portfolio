@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useI18n } from "./i18n.jsx";
 
 // Series colours passed the categorical checks together (lightness band, chroma floor,
 // colour-vision separation and contrast on the white card surface).
@@ -51,6 +52,7 @@ export function TimeChart({
   onZoom,
   zones,
 }) {
+  const { t } = useI18n();
   const box = useRef(null),
     width = useWidth(box);
   const [hover, setHover] = useState(null),
@@ -146,7 +148,7 @@ export function TimeChart({
   const idPrefix = useRef("c" + Math.random().toString(36).slice(2, 8)).current;
   return (
     <div className="chart">
-      <div className="chart-legend" role="group" aria-label="图例，点按可隐藏或显示曲线">
+      <div className="chart-legend" role="group" aria-label={t("chart.legendAria")}>
         {series.map((s) => (
           <button
             key={s.id}
@@ -318,13 +320,13 @@ export function TimeChart({
           >
             <time>
               {reading.date}
-              {active === pinned && onSelect && " · 观察日"}
+              {active === pinned && onSelect && t("chart.observedDay")}
             </time>
             {shown.map((s) => (
               <div key={s.id} className="chart-tip-row">
                 <i style={{ borderTopColor: s.color, borderTopStyle: s.dotted ? "dotted" : s.dashed ? "dashed" : "solid" }} />
                 <span>{s.name}</span>
-                <b>{s.value(reading) == null ? "暂无" : format(s.value(reading))}</b>
+                <b>{s.value(reading) == null ? t("chart.noData") : format(s.value(reading))}</b>
               </div>
             ))}
             {tooltip?.(reading)}

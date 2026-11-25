@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
 import { day, resolveAsset } from "./ledger.js";
+import { tMain } from "./i18n/index.js";
 
 // Prices belong to the reporting account. A trade price or an FX execution price is never a closing mark.
 export function ibkrReportPrices(db, account, report, trades, checked, write) {
@@ -15,12 +16,12 @@ export function ibkrReportPrices(db, account, report, trades, checked, write) {
     const quote = quotes.get(key);
     if (quote && quote.price !== price) {
       quote.price = null;
-      warnings.add(date + " " + label + " 的券商报表数值不一致");
+      warnings.add(tMain("ibkr.price.mismatch", { date, label }));
     } else if (!quote) quotes.set(key, { id, date, price, source, priority, label, format, currency });
   }
   function fx(ccy, date, value, source, priority) {
     if (/^[A-Z]{3}$/.test(ccy) && ccy !== "AUD")
-      add("FX:" + ccy + "/AUD", date, value, source, priority, ccy + " 兑澳元", "rate");
+      add("FX:" + ccy + "/AUD", date, value, source, priority, tMain("ibkr.price.fxLabel", { currency: ccy }), "rate");
   }
   function listing(row, mic) {
     const id = row.assetId || resolveAsset(db, { symbol: row.symbol, exchangeMic: mic }, row.currency, false);
@@ -35,11 +36,11 @@ export function ibkrReportPrices(db, account, report, trades, checked, write) {
     if (e.baseCurrency === "AUD")
       fx(e.currency, e.reportDate, e.fxRateToBase, "IBKR 成交报表折算率", 20);
     if (e.closePrice && row.symbol)
-      add(listing(row, row.exchangeMic), e.reportDate, e.closePrice, "IBKR 成交报表收盘价", 20, row.symbol + " 收盘价", "price", row.currency);
+      add(listing(row, row.exchangeMic), e.reportDate, e.closePrice, "IBKR 成交报表收盘价", 20, tMain("ibkr.price.closeLabel", { symbol: row.symbol }), "price", row.currency);
   }
   const statement = report.statement;
   for (const row of statement?.positions || []) {
-    add(listing(row, row.mic), statement.date, row.price, "IBKR 结单报价", 30, row.symbol + " 持仓报价", "price", row.currency);
+    add(listing(row, row.mic), statement.date, row.price, "IBKR 结单报价", 30, tMain("ibkr.price.posLabel", { symbol: row.symbol }), "price", row.currency);
     if (statement.base === "AUD") fx(row.currency, statement.date, row.fxToBase, "IBKR 结单汇率", 30);
   }
   for (const r of report.audit?.conversionRates || []) {
@@ -51,7 +52,7 @@ export function ibkrReportPrices(db, account, report, trades, checked, write) {
     const args = [account, q.id, q.date, q.source];
     const before = previous.get(...args)?.price ?? null;
     if (q.price === null ? before === null : before !== null && new Decimal(before).eq(q.price)) continue;
-    edits.push({ label: q.date + " " + q.label + " · " + q.source, format: q.format, before, after: q.price, currency: q.currency });
+    edits.push({ label: tMain("ibkr.price.editLabel", { date: q.date, label: q.label, source: q.source }), format: q.format, before, after: q.price, currency: q.currency });
     if (write) {
       if (q.price === null) withdraw.run(...args);
       else save.run(...args, q.price, q.priority);

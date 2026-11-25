@@ -5,29 +5,31 @@ import React, { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Modal } from "./common";
 import { daysBetween, periodPresets } from "../periods.js";
-import { accountScope, choosePreset, chooseRange, clearRange, isCustom, periodLabels, setValuationDate } from "./filters.js";
+import { accountScope, choosePreset, chooseRange, clearRange, isCustom, periodLabel, setValuationDate } from "./filters.js";
+import { useI18n } from "./i18n.jsx";
 
 // The local calendar date, which the valuation date returns to.
 export const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Australia/Brisbane" });
 
 // accounts: the active accounts [{id, name}]; selected: the ids the page shows.
 export function AccountScope({ filters, accounts, selected, onChange }) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(null);
   const label =
     filters.ids == null || selected.length === accounts.length
-      ? "全部账户"
+      ? t("app.allAccounts")
       : selected.length === 1
         ? accounts.find((a) => a.id === selected[0])?.name
-        : selected.length + " 个账户";
+        : t("app.accountsSelected", { count: selected.length });
   return (
     <>
-      <button type="button" className="btn account-scope" aria-label={"账户范围 · " + label}
+      <button type="button" className="btn account-scope" aria-label={t("app.accountScopeAria", { label })}
         title={label} onClick={() => setEditing([...selected])}>
         <span>{label}</span>
         <ChevronDown size={13} aria-hidden="true" />
       </button>
       {editing && (
-        <Modal title="账户范围" close={() => setEditing(null)}>
+        <Modal title={t("app.accountScope")} close={() => setEditing(null)}>
           {accounts.map((a) => (
             <label className="check" key={a.id}>
               <input
@@ -40,7 +42,7 @@ export function AccountScope({ filters, accounts, selected, onChange }) {
           ))}
           <div className="actions">
             <button type="button" onClick={() => setEditing(accounts.map((a) => a.id))}>
-              全部账户
+              {t("app.allAccounts")}
             </button>
             <button
               type="button"
@@ -51,7 +53,7 @@ export function AccountScope({ filters, accounts, selected, onChange }) {
                 setEditing(null);
               }}
             >
-              应用
+              {t("app.apply")}
             </button>
           </div>
         </Modal>
@@ -60,16 +62,17 @@ export function AccountScope({ filters, accounts, selected, onChange }) {
   );
 }
 
-// "今天 ▾" until a past day is chosen; the native date picker opens on click.
+// "Today ▾" until a past day is chosen; the native date picker opens on click.
 export function ValuationDate({ filters, value, onChange }) {
+  const { t } = useI18n();
   const now = today();
   return (
     <label className="btn date-pick">
-      <span>{filters.date || "今天"}</span>
+      <span>{filters.date || t("app.today")}</span>
       <ChevronDown size={13} aria-hidden="true" />
       <input
         type="date"
-        aria-label="估值日"
+        aria-label={t("app.valuationDateAria")}
         max={now}
         value={value}
         onClick={(e) => e.currentTarget.showPicker?.()}
@@ -81,24 +84,26 @@ export function ValuationDate({ filters, value, onChange }) {
 
 // Beside the page title while a past valuation date is shown.
 export function AsOf({ filters, onChange }) {
+  const { t } = useI18n();
   if (!filters.date) return null;
   return (
     <span className="asof" role="status">
-      正在查看 {filters.date}
+      {t("app.viewingAsOf", { date: filters.date })}
       <button type="button" onClick={() => onChange(setValuationDate(filters, "", today()))}>
-        回到今天
+        {t("app.backToToday")}
       </button>
     </span>
   );
 }
 
 // The period presets end on the valuation date. With `custom` (the review) the control also
-// enters a custom range; elsewhere a custom range shows as 「起 至 止 ✕」 with no preset selected.
-// range = {from, to}: the period as measured, for the caption; days adds "· N 天".
+// enters a custom range; elsewhere a custom range shows as `from to to ✕` with no preset selected.
+// range = {from, to}: the period as measured, for the caption; days adds " · N days".
 export function PeriodControl({ filters, range, valuationDate, custom = false, days = false, onChange, children }) {
+  const { t } = useI18n();
   const ranged = isCustom(filters);
   return (
-    <div className="row m0 period-row" role="group" aria-label="期间">
+    <div className="row m0 period-row" role="group" aria-label={t("period.groupAria")}>
       <span className="seg">
         {periodPresets.map((k) => (
           <button
@@ -108,7 +113,7 @@ export function PeriodControl({ filters, range, valuationDate, custom = false, d
             aria-pressed={!ranged && filters.period === k}
             onClick={() => onChange(choosePreset(filters, k))}
           >
-            {periodLabels[k]}
+            {periodLabel(k, t)}
           </button>
         ))}
         {custom && (
@@ -118,7 +123,7 @@ export function PeriodControl({ filters, range, valuationDate, custom = false, d
             aria-pressed={ranged}
             onClick={() => !ranged && range && onChange(chooseRange(filters, range.from, range.to, valuationDate))}
           >
-            自定义…
+            {t("period.customBtn")}
           </button>
         )}
       </span>
@@ -127,16 +132,16 @@ export function PeriodControl({ filters, range, valuationDate, custom = false, d
           <input
             className="btn"
             type="date"
-            aria-label="期间起点"
+            aria-label={t("period.fromAria")}
             value={filters.from}
             max={filters.to}
             onChange={(e) => onChange(chooseRange(filters, e.target.value, filters.to, valuationDate))}
           />
-          <span className="cap">至</span>
+          <span className="cap">{t("period.toWord")}</span>
           <input
             className="btn"
             type="date"
-            aria-label="期间终点"
+            aria-label={t("period.toAria")}
             value={filters.to}
             min={filters.from}
             max={valuationDate}
@@ -145,16 +150,16 @@ export function PeriodControl({ filters, range, valuationDate, custom = false, d
         </span>
       ) : ranged ? (
         <span className="range-chip">
-          {filters.from} 至 {filters.to > valuationDate ? valuationDate : filters.to}
-          <button type="button" aria-label="回到预设期间" onClick={() => onChange(clearRange(filters))}>
+          {filters.from} {t("period.toWord")} {filters.to > valuationDate ? valuationDate : filters.to}
+          <button type="button" aria-label={t("period.resetPresetAria")} onClick={() => onChange(clearRange(filters))}>
             ✕
           </button>
         </span>
       ) : (
         range && (
           <span className="cap">
-            {range.from === range.to ? range.to : range.from + " 至 " + range.to}
-            {days && " · " + (daysBetween(range.from, range.to) + 1) + " 天"}
+            {range.from === range.to ? range.to : `${range.from} ${t("period.toWord")} ${range.to}`}
+            {days && t("period.daysCount", { days: daysBetween(range.from, range.to) + 1 })}
           </span>
         )
       )}

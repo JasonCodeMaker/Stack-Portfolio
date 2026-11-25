@@ -5,8 +5,9 @@ import { createPortal } from "react-dom";
 import { Icon } from "./icons";
 import { Modal } from "./common";
 import { arrangeGrid, mainChartHeight, shellTier, stepRow } from "./layout.js";
+import { tMain, useI18n } from "./i18n.jsx";
 
-// Six pages in two groups (分析 | 维护), in the order the questions narrow down.
+// Six pages in two groups (analysis | maintenance), in the order the questions narrow down.
 export const pageGroups = [
   [
     ["overview", "总览"],
@@ -20,6 +21,11 @@ export const pageGroups = [
   ],
 ];
 export const pageTitles = Object.fromEntries(pageGroups.flat());
+
+const pageIds = [
+  ["overview", "performance", "allocation", "holdings"],
+  ["imports", "settings"],
+];
 
 const ShellContext = createContext({ aspect: "16:9", tier: "regular", short: false, cols: 1, shell: null });
 export const useShell = () => useContext(ShellContext);
@@ -45,6 +51,7 @@ function useViewportTier(aspect) {
 }
 
 export function Shell({ aspect, page, onPage, ledger, onLedger, titleExtra, filters, children }) {
+  const { t } = useI18n();
   const view = useViewportTier(aspect);
   const cols = aspect === "21:9" ? 2 : 1;
   const [shell, setShell] = useState(null),
@@ -53,47 +60,55 @@ export function Shell({ aspect, page, onPage, ledger, onLedger, titleExtra, filt
   useLayoutEffect(() => {
     pane.current.scrollTo(0, 0);
   }, [page]);
-  const nav = ([id, label]) => (
-    <button
-      key={id}
-      type="button"
-      className={"nav-item" + (page === id ? " on" : "")}
-      aria-label={label}
-      aria-current={page === id ? "page" : undefined}
-      onClick={() => onPage(id)}
-    >
-      <Icon name={id} />
-      <span>{label}</span>
-    </button>
-  );
-  const book = ledger.demo ? "示例账本" : "本地账本";
+  const nav = (id) => {
+    const label = t(`nav.${id}`);
+    return (
+      <button
+        key={id}
+        type="button"
+        className={"nav-item" + (page === id ? " on" : "")}
+        aria-label={label}
+        aria-current={page === id ? "page" : undefined}
+        onClick={() => onPage(id)}
+      >
+        <Icon name={id} />
+        <span>{label}</span>
+      </button>
+    );
+  };
+  const book = ledger.demo ? t("app.demoBook") : t("app.realBook");
   return (
     <ShellContext.Provider value={{ ...view, aspect, cols, shell }}>
       <div className="shell" ref={setShell}>
-        <nav className="side" aria-label="页面">
+        <nav className="side" aria-label={t("nav.groupLabel")}>
           <div className="brand">
             <Mark />
             <div>
               Stock<small>Portfolio</small>
             </div>
           </div>
-          {pageGroups[0].map(nav)}
+          {pageIds[0].map(nav)}
           <hr />
-          {pageGroups[1].map(nav)}
-          <button type="button" className="ledger" aria-label={"切换账本 · " + book} onClick={onLedger}>
+          {pageIds[1].map(nav)}
+          <button
+            type="button"
+            className="ledger"
+            aria-label={t("app.switchBookAria", { book })}
+            onClick={onLedger}
+          >
             <span className="av">
               <Icon name="ledger" size={16} />
             </span>
             <span className="tx">
               {book}
-              <small>{ledger.accounts} 个账户</small>
+              <small>{t("app.accountsCount", { count: ledger.accounts })}</small>
             </span>
-            {ledger.demo && <span className="demo">示例</span>}
+            {ledger.demo && <span className="demo">{t("app.demoBadge")}</span>}
           </button>
         </nav>
         <div className="work">
           <header className="head">
-            <h1>{pageTitles[page]}</h1>
+            <h1>{t(`nav.${page}`)}</h1>
             {titleExtra}
             <span className="sp" />
             {filters && <div className="header-tools">{filters}</div>}
@@ -177,7 +192,7 @@ function Inspector({ title, onClose, children }) {
     <aside className="insp" aria-label={title}>
       <header>
         <h2>{title}</h2>
-        <button type="button" className="btn" aria-label="关闭" onClick={onClose}>
+        <button type="button" className="btn" aria-label={tMain("app.close")} onClick={onClose}>
           ✕
         </button>
       </header>

@@ -21,7 +21,11 @@ import "./design.css";
 import "./styles.css";
 import "./settings.css";
 import { AccountWizard } from "./onboarding/AccountWizard";
+import { I18nProvider, useI18n } from "./i18n.jsx";
+import { createTranslator } from "../i18n/index.js";
+
 function Welcome({ home, run, enter, onClose, onSetup }) {
+  const { t, languagePreference, localeOptions, changeLanguage } = useI18n();
   const [preview, setPreview] = useState(null),
     [source, setSource] = useState(home.sources[0]?.id ?? "file");
   async function migrate() {
@@ -36,90 +40,102 @@ function Welcome({ home, run, enter, onClose, onSetup }) {
       <div className="wel">
       <header>
         <Mark />
-        Stock Portfolio
+        {t("app.name")}
+        <label className="welcome-lang" style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 400 }}>
+          <span className="cap">{t("lang.label")}</span>
+          <select
+            aria-label={t("lang.label")}
+            value={languagePreference}
+            onChange={(e) => changeLanguage(e.target.value)}
+          >
+            {localeOptions.map(([id, label]) => (
+              <option key={id} value={id}>{label}</option>
+            ))}
+          </select>
+        </label>
       </header>
       <main>
         <div className="intro">
-          <h1>打开投资账本</h1>
-          <p>在本机管理持仓、资金流水和资产配置。</p>
+          <h1>{t("welcome.heading")}</h1>
+          <p>{t("welcome.tagline")}</p>
         </div>
         <div className="wc">
-          <section className="card hero" aria-label={home.hasReal ? "正式账本" : "迁入 Wealthfolio 账本"}>
+          <section className="card hero" aria-label={home.hasReal ? t("welcome.realTitle") : t("welcome.migrateTitle")}>
             <Database size={24} strokeWidth={1.8} />
-            <h2>{home.hasReal ? "正式账本" : "迁入 Wealthfolio 账本"}</h2>
+            <h2>{home.hasReal ? t("welcome.realTitle") : t("welcome.migrateTitle")}</h2>
             {home.hasReal ? (
               <>
-                <p>继续查看已保存的投资记录、配置目标和对账结果。</p>
+                <p>{t("welcome.realDesc")}</p>
                 <button className="btn" onClick={() => enter("openReal")}>
-                  打开正式账本 →
+                  {t("welcome.openReal")}
                 </button>
               </>
             ) : (
               <>
-                <p>带入账户、交易历史、手工更正、ETF 数据及配置设置。可在迁入前核对记录数。</p>
+                <p>{t("welcome.migrateDesc")}</p>
                 <label className="f">
-                  <span>数据来源</span>
+                  <span>{t("welcome.dataSource")}</span>
                   <select
-                    aria-label="迁移数据来源"
+                    aria-label={t("welcome.dataSourceAria")}
                     value={source}
                     onChange={(e) => setSource(e.target.value)}
                   >
                     {home.sources.map((s) => (
                       <option key={s.id} value={s.id}>
-                        本机 Wealthfolio · {s.label}
+                        {t("welcome.localWealthfolio", { label: s.label })}
                       </option>
                     ))}
-                    <option value="file">选择其他账本或 .db 备份…</option>
+                    <option value="file">{t("welcome.chooseOtherDb")}</option>
                   </select>
                 </label>
                 <button className="btn" onClick={migrate}>
-                  预览迁移 →
+                  {t("welcome.previewMigration")}
                 </button>
               </>
             )}
           </section>
-          <section className="card" aria-label="示例组合">
+          <section className="card" aria-label={t("welcome.demoTitle")}>
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M3 3v18h18" />
               <path d="m7 15 4-5 3 3 5-7" />
             </svg>
             <h2>
-              示例组合 <span className="demo">示例</span>
+              {t("welcome.demoTitle")} <span className="demo">{t("app.demoBadge")}</span>
             </h2>
-            <p>用 IBKR 和 Webull 的虚构记录试用总览、持仓、ETF 穿透和月结对账。</p>
+            <p>{t("welcome.demoDesc")}</p>
             <button className="btn" onClick={() => enter("openDemo")}>
-              打开示例账本 ↗
+              {t("welcome.openDemo")}
             </button>
           </section>
         </div>
         <div className="wf">
-          {!home.hasReal && !home.mode && <button className="lnk" onClick={onSetup}>添加券商账户</button>}
+          {!home.hasReal && !home.mode && <button className="lnk" onClick={onSetup}>{t("app.addBrokerAccount")}</button>}
           {!home.hasReal && (
             <button className="lnk" onClick={() => enter("newBook")}>
-              建立空白账本
+              {t("welcome.newBook")}
             </button>
           )}
           <BookBackups welcome run={run} restored={(m) => enter(m === "demo" ? "openDemo" : "openReal")} />
           {onClose && (
             <button className="lnk" onClick={onClose}>
-              返回当前账本
+              {t("welcome.backToCurrent")}
             </button>
           )}
         </div>
         {preview && (
-          <Modal title="确认迁入旧账本和设置" close={() => setPreview(null)}>
-            <p>{preview.name} · 迁入后由 Stock Portfolio 独立保存和更新。</p>
+          <Modal title={t("welcome.modalTitle")} close={() => setPreview(null)}>
+            <p>{t("welcome.modalDesc", { name: preview.name })}</p>
             <dl>
               {Object.entries({
-                accounts: "账户",
-                activities: "交易及资金流水",
-                assets: "资产档案",
-                snapshots: "持仓快照",
-                valuations: "历史估值",
-                quotes: "历史报价",
-                allocation: "配置设置与 ETF 数据",
-                broker: "同步设置及去重记录",
+                accounts: t("welcome.count.accounts"),
+                activities: t("welcome.count.activities"),
+                assets: t("welcome.count.assets"),
+                snapshots: t("welcome.count.snapshots"),
+                valuations: t("welcome.count.valuations"),
+                quotes: t("welcome.count.quotes"),
+                allocation: t("welcome.count.allocation"),
+                broker: t("welcome.count.broker"),
               }).map(([k, l]) => (
                 <React.Fragment key={k}>
                   <dt>{l}</dt>
@@ -128,14 +144,14 @@ function Welcome({ home, run, enter, onClose, onSetup }) {
               ))}
             </dl>
             {(!preview.counts.allocation || !preview.counts.broker) && (
-              <p className="warning">这份源文件中有一项功能没有保存设置，可以改选原始账本再预览。</p>
+              <p className="warning">{t("welcome.missingModuleWarning")}</p>
             )}
             {preview.counts.invalidFunds > 0 && (
               <p className="warning">
-                有 {preview.counts.invalidFunds} 份基金成分表缺少有效数据，可选择另一份备份或在迁入后补齐。
+                {t("welcome.invalidFundsWarning", { count: preview.counts.invalidFunds })}
               </p>
             )}
-            <p className="muted">迁入完成后，请在「设置」中重新连接券商。</p>
+            <p className="muted">{t("welcome.reconnectNote")}</p>
             <button
               className="btn pri"
               onClick={() =>
@@ -143,10 +159,10 @@ function Welcome({ home, run, enter, onClose, onSetup }) {
                   await api.migrationCommit({ token: preview.token });
                   setPreview(null);
                   await enter("openReal");
-                }, "迁移已完成")
+                }, t("welcome.migrationDone"))
               }
             >
-              确认迁入并打开
+              {t("welcome.confirmMigrate")}
             </button>
           </Modal>
         )}
@@ -275,6 +291,13 @@ function Application() {
       setHome((current) => ({ ...current, theme: saved }));
     }, false);
   }
+  function changeLanguage(language) {
+    run(async () => {
+      const next = await api.setLanguage({ language });
+      setHome((current) => ({ ...current, ...next }));
+      return createTranslator(next.locale)("lang.saved");
+    }, true);
+  }
   function onPage(id, init = {}) {
     setPage(id);
     setInitial({ ...init });
@@ -346,50 +369,66 @@ function Application() {
   }, [page]);
   const active = d?.accounts.filter((a) => a.active) || [];
   const analysis = analysisPages.includes(page);
+  const t = createTranslator(home?.locale || "zh-CN");
+  const wrap = (node) => (
+    <I18nProvider
+      locale={home?.locale || "zh-CN"}
+      languagePreference={home?.languagePreference || "system"}
+      systemLocale={home?.systemLocale || "zh-CN"}
+      changeLanguage={changeLanguage}
+    >
+      {node}
+    </I18nProvider>
+  );
   const banners = (
     <>
       {busy && (
         <div className="busy" role="status">
-          <RefreshCw size={14} /> 正在处理…
+          <RefreshCw size={14} /> {t("app.busy")}
         </div>
       )}
       {message && (
         <div className="toast" role="status">
           <CheckCircle2 size={17} aria-hidden="true" />
           <span>{message}</span>
-          <button type="button" className="icon" aria-label="关闭通知" onClick={() => setMessage("")}>
+          <button type="button" className="icon" aria-label={t("app.close")} onClick={() => setMessage("")}>
             <X size={15} />
           </button>
         </div>
       )}
       {fatal && (
-        <Modal title="操作提示" close={() => setFatal("")}>
+        <Modal title={t("app.noticeTitle")} close={() => setFatal("")}>
           <p className="error-text">{fatal}</p>
           <button className="primary" onClick={() => setFatal("")}>
-            知道了
+            {t("app.ok")}
           </button>
         </Modal>
       )}
     </>
   );
   if (!home)
-    return (
+    return wrap(
       <div className="boot">
-        <Mark /> 正在打开 Stock Portfolio…{banners}
-      </div>
+        <Mark /> {t("app.booting")}{banners}
+      </div>,
     );
   if (wizard)
-    return <><AccountWizard initialPage={wizard} accounts={d?.accounts || []} existing={bindings}
-      theme={home.theme} onTheme={changeTheme} onLeave={() => closeSetup()} onImport={closeSetup}
-      onBound={() => run(async () => { await workspace(); await updateBindings(); }, false)} />{banners}</>;
+    return wrap(
+      <>
+        <AccountWizard initialPage={wizard} accounts={d?.accounts || []} existing={bindings}
+          theme={home.theme} onTheme={changeTheme} onLeave={() => closeSetup()} onImport={closeSetup}
+          onBound={() => run(async () => { await workspace(); await updateBindings(); }, false)} />
+        {banners}
+      </>,
+    );
   if (welcome || !d)
-    return (
+    return wrap(
       <>
         <Welcome home={home} run={run} enter={enter} onSetup={openSetup} onClose={mode ? () => setWelcome(false) : null} />
         {banners}
-      </>
+      </>,
     );
-  return (
+  return wrap(
     <>
       <Shell
         aspect={display.aspect}
@@ -412,7 +451,7 @@ function Application() {
         )}
         {page === "overview" && <Overview d={d} run={run} onPage={onPage} filters={filters} onFilters={changeFilters} />}
         {page === "overview" && mode === "real" && !active.length && (
-          <button className="btn pri" onClick={openSetup}>添加券商账户</button>
+          <button className="btn pri" onClick={openSetup}>{t("app.addBrokerAccount")}</button>
         )}
         {page === "holdings" && (
           <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} />
@@ -449,7 +488,7 @@ function Application() {
         )}
       </Shell>
       {banners}
-    </>
+    </>,
   );
 }
 createRoot(document.getElementById("root")).render(<Application />);

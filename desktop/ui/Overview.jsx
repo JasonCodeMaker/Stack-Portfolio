@@ -6,7 +6,9 @@ import { HoldingEditor } from "./HoldingEditor";
 import { LineChart, seriesColor } from "./charts";
 import { PeriodControl } from "./FilterControls";
 import { FxCard, FxPanel, RecentCloseDates } from "./MarketQuotes";
-import { isCustom, periodLabels } from "./filters.js";
+import { isCustom, periodLabel } from "./filters.js";
+import { periodPresets } from "../periods.js";
+import { useI18n } from "./i18n.jsx";
 import "./overview.css";
 
 const amount = (n) => fmt(n, 2);
@@ -14,11 +16,7 @@ const closeRate = (value, change) =>
   value != null && change != null && value > change ? change / (value - change) : null;
 const axis = new Intl.NumberFormat("en-AU", { notation: "compact", maximumFractionDigits: 2 });
 const percentAxis = new Intl.NumberFormat("en-AU", { style: "percent", maximumFractionDigits: 2 });
-const emptyBreakdown = ["未实现变动", "已实现", "分红与利息", "费用", "汇率"].map((label) => ({
-  key: label,
-  label,
-  value: null,
-}));
+const breakdownKeys = ["unrealised", "realised", "income", "fees", "fx"];
 
 function Metric({ label, value, caption }) {
   return (
@@ -31,16 +29,17 @@ function Metric({ label, value, caption }) {
 }
 
 function AssetTrend({ points, view, onViewChange }) {
+  const { t } = useI18n();
   const { aspect } = useShell();
   const [fit, height] = useMainChartHeight(aspect === "21:9" ? { min: 220, max: 235 } : { max: 360 });
   const gain = view === "gain";
   const series = gain
-    ? [{ name: "投资盈亏", values: points.map((p) => p.gain), color: "var(--l1)", width: 2, area: "sign" }]
+    ? [{ name: t("overview.series.gain"), values: points.map((p) => p.gain), color: "var(--l1)", width: 2, area: "sign" }]
     : [
-        { name: "净投入", values: points.map((p) => p.invested), color: "var(--l3)", step: true, dash: "4 3" },
-        { name: "总资产", values: points.map((p) => p.value), color: seriesColor(0), width: 2 },
+        { name: t("overview.series.invested"), values: points.map((p) => p.invested), color: "var(--l3)", step: true, dash: "4 3" },
+        { name: t("overview.series.value"), values: points.map((p) => p.value), color: seriesColor(0), width: 2 },
         {
-          name: "净投入收益率",
+          name: t("overview.series.netContribRate"),
           values: points.map((p) => p.netContributionRate),
           color: seriesColor(2),
           axis: "right",
@@ -49,11 +48,11 @@ function AssetTrend({ points, view, onViewChange }) {
         },
       ];
   return (
-    <section className="card overview-trend" aria-label="资产走势">
+    <section className="card overview-trend" aria-label={t("overview.trendTitle")}>
       <div className="row">
-        <h2>资产走势</h2>
-        <div className="seg" role="group" aria-label="资产走势视图">
-          {[["value", "总资产与净投入"], ["gain", "投资盈亏"]].map(([key, label]) => (
+        <h2>{t("overview.trendTitle")}</h2>
+        <div className="seg" role="group" aria-label={t("overview.trendViewAria")}>
+          {[["value", t("overview.trendValueLabel")], ["gain", t("overview.trendGainLabel")]].map(([key, label]) => (
             <button
               key={key}
               type="button"
@@ -69,7 +68,7 @@ function AssetTrend({ points, view, onViewChange }) {
       <div className="chart overview-chart" ref={fit} style={{ height }}>
         {series.some((s) => s.values.some(Number.isFinite)) ? (
           <LineChart
-            ariaLabel={gain ? "投资盈亏" : "总资产与净投入"}
+            ariaLabel={gain ? t("overview.trendGainLabel") : t("overview.trendValueLabel")}
             dates={points.map((p) => p.date)}
             series={series}
             height={height}
@@ -80,7 +79,7 @@ function AssetTrend({ points, view, onViewChange }) {
             formatValue={(v, s) => (s.axis === "right" ? signedPct(v) : gain ? signedAud(v) : aud(v, 2))}
           />
         ) : (
-          <Empty>暂无数据</Empty>
+          <Empty>{t("common.noData")}</Empty>
         )}
       </div>
     </section>
@@ -88,16 +87,17 @@ function AssetTrend({ points, view, onViewChange }) {
 }
 
 function AssetDetails({ d, onClose }) {
+  const { t } = useI18n();
   const { cash, total } = d.valuation;
   return (
-    <Detail title="总资产明细" onClose={onClose}>
+    <Detail title={t("overview.assetDetailsTitle")} onClose={onClose}>
       <div className="dl">
-        <div><span className="cap">证券市值</span><b>{amount(d.securities)}</b></div>
-        <div><span className="cap">现金</span><b>{amount(cash)}</b></div>
+        <div><span className="cap">{t("overview.securitiesValue")}</span><b>{amount(d.securities)}</b></div>
+        <div><span className="cap">{t("overview.cashValue")}</span><b>{amount(cash)}</b></div>
       </div>
       <div className="overview-table">
         <table>
-          <thead><tr><th>账户</th><th>证券</th><th>现金</th><th>合计</th></tr></thead>
+          <thead><tr><th>{t("overview.col.account")}</th><th>{t("overview.col.securities")}</th><th>{t("overview.col.cash")}</th><th>{t("overview.col.total")}</th></tr></thead>
           <tbody>
             {d.byAccount.map((a) => (
               <tr key={a.id}>
@@ -108,7 +108,7 @@ function AssetDetails({ d, onClose }) {
               </tr>
             ))}
             <tr>
-              <td><b>合计</b></td>
+              <td><b>{t("overview.col.total")}</b></td>
               <td>{amount(d.securities)}</td>
               <td>{amount(cash)}</td>
               <td><b>{amount(total)}</b></td>
@@ -121,29 +121,30 @@ function AssetDetails({ d, onClose }) {
 }
 
 function TopHoldings({ top, total, unpriced, canStack, live, selected, openHolding, viewAll }) {
+  const { t } = useI18n();
   const share = total > 0 ? top.reduce((sum, s) => sum + s.value, 0) / total : null;
   const maxGain = Math.max(0, ...top.map((s) => Math.abs(s.cumulativeGain ?? 0)));
   return (
-    <section className="card top-holdings" aria-label="前 5 大持仓">
-      <div className="row"><h2>前 5 大持仓</h2><span className="sp" />
-        <button type="button" className="overview-all" onClick={viewAll}>查看全部 <span aria-hidden="true">›</span></button>
+    <section className="card top-holdings" aria-label={t("overview.top5Title")}>
+      <div className="row"><h2>{t("overview.top5Title")}</h2><span className="sp" />
+        <button type="button" className="overview-all" onClick={viewAll}>{t("overview.viewAll")} <span aria-hidden="true">›</span></button>
       </div>
-      {unpriced || !top.length ? <Empty>{unpriced ? "持仓估值待补，暂无法确定前五大持仓" : "暂无持仓"}</Empty> : <>
-        <p className="cap holding-caption">占比变化较上日 · 累计总盈亏</p>
+      {unpriced || !top.length ? <Empty>{unpriced ? t("overview.topUnpricedEmpty") : t("overview.topEmpty")}</Empty> : <>
+        <p className="cap holding-caption">{t("overview.holdingCaption")}</p>
         {canStack && share != null && share <= 1 + 1e-12 && <div className="concentration">
-          <div className="split cap"><span>前 5 合计 <b>{pct(share)}</b></span>
-            <span>其余持仓及现金 {pct(Math.max(0, 1 - share))}</span></div>
+          <div className="split cap"><span>{t("overview.top5Share")} <b>{pct(share)}</b></span>
+            <span>{t("overview.restAndCashShare", { pct: pct(Math.max(0, 1 - share)) })}</span></div>
           <div className="concentration-track">{top.map((s, i) =>
             <i key={s.key} title={s.ticker + " " + pct(s.value / total)}
               style={{ width: Math.max(0, s.value / total) * 100 + "%", background: "var(--s" + (i + 1) + ")" }} />
           )}</div>
         </div>}
-        <table aria-label="前五大持仓明细" className="holding-list"><tbody>
+        <table aria-label={t("overview.top5TableAria")} className="holding-list"><tbody>
           {top.map((s, i) => {
             const gain = s.cumulativeGain;
             const half = maxGain && Math.abs(gain ?? 0) / maxGain * 50;
             const pp = s.weightChangePp;
-            const badge = s.newPosition ? "新进" : pp == null ? "—" : signedPct(pp / 100).replace("%", " pp");
+            const badge = s.newPosition ? t("overview.newPosition") : pp == null ? "—" : signedPct(pp / 100).replace("%", " pp");
             return (
               <tr key={s.key} data-row={s.key} className={selected === s.key ? "click sel" : "click"} onClick={() => openHolding(s.key)}>
                 <td className="holding-id">
@@ -152,19 +153,19 @@ function TopHoldings({ top, total, unpriced, canStack, live, selected, openHoldi
                   <span className="holding-name cap" title={s.name}>{s.name}</span>
                   <span className="cap">{pct(total > 0 ? s.value / total : null)}</span>
                   <span className={"weight-badge " + (pp > 0.005 ? "up" : pp < -0.005 ? "down" : "")}
-                    title="占比变化（较上个交易日）">{badge}</span>
+                    title={t("overview.weightChangeTitle")}>{badge}</span>
                 </td>
                 <td className="holding-value">{aud(s.value, 2)}</td>
                 <td className="holding-result">
-                  <span><small className="cap">上日 </small>
+                  <span><small className="cap">{t("overview.prevDayShort")}</small>
                     <Delta amount={live ? s.recentCloseChange : s.today?.change}
                       rate={live ? s.quoteChange?.change : s.today?.priceChange?.change} /></span>
                   <span className="pnl-track" aria-hidden="true"><i style={{
                     left: (gain < 0 ? 50 - half : 50) + "%", width: half + "%",
                     background: gain < 0 ? "var(--down)" : "var(--up)",
                   }} /></span>
-                  <b title="累计总盈亏（未实现盈亏 + 累计已实现 + 累计分红）">
-                    {gain == null ? "待补" : <Delta amount={gain} rate={s.cost > 0 ? gain / s.cost : null} />}</b>
+                  <b title={t("overview.cumulativeGainTitle")}>
+                    {gain == null ? t("common.pending") : <Delta amount={gain} rate={s.cost > 0 ? gain / s.cost : null} />}</b>
                 </td>
               </tr>
             );
@@ -176,13 +177,14 @@ function TopHoldings({ top, total, unpriced, canStack, live, selected, openHoldi
 }
 
 function Accounts({ accounts, total, live }) {
+  const { t } = useI18n();
   const { aspect } = useShell();
   return (
-    <section className="card overview-accounts" aria-label="账户">
-      <div className="row"><h2>账户</h2><span className="cap">{live ? "最近收盘变动" : "收盘变动"}</span></div>
-      {!accounts.length && <Empty>暂无账户</Empty>}
+    <section className="card overview-accounts" aria-label={t("overview.accountsTitle")}>
+      <div className="row"><h2>{t("overview.accountsTitle")}</h2><span className="cap">{live ? t("overview.recentCloseChange") : t("overview.closeChange")}</span></div>
+      {!accounts.length && <Empty>{t("overview.accountsEmpty")}</Empty>}
       {!!accounts.length && (
-        <div className="overview-account-list" role="group" aria-label="账户列表"
+        <div className="overview-account-list" role="group" aria-label={t("overview.accountListAria")}
           tabIndex={aspect === "21:9" && accounts.length > 2 ? 0 : undefined}>
         {accounts.map((a) => {
         const value = a.valuation.total;
@@ -199,9 +201,9 @@ function Accounts({ accounts, total, live }) {
             <div className="account-share"><i style={{ width: Math.max(0, Math.min(1, share ?? 0)) * 100 + "%" }} /></div>
             <div className="split account-change">
               <b><Delta amount={live ? change.total : a.today?.change} rate={live ? closeRate(value, change.total) : a.today?.twr} /></b>
-              {live && <span className="attribution"><span>股价 <Delta amount={change.price} currency={false} /></span>
-                {audOnly ? <small className="cap">纯澳元 · 无汇兑</small> :
-                  <span>汇率 <Delta amount={change.fx} currency={false} /></span>}</span>}
+              {live && <span className="attribution"><span>{t("overview.stockMove")} <Delta amount={change.price} currency={false} /></span>
+                {audOnly ? <small className="cap">{t("overview.pureAud")}</small> :
+                  <span>{t("overview.fxMove")} <Delta amount={change.fx} currency={false} /></span>}</span>}
             </div>
           </article>
         );
@@ -213,6 +215,7 @@ function Accounts({ accounts, total, live }) {
 }
 
 export function Overview({ d, onPage, filters, onFilters, run }) {
+  const { t } = useI18n();
   const [detail, setDetail] = useState(null);
   const [repair, setRepair] = useState(null);
   const [view, setView] = useState("value");
@@ -224,15 +227,15 @@ export function Overview({ d, onPage, filters, onFilters, run }) {
   // The opening calculation baseline can precede the first recorded valuation.
   const preset = period?.period.preset ?? (isCustom(filters) ? "custom" : filters.period);
   const points = period?.earliest ? d.points.filter((point) => point.date >= period.earliest) : d.points;
-  const span = periodLabels[preset] ?? "期间";
+  const span = periodPresets.includes(preset) ? periodLabel(preset, t) : t("period.fallback");
   const market = d.currentMarket;
-  const valueLabel = market ? "当前估值（AUD）" : "总资产";
+  const valueLabel = market ? t("overview.currentValuation") : t("overview.totalAssets");
   const periodFx = d.breakdown?.parts.fx;
-  const items = d.breakdown?.items ?? emptyBreakdown;
+  const items = d.breakdown?.items ?? breakdownKeys.map((key) => ({ key, label: t(`overview.breakdown.${key}`), value: null }));
   const maxPart = Math.max(1, ...items.map((item) => Math.abs(item.value)));
   const breakdown = (
-    <section className="card overview-breakdown" aria-label="盈亏构成">
-      <div className="row"><h2>盈亏构成</h2></div>
+    <section className="card overview-breakdown" aria-label={t("overview.breakdownTitle")}>
+      <div className="row"><h2>{t("overview.breakdownTitle")}</h2></div>
       <dl>
         {items.map(({ key, label, value }) => (
           <div key={key}>
@@ -289,11 +292,11 @@ export function Overview({ d, onPage, filters, onFilters, run }) {
       />
       <div className="overview-layout">
         <div className="overview-main">
-          <section className="kpis" aria-label="关键数字">
+          <section className="kpis" aria-label={t("overview.kpisAria")}>
             <button
               type="button"
               className="card kpi hero overview-total"
-              aria-label={valueLabel + " " + aud(total, 2) + "，查看明细"}
+              aria-label={t("overview.totalAssetsAria", { label: valueLabel, value: aud(total, 2) })}
               aria-describedby={market ? dailyId : d.today?.date ? dailyId + " " + dailyId + "-date" : dailyId}
               onClick={() => {
                 lastHolding.current = null;
@@ -306,28 +309,29 @@ export function Overview({ d, onPage, filters, onFilters, run }) {
               </span>
               <span className="v">{aud(market?.incomplete ? d.known : total, 2)}</span>
               <span className="d" id={dailyId}>
-                {market?.incomplete ? <span>估值不完整 · 可估值小计</span> : market ?
-                  <><Delta amount={market.recentCloseChange.total} rate={closeRate(total, market.recentCloseChange.total)} /> <span className="cap">最近收盘变动</span></> :
-                  <><Delta amount={d.today?.change} rate={d.today?.twr} currency={false} /> <span className="cap">收盘变动</span></>}
+                {market?.incomplete ? <span>{t("overview.incompleteSubtotal")}</span> : market ?
+                  <><Delta amount={market.recentCloseChange.total} rate={closeRate(total, market.recentCloseChange.total)} /> <span className="cap">{t("overview.recentCloseChange")}</span></> :
+                  <><Delta amount={d.today?.change} rate={d.today?.twr} currency={false} /> <span className="cap">{t("overview.closeChange")}</span></>}
               </span>
             </button>
-            <Metric label="持仓盈亏"
-              value={d.holdings.openGain == null ? "待补" : <Delta amount={d.holdings.openGain} />}
-              caption={d.holdings.cost == null ? "成本待补" :
-                "盈亏率 " + signedPct(d.holdings.cost > 0 && d.holdings.openGain != null ? d.holdings.openGain / d.holdings.cost : null) +
-                " · 成本 " + aud(d.holdings.cost, 2)}
+            <Metric label={t("overview.holdingsGain")}
+              value={d.holdings.openGain == null ? t("common.pending") : <Delta amount={d.holdings.openGain} />}
+              caption={d.holdings.cost == null ? t("overview.costPending") : t("overview.returnRateCaption", {
+                rate: signedPct(d.holdings.cost > 0 && d.holdings.openGain != null ? d.holdings.openGain / d.holdings.cost : null),
+                cost: aud(d.holdings.cost, 2),
+              })}
             />
             <Metric
-              label={span + "投资盈亏"}
+              label={t("overview.periodGain", { period: span })}
               value={<Delta amount={period?.gain} currency={false} />}
-              caption={"期初 " + amount(period?.startValue)}
+              caption={t("overview.openingCaption", { value: amount(period?.startValue) })}
             />
-            <Metric label="时间加权收益率" value={<Delta rate={period?.twr} />}
-              caption={period?.annualised != null && "年化 " + signedPct(period.annualised)} />
+            <Metric label={t("overview.twr")} value={<Delta rate={period?.twr} />}
+              caption={period?.annualised != null && t("overview.annualisedCaption", { rate: signedPct(period.annualised) })} />
             <Metric
-              label={span + "净投入"}
+              label={t("overview.periodNetFlow", { period: span })}
               value={amount(period?.netFlow)}
-              caption={"累计 " + amount(period?.cumulativeNetFlow)}
+              caption={t("overview.cumulativeCaption", { value: amount(period?.cumulativeNetFlow) })}
             />
           </section>
           <div className="overview-primary">

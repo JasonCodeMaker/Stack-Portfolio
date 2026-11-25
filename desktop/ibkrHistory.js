@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { importedKeysStorageKey, linkedActivityId, sourceKey } from "./brokers/syncEngine";
 import { BROKER, dayOf, json, preference, saveEvent } from "./ledger.js";
+import { tMain } from "./i18n/index.js";
 
 export function recordIdentity(e) {
   const provenance = e.metadata?.brokerSync;
@@ -71,14 +72,14 @@ export function ibkrHistoryPlan(db, account, rows) {
       if (!originals.length) continue;
       const canonical = originals[0].event;
       if (reportedNotes.get(r.comment).length !== 1 || originals.length !== 1 || !sameFill(canonical, r)) {
-        blocked.set(id, "迁入成交的原始编号相同，内容或对应关系需核对");
+        blocked.set(id, tMain("ibkr.hist.dupId"));
         continue;
       }
       const native = (byIdentity.get(id) || []).filter((s) => !s.migrated);
       if (
         native.some((s) => s.event.isUserModified || !sameFill(s.event, r) || s.event.comment !== r.comment)
       ) {
-        blocked.set(id, "同一成交已有手工更正，请核对原始记录");
+        blocked.set(id, tMain("ibkr.hist.edited"));
         continue;
       }
       aliases.set(canonical.id, r.brokerRecordId);
@@ -86,7 +87,7 @@ export function ibkrHistoryPlan(db, account, rows) {
         superseded.set(event.id, {
           event,
           canonical,
-          reason: "IBKR Flex 成交编号和成交明细均与迁入记录相同",
+          reason: tMain("ibkr.hist.sameFill"),
         });
     }
     if (
@@ -119,7 +120,7 @@ export function ibkrHistoryPlan(db, account, rows) {
         superseded.set(event.id, {
           event,
           canonical: taxes[0].event,
-          reason: "IBKR 已列为预扣税，迁入账本另记为股息的同一款项已冲销",
+          reason: tMain("ibkr.hist.taxVoided"),
         });
       }
     }
@@ -183,6 +184,6 @@ export function applyIbkrHistoryPlan(db, plan) {
     );
     db.prepare(
       "INSERT OR REPLACE INTO sp_checks(account,day,reason) SELECT account,day,? FROM sp_statements WHERE account=? AND day>=?",
-    ).run("券商重复流水已冲销，请复核该期结单", event.accountId, dayOf(event.date));
+    ).run(tMain("ibkr.hist.checkStatement"), event.accountId, dayOf(event.date));
   }
 }

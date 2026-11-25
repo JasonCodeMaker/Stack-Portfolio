@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { ChevronLeft, ChevronRight, Expand, ExternalLink } from "lucide-react";
 import { Modal } from "../common";
+import { useI18n } from "../i18n.jsx";
 
 function Target({ photo }) {
   const [x, y, w, h] = photo.target;
@@ -72,16 +73,17 @@ export function SourceLink({ url, children }) {
   );
 }
 export function Screenshots({ images, paired = false }) {
+  const { t } = useI18n();
   const [index, setIndex] = useState(0),
     [open, setOpen] = useState(false);
   if (!images?.length) return null;
   const photo = images[index] || images[0],
     named = images.length > 1 && images.every((i) => i.label);
-  const view = "查看完整截图";
+  const view = t("ob.shot.viewFull");
   return (
     <figure className="ob-real-figure">
       {named && !paired && (
-        <div className="ob-shot-tabs" role="group" aria-label="选择截图中的控件">
+        <div className="ob-shot-tabs" role="group" aria-label={t("ob.shot.selectControlAria")}>
           {images.map((item, i) => (
             <button type="button" key={item.label} aria-pressed={i === index} onClick={() => setIndex(i)}>
               {item.label}
@@ -114,7 +116,7 @@ export function Screenshots({ images, paired = false }) {
       </button>
       <figcaption>
         <strong>
-          {paired ? "两项都勾选后，滚动到弹窗底部，点「Save」。" : photo.caption}
+          {paired ? t("ob.shot.pairedCaption") : photo.caption}
         </strong>
         <div className="ob-figure-tools">
           <button className="ob-open-shot" type="button" onClick={() => setOpen(true)}>
@@ -130,12 +132,12 @@ export function Screenshots({ images, paired = false }) {
           )}
           {!named && images.length > 1 && (
             <span className="ob-image-pages">
-              <button aria-label="上一张截图" disabled={!index} onClick={() => setIndex(index - 1)}>
+              <button aria-label={t("ob.shot.prevAria")} disabled={!index} onClick={() => setIndex(index - 1)}>
                 <ChevronLeft size={15} />
               </button>
-              图 {index + 1} / {images.length}
+              {t("ob.shot.pageCount", { current: index + 1, total: images.length })}
               <button
-                aria-label="下一张截图"
+                aria-label={t("ob.shot.nextAria")}
                 disabled={index === images.length - 1}
                 onClick={() => setIndex(index + 1)}
               >
@@ -146,7 +148,7 @@ export function Screenshots({ images, paired = false }) {
         </div>
       </figcaption>
       {open && (
-        <Modal title="完整截图" close={() => setOpen(false)} wide>
+        <Modal title={t("ob.shot.modalTitle")} close={() => setOpen(false)} wide>
           <div className="ob-viewer">
             <Frame photo={photo} full marks={paired ? images : [photo]} />
           </div>

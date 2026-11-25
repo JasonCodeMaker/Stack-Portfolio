@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { tMain } from "./i18n/index.js";
 
 function sameNumber(a, b) {
   if (a == null || b == null) return a == null && b == null;
@@ -12,15 +13,20 @@ function compareNumber(edits, label, before, after, format, currency, oldCurrenc
 
 export function activityEdits(before, after) {
   const edits = [];
-  for (const [key, label] of [["date", "日期"], ["type", "类型"], ["symbol", "证券"], ["currency", "币种"]]) {
+  for (const [key, label] of [
+    ["date", tMain("edit.date")],
+    ["type", tMain("edit.type")],
+    ["symbol", tMain("edit.symbol")],
+    ["currency", tMain("edit.currency")],
+  ]) {
     const value = (row) => key === "date" ? String(row.date || "").slice(0, 10) : row[key] || null;
     if (value(before) !== value(after)) edits.push({ label, before: value(before), after: value(after), format: key });
   }
-  compareNumber(edits, "数量", before.quantity, after.quantity, "quantity");
-  compareNumber(edits, "成交价", before.unitPrice, after.unitPrice, "price", after.currency, before.currency);
+  compareNumber(edits, tMain("edit.quantity"), before.quantity, after.quantity, "quantity");
+  compareNumber(edits, tMain("edit.price"), before.unitPrice, after.unitPrice, "price", after.currency, before.currency);
   if (!["BUY", "SELL"].includes(after.type) || !["BUY", "SELL"].includes(before.type))
-    compareNumber(edits, "金额", before.amount, after.amount, "money", after.currency, before.currency);
-  for (const [key, label] of [["fee", "费用"], ["tax", "税款"]])
+    compareNumber(edits, tMain("edit.amount"), before.amount, after.amount, "money", after.currency, before.currency);
+  for (const [key, label] of [["fee", tMain("edit.fee")], ["tax", tMain("edit.tax")]])
     compareNumber(edits, label, before[key] ?? 0, after[key] ?? 0, "money", after.currency, before.currency);
   return edits;
 }
@@ -50,19 +56,23 @@ export function valuationEdits(previous, current) {
   const edits = [];
   const audCash = (v) => v?.cashTotal ?? (Object.keys(v?.cash || {}).length === 1 ? v.cash.AUD : null);
   const nav = current.nav ?? new Decimal(current.cashTotal).plus(current.securities).toFixed();
-  compareNumber(edits, "账户总额", previous?.nav, nav, "money", current.base);
-  compareNumber(edits, "现金余额", audCash(previous), audCash(current), "money", current.base);
-  compareNumber(edits, "证券市值", previous?.securities, current.securities, "money", current.base);
-  compareNumber(edits, "未实现盈亏", previous?.unrealized, current.unrealized, "money", current.base);
+  compareNumber(edits, tMain("edit.nav"), previous?.nav, nav, "money", current.base);
+  compareNumber(edits, tMain("edit.cash"), audCash(previous), audCash(current), "money", current.base);
+  compareNumber(edits, tMain("edit.securities"), previous?.securities, current.securities, "money", current.base);
+  compareNumber(edits, tMain("edit.unrealized"), previous?.unrealized, current.unrealized, "money", current.base);
   if (previous?.unrealized != null && current.unrealized != null &&
       Boolean(previous.approximatePnl) !== Boolean(current.approximatePnl))
-    edits.push({ label: "盈亏精度", before: previous.approximatePnl ? "约数" : "精确值", after: current.approximatePnl ? "约数" : "精确值" });
+    edits.push({
+      label: tMain("edit.pnlPrecision"),
+      before: previous.approximatePnl ? tMain("edit.approx") : tMain("edit.exact"),
+      after: current.approximatePnl ? tMain("edit.approx") : tMain("edit.exact"),
+    });
 
   const currencies = new Set([...Object.keys(previous?.cash || {}), ...Object.keys(current.cash)]);
   for (const c of currencies) {
     if (currencies.size === 1 && c === "AUD" &&
         sameNumber(previous?.cash?.AUD, audCash(previous)) && sameNumber(current.cash.AUD, audCash(current))) continue;
-    compareNumber(edits, c + " 现金", previous?.cash?.[c], current.cash[c], "money", c);
+    compareNumber(edits, tMain("edit.cashCcy", { currency: c }), previous?.cash?.[c], current.cash[c], "money", c);
   }
 
   const before = previous?.positions || [], after = current.positions;
@@ -78,10 +88,10 @@ export function valuationEdits(previous, current) {
   const incoming = positionsBySecurity(after, exchanges, securityCurrencies);
   for (const key of new Set([...saved.keys(), ...incoming.keys()])) {
     const old = saved.get(key), fresh = incoming.get(key), p = fresh || old;
-    compareNumber(edits, p.name + " 持仓数量", old?.quantity ?? (previous ? 0 : null), fresh?.quantity ?? 0, "quantity");
+    compareNumber(edits, tMain("edit.posQty", { name: p.name }), old?.quantity ?? (previous ? 0 : null), fresh?.quantity ?? 0, "quantity");
     if (!fresh) continue;
-    compareNumber(edits, p.name + " 持仓报价", old?.price, fresh.price, "price", p.currency);
-    compareNumber(edits, p.name + " 折算汇率", old?.fx, fresh.fx, "rate");
+    compareNumber(edits, tMain("edit.posQuote", { name: p.name }), old?.price, fresh.price, "price", p.currency);
+    compareNumber(edits, tMain("edit.posFx", { name: p.name }), old?.fx, fresh.fx, "rate");
   }
   return edits;
 }

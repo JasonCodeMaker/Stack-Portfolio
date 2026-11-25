@@ -2,32 +2,22 @@ import React, { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, ChevronRight, Layers3, WalletCards } from "lucide-react";
 import { api, Field } from "../common";
 import { Mark } from "../Shell";
-import { brokerNames, brokerGuides } from "./brokerGuide";
+import { brokerNames, buildBrokerGuides } from "./brokerGuide";
 import { FieldSource, StepNotes } from "./StepNotes";
 import { TutorialLauncher } from "./Tutorial";
 import { PhoneGuide } from "./PhoneGuide";
 import { Screenshots } from "./Screenshots";
+import { useI18n } from "../i18n.jsx";
 import "./wizard.css";
 import "./studio.css";
 
-const headings = {
-  welcome: "现在添加第一个账户吗？",
-  broker: "这个账户在哪家券商？",
-  account: "确认要绑定的账户",
-  bound: "还要继续添加账户吗？",
-};
-const descriptions = {
-  welcome: "跟随券商图文教程，将一个投资账户接入本地账本。你也可以稍后再设置。",
-  broker: "只选择当前账户使用的券商。完成后可以继续添加同一家券商的其他账户。",
-  account: "请核对券商返回的账户，再选择接收记录的本地账户。",
-  bound: "授权已保存。你可以添加其他账户，也可以预览这个账户的第一笔导入。",
-};
 const errorText = (e) =>
   String(e.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
 
-function AccountProgress({ page, broker, step }) {
+function AccountProgress({ page, broker, step, guides }) {
+  const { t } = useI18n();
   if (page === "welcome" || page === "bound") return null;
-  const guide = brokerGuides[broker];
+  const guide = guides[broker];
   const visual = guide[step].visual;
   const current = page === "broker" ? 1 : step + (page === "account" ? 3 : 2);
   // Webull tells us whether phone verification is needed only after it checks the credentials.
@@ -35,12 +25,12 @@ function AccountProgress({ page, broker, step }) {
   if (page === "account") total = current;
   else if (page === "guide" && (broker === "ibkr" || visual === "phone")) total = guide.length + 2;
 
-  let location = "Stock Portfolio";
+  let location = t("ob.loc.app");
   if (page === "guide" && visual === "portal") {
-    location = broker === "ibkr" ? "IBKR 网页" : "Webull 澳洲网页";
+    location = broker === "ibkr" ? t("ob.loc.ibkrPortal") : t("ob.loc.webullWeb");
   }
-  if (page === "guide" && visual === "phone") location = "Webull 手机 App";
-  const label = total ? `第 ${current} 步，共 ${total} 步` : `第 ${current} 步`;
+  if (page === "guide" && visual === "phone") location = t("ob.loc.webullPhone");
+  const label = total ? t("ob.stepOfTotal", { current, total }) : t("ob.stepOnly", { current });
   return (
     <div className="ob-studio-progress">
       <div className="ob-drawer-label">
@@ -48,7 +38,7 @@ function AccountProgress({ page, broker, step }) {
         <span>{location}</span>
       </div>
       {total && (
-        <progress aria-label="添加此账户的进度" aria-valuetext={label} value={current} max={total} />
+        <progress aria-label={t("ob.progressAria")} aria-valuetext={label} value={current} max={total} />
       )}
     </div>
   );
@@ -64,6 +54,8 @@ export function AccountWizard({
   onBound,
   onImport,
 }) {
+  const { t, languagePreference, localeOptions, changeLanguage } = useI18n();
+  const guides = buildBrokerGuides(t);
   const [page, setPage] = useState(initialPage),
     [broker, setBroker] = useState("ibkr"),
     [step, setStep] = useState(0);
@@ -79,15 +71,15 @@ export function AccountWizard({
     [busy, setBusy] = useState(false);
   const lock = useRef(false),
     head = useRef(null);
-  const chapter = brokerGuides[broker][step],
+  const chapter = guides[broker][step],
     ib = broker === "ibkr",
     isKeys = chapter.visual === "credentials",
     phone = chapter.visual === "phone";
   const last = added.at(-1);
-  let backLabel = "上一步";
+  let backLabel = t("ob.back");
   if (page === "broker") {
-    if (last) backLabel = "返回已添加的账户";
-    else backLabel = initialPage === "broker" ? "取消添加" : "返回欢迎页";
+    if (last) backLabel = t("ob.backToBound");
+    else backLabel = initialPage === "broker" ? t("ob.cancelSetup") : t("ob.backWelcome");
   }
   const known = [...existing.filter((b) => !added.some((a) => a.id === b.id)), ...added];
   const previewPhone = page === "guide" && broker === "webull" && isKeys;
@@ -147,7 +139,7 @@ export function AccountWizard({
       selectRemote(result.accounts[0].accountId, result.accounts);
       setPage("account");
     } else if (!phone) setStep(step + 1);
-    else setError("还在等待手机确认。请完成最新一条授权通知，再点「检查授权结果」。");
+    else setError(t("ob.waitPhoneError"));
   }
   async function bind() {
     const saved = await api.bindAccount({ ticket, remoteId, localId, name: name.trim(), currency });
@@ -180,14 +172,21 @@ export function AccountWizard({
             <Mark />
             <strong>Stock Portfolio</strong>
           </div>
-          <span>账户设置</span>
+          <span>{t("ob.headerSubtitle")}</span>
         </div>
         <div className="ob-head-tools">
           <label className="ob-theme-select">
-            <select aria-label="向导主题" value={theme} onChange={(e) => onTheme(e.target.value)}>
-              <option value="system">跟随系统</option>
-              <option value="light">浅色</option>
-              <option value="dark">深色</option>
+            <select aria-label={t("ob.themeSelectAria")} value={theme} onChange={(e) => onTheme(e.target.value)}>
+              <option value="system">{t("settings.theme.system")}</option>
+              <option value="light">{t("settings.theme.light")}</option>
+              <option value="dark">{t("settings.theme.dark")}</option>
+            </select>
+          </label>
+          <label className="ob-theme-select">
+            <select aria-label={t("lang.label")} value={languagePreference} onChange={(e) => changeLanguage(e.target.value)}>
+              {localeOptions.map(([id, label]) => (
+                <option key={id} value={id}>{label}</option>
+              ))}
             </select>
           </label>
           <TutorialLauncher broker={broker} page={page} step={step} />
@@ -195,20 +194,20 @@ export function AccountWizard({
       </header>
       <main className={"ob-studio-main" + (page === "welcome" ? " is-welcome" : "")}>
         <section className={"ob-studio-card" + (hasContext || previewPhone ? "" : " single-column")}>
-          <AccountProgress page={page} broker={broker} step={step} />
+          <AccountProgress page={page} broker={broker} step={step} guides={guides} />
           <div className="ob-studio-copy">
             <h1 ref={head} tabIndex={-1}>
-              {page === "guide" ? chapter.title : headings[page]}
+              {page === "guide" ? chapter.title : t(`ob.heading.${page}`)}
             </h1>
             <p className="ob-lead">
-              {page === "guide" ? chapter.body : descriptions[page]}
+              {page === "guide" ? chapter.body : t(`ob.desc.${page}`)}
             </p>
           </div>
           {previewPhone && (
             <section className="ob-studio-context ob-phone-preview" aria-labelledby="ob-phone-preview-title">
               <div>
-                <h2 id="ob-phone-preview-title">在手机上确认授权</h2>
-                <p>发起授权后，如需手机确认，打开 Webull App 的「Menu」，在「Messages」里点「OpenAPI Notice」，再点最新通知的「Check Now」。</p>
+                <h2 id="ob-phone-preview-title">{t("ob.phonePreviewTitle")}</h2>
+                <p>{t("ob.phonePreviewBody")}</p>
               </div>
               <PhoneGuide preview />
             </section>
@@ -217,10 +216,10 @@ export function AccountWizard({
             {page === "welcome" && (
               <div className="ob-actions">
                 <button className="ob-primary" onClick={() => setPage("broker")}>
-                  添加账户 <ArrowRight size={16} />
+                  {t("ob.btn.addAccount")} <ArrowRight size={16} />
                 </button>
                 <button disabled={busy} onClick={leave}>
-                  暂时跳过
+                  {t("ob.btn.skipForNow")}
                 </button>
               </div>
             )}
@@ -231,7 +230,7 @@ export function AccountWizard({
                     {b === "ibkr" ? <Layers3 /> : <WalletCards />}
                     <span>
                       <strong>{b === "ibkr" ? "Interactive Brokers" : "Webull Australia"}</strong>
-                      <small>{b === "ibkr" ? "Activity Flex" : "OpenAPI"}</small>
+                      <small>{t(b === "ibkr" ? "ob.ibkrSub" : "ob.webullSub")}</small>
                     </span>
                     <ChevronRight size={16} />
                   </button>
@@ -281,14 +280,14 @@ export function AccountWizard({
                     }
                   >
                     {busy
-                      ? "正在联系券商…"
+                      ? t("ob.checkingBroker")
                       : phone
-                        ? "检查授权结果"
+                        ? t("ob.checkAuthResult")
                         : isKeys
                           ? ib
-                            ? "验证 IBKR 账户"
-                            : "发起 Webull 授权"
-                          : "下一步"}{" "}
+                            ? t("ob.verifyIbkr")
+                            : t("ob.startWebullAuth")
+                          : t("ob.next")}{" "}
                     <ArrowRight size={16} />
                   </button>
                 </div>
@@ -297,9 +296,9 @@ export function AccountWizard({
             {page === "account" && (
               <>
                 <div className="ob-form">
-                  <Field label="券商返回的账户">
+                  <Field label={t("ob.returnedAccount")}>
                     <select
-                      aria-label="券商返回的账户"
+                      aria-label={t("ob.returnedAccount")}
                       value={remoteId}
                       onChange={(e) => selectRemote(e.target.value)}
                     >
@@ -310,13 +309,13 @@ export function AccountWizard({
                       ))}
                     </select>
                   </Field>
-                  <Field label="入账账户">
+                  <Field label={t("ob.targetAccount")}>
                     <select
-                      aria-label="入账账户"
+                      aria-label={t("ob.targetAccount")}
                       value={localId}
                       onChange={(e) => setLocalId(e.target.value)}
                     >
-                      <option value="">创建新的本地账户</option>
+                      <option value="">{t("ob.createNewLocal")}</option>
                       {accounts
                         .filter(
                           (a) =>
@@ -335,12 +334,12 @@ export function AccountWizard({
                   </Field>
                   {!localId && (
                     <>
-                      <Field label="本地账户名称">
+                      <Field label={t("ob.localName")}>
                         <input maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
                       </Field>
-                      <Field label="基础币种">
+                      <Field label={t("ob.baseCurrency")}>
                         <select
-                          aria-label="基础币种"
+                          aria-label={t("ob.baseCurrency")}
                           value={currency}
                           onChange={(e) => setCurrency(e.target.value)}
                         >
@@ -353,11 +352,13 @@ export function AccountWizard({
                 </div>
                 <p className="ob-verified">
                   <Check size={17} aria-hidden="true" />
-                  已验证 {brokerNames[broker]} ····{" "}
-                  {(remote.find((a) => a.accountId === remoteId)?.accountNumber || remoteId).slice(-4)}
+                  {t("ob.verifiedPrefix", {
+                    broker: brokerNames[broker],
+                    suffix: (remote.find((a) => a.accountId === remoteId)?.accountNumber || remoteId).slice(-4),
+                  })}
                   <span>→</span>
                   <strong>
-                    {localId ? accounts.find((a) => a.id === localId)?.name : name.trim() || "待命名账户"}
+                    {localId ? accounts.find((a) => a.id === localId)?.name : name.trim() || t("ob.unnamedAccount")}
                   </strong>
                 </p>
                 <button
@@ -365,7 +366,7 @@ export function AccountWizard({
                   disabled={busy || (!localId && !name.trim())}
                   onClick={click(bind)}
                 >
-                  绑定此账户
+                  {t("ob.bindAccount")}
                 </button>
               </>
             )}
@@ -379,13 +380,13 @@ export function AccountWizard({
                     setError("");
                   }}
                 >
-                  继续添加账户
+                  {t("ob.addAnotherAccount")}
                 </button>
                 <button disabled={busy} onClick={click(() => onImport(last))}>
-                  预览首次导入
+                  {t("ob.previewFirstImport")}
                 </button>
                 <button disabled={busy} onClick={leave}>
-                  完成添加
+                  {t("ob.finishSetup")}
                 </button>
               </div>
             )}
@@ -401,7 +402,7 @@ export function AccountWizard({
                 </button>
                 {(page !== "broker" || last || initialPage !== "broker") && (
                   <button disabled={busy} onClick={leave}>
-                    稍后设置
+                    {t("ob.setupLater")}
                   </button>
                 )}
               </div>
@@ -417,13 +418,13 @@ export function AccountWizard({
                 ))}
               {showAccounts && (
                 <section className="ob-studio-accounts">
-                  <h2>已绑定账户</h2>
+                  <h2>{t("ob.boundAccountsHeading")}</h2>
                   {known.map((a) => (
                     <p key={a.id}>
                       <strong>{a.name}</strong>
                       <small>
                         {brokerNames[a.broker]} ···· {a.suffix}
-                        {!a.authorized && " · 需重新授权"}
+                        {!a.authorized && t("ob.needsReauth")}
                       </small>
                     </p>
                   ))}

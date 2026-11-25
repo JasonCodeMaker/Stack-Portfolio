@@ -1,4 +1,5 @@
 import { account, createAccount, preference, putPref, transaction, BROKER } from "./ledger";
+import { tMain } from "./i18n/index.js";
 
 const records = "broker-account";
 const vault = "broker-account-credentials";
@@ -26,7 +27,7 @@ export function credentialsFor(db, id, storage) {
     const encrypted = preference(db, vault, id);
     if (encrypted) return JSON.parse(storage.decryptString(Buffer.from(encrypted, "base64")));
   } catch {}
-  throw Error("此账户的授权不可用。请到「设置 → 券商连接 → 添加或重新授权账户」重新连接。");
+  throw Error(tMain("err.credsUnavailableReauth"));
 }
 
 export function savedWebullToken(db, storage, credentials) {
@@ -40,23 +41,23 @@ export function savedWebullToken(db, storage, credentials) {
 
 export function saveBinding(db, storage, draft, { remoteId, localId, name, currency }) {
   const remote = draft.accounts.find((a) => a.accountId === remoteId);
-  if (!remote) throw Error("请从本次券商返回的账户中选择。");
+  if (!remote) throw Error(tMain("err.selectFromReturnedAccounts"));
   if (!localId && (typeof name !== "string" || !name.trim() || name.length > 120))
-    throw Error("请填写有效的本地账户名称。");
-  if (!storage.isEncryptionAvailable()) throw Error("Windows 凭据保护不可用，请稍后重试。");
+    throw Error(tMain("err.invalidLocalAccountName"));
+  if (!storage.isEncryptionAvailable()) throw Error(tMain("err.dpapiUnavailableRetry"));
   const encrypted = storage
     .encryptString(JSON.stringify({ ...draft.credentials, accountId: remoteId }))
     .toString("base64");
   return transaction(db, () => {
     const existing = bindings(db).find((b) => b.broker === draft.broker && b.remoteId === remoteId);
     if (existing && localId !== existing.id)
-      throw Error("该券商账户已绑定到「" + existing.name + "」。请选择原账户以更新授权。");
+      throw Error(tMain("err.bindingAlreadyUsed", { name: existing.name }));
     const id = localId || createAccount(db, name, currency);
     const local = account(db, id),
       prior = bindingFor(db, id);
-    if (!local.active || local.mode !== "TRANSACTIONS") throw Error("请选择启用的交易账户。");
+    if (!local.active || local.mode !== "TRANSACTIONS") throw Error(tMain("err.selectActiveTxAccount"));
     if (prior && (prior.remoteId !== remoteId || prior.broker !== draft.broker))
-      throw Error("这个本地账户已经绑定了其他券商账户。");
+      throw Error(tMain("err.localAlreadyBound"));
     const record = { broker: draft.broker, remoteId, suffix: (remote.accountNumber || remoteId).slice(-4) };
     putPref(db, records, id, JSON.stringify(record));
     putPref(db, vault, id, encrypted);
@@ -66,6 +67,6 @@ export function saveBinding(db, storage, draft, { remoteId, localId, name, curre
 }
 
 export function disconnectBinding(db, id) {
-  if (!bindingFor(db, id)) throw Error("找不到账户绑定。");
+  if (!bindingFor(db, id)) throw Error(tMain("err.bindingNotFound"));
   putPref(db, vault, id, null);
 }

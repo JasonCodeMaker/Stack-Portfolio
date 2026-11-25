@@ -8,9 +8,11 @@ const assert = require("node:assert/strict"),
 const { resizeContent } = require("./fixtures/display.cjs");
 const root = path.join(__dirname, ".."),
   directory = fs.mkdtempSync(path.join(os.tmpdir(), "stack-portfolio-shell-"));
+const packaged = process.argv[2];
 const env = {
   ...process.env,
   STACK_PORTFOLIO_HEADLESS: "1",
+  STACK_PORTFOLIO_LOCALE: process.env.STACK_PORTFOLIO_LOCALE || "zh-CN",
   STACK_PORTFOLIO_TEST_DIR: directory,
   STACK_PORTFOLIO_TEST_SOURCE: path.join(directory, "empty"),
 };
@@ -19,9 +21,17 @@ delete env.ELECTRON_RUN_AS_NODE;
 (async () => {
   let app;
   try {
-    app = await electron.launch({ executablePath: require("electron"), args: [root], env, timeout: 30000 });
+    app = await electron.launch({
+      executablePath: packaged ? path.resolve(packaged) : require("electron"),
+      args: packaged ? [] : [root],
+      env,
+      timeout: 30000,
+    });
     const p = await app.firstWindow();
     p.setDefaultTimeout(10000);
+    const home = await p.evaluate(() => window.portfolio.home());
+    if (!home.mode && !home.hasReal && !home.onboardingSeen)
+      await p.getByRole("button", { name: /^(暂时跳过|Skip for now|暫時略過)$/ }).click();
     const resize = (w, h) => resizeContent(app, p, w, h);
     const cols = (n) =>
       p.waitForFunction((n) => document.querySelector(".pane").dataset.cols === String(n), n, { timeout: 3000 });

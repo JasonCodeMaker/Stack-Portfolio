@@ -3,17 +3,13 @@ import React, { useEffect, useState } from "react";
 import { Database } from "lucide-react";
 import { api, Modal, kind } from "./common";
 import { Grid, useShell } from "./Shell";
-import { marketNames } from "./HoldingEditor";
 import { scopedAliasKey } from "../allocation/domain/identifiers";
 import { BookBackups } from "./BookBackups";
 import { USER_SCALE_LIMITS } from "../adaptiveLayout.js";
 import { aliasRows, brokerState, cardColumns } from "./settingsModel.js";
+import { useI18n } from "./i18n.jsx";
 
-const tabs = [
-  ["connections", "券商连接"],
-  ["book", "账本"],
-  ["data", "数据"],
-];
+const tabIds = ["connections", "book", "data"];
 
 function F({ label, children }) {
   return (
@@ -43,10 +39,10 @@ function Fold({ title, children }) {
     </details>
   );
 }
-const securityLabel = (r) =>
-  [r.name || r.ticker, r.ticker, marketNames[r.mic] || r.mic || "上市地待补", r.localCurrency].join(" · ");
-
 export function Settings({ d, mode, theme = "system", onThemeChange, userScale = 1, onUserScaleChange, run, initial = {}, workspace, openHome, onPage, onSetup }) {
+  const { t, languagePreference, localeOptions, changeLanguage, formatDate, formatDateTime, kindLabel, marketLabel } = useI18n();
+  const securityLabel = (r) =>
+    [r.name || r.ticker, r.ticker, marketLabel(r.mic), r.localCurrency].join(t("common.middot"));
   const demo = mode === "demo";
   const { cols } = useShell();
   const [tab, setTab] = useState(initial.tab || "connections"),
@@ -93,12 +89,12 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
     setIdentity(d.settings.providerIdentities[fund] || "");
   }, [fund, d.settings]);
   const change = (key, v) => setDraft({ ...draft, [key]: v });
-  const secured = (key) => (conn?.present[key] ? "已保存，留空保留" : "尚未连接");
+  const secured = (key) => (conn?.present[key] ? t("settings.secretSaved") : t("settings.secretNotConnected"));
   const saveSettings = (patch) => api.allocationSettings({ ...d.settings, ...patch });
   const rows = Array.from(new Map(d.rows.filter((r) => r.profileId).map((r) => [r.assetId, r])).values());
   async function saveKeys(keys) {
     const data = Object.fromEntries(keys.filter((k) => draft[k]?.trim()).map((k) => [k, draft[k].trim()]));
-    if (!Object.keys(data).length) throw Error("请填写要保存的连接信息。");
+    if (!Object.keys(data).length) throw Error(t("settings.missingCredentials"));
     await api.saveConnection(data);
     setDraft({});
     setConn(await api.connections());
@@ -119,29 +115,26 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
       <span className={"dot " + state.tone} />
       <b>{state.label}</b>
       <span className="cap">
-        {state.lastSuccess ? "上次成功 " + new Date(state.lastSuccess).toLocaleString("zh-CN") : "尚无同步记录"}
+        {state.lastSuccess ? t("settings.lastSuccess", { time: formatDateTime(state.lastSuccess) }) : t("settings.noSyncYet")}
       </span>
       <span className="sp" />
       {state.canUpdate && (
         <button className="btn sm" onClick={() => onPage("imports", { broker: b, sync: true })}>
-          立即更新
+          {t("settings.updateNowBtn")}
         </button>
       )}
     </div>
   );
-  const ibkr = brokerState(conn, "ibkr", demo),
-    webull = brokerState(conn, "webull", demo);
+  const ibkr = brokerState(conn, "ibkr", demo, t),
+    webull = brokerState(conn, "webull", demo, t);
 
   const cards = {
     ibkr: (
       <Panel title="Interactive Brokers">
         {brokerStatus(ibkr, "ibkr")}
         <details open={ibkr.needsAuth || initial.broker === "ibkr"}>
-          <summary>{ibkr.needsAuth ? "连接 IBKR" : "授权设置"}</summary>
-          <p className="muted">
-            在盈透客户门户打开 Performance &amp; Reports → Flex Queries，点 Flex Web Service Configuration
-            的齿轮，复制 Current Token。
-          </p>
+          <summary>{ibkr.needsAuth ? t("settings.ibkrSectionConnect") : t("settings.ibkrSectionAuth")}</summary>
+          <p className="muted">{t("settings.ibkrHelp")}</p>
           <div className="fg">
             <F label="Flex Query ID">
               <input
@@ -155,12 +148,12 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
             <button
               className="btn pri"
               disabled={demo}
-              onClick={() => run(() => saveKeys(["ibkr.flex-query-id", "ibkr.flex-token"]), "IBKR 连接设置已保存")}
+              onClick={() => run(() => saveKeys(["ibkr.flex-query-id", "ibkr.flex-token"]), t("settings.ibkrSaved"))}
             >
-              保存 IBKR 设置
+              {t("settings.saveIbkr")}
             </button>
             <button className="btn" disabled={demo} onClick={() => setDialog("ibkr")}>
-              断开 IBKR
+              {t("settings.disconnectIbkr")}
             </button>
           </div>
         </details>
@@ -170,7 +163,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
       <Panel title="Webull Australia">
         {brokerStatus(webull, "webull")}
         <details open={webull.needsAuth || initial.broker === "webull"}>
-          <summary>{webull.needsAuth ? "连接 Webull" : "授权与账户"}</summary>
+          <summary>{webull.needsAuth ? t("settings.webullSectionConnect") : t("settings.webullSectionAuth")}</summary>
           <div className="fg">
             <F label="App Key">
               <input
@@ -184,9 +177,9 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
             <button
               className="btn pri"
               disabled={demo}
-              onClick={() => run(() => saveKeys(["webull.app-key", "webull.app-secret"]), "Webull 设置已保存")}
+              onClick={() => run(() => saveKeys(["webull.app-key", "webull.app-secret"]), t("settings.webullSaved"))}
             >
-              保存 Webull 设置
+              {t("settings.saveWebull")}
             </button>
             <button
               className="btn"
@@ -198,29 +191,27 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
                 }, false)
               }
             >
-              连接 / 检查手机授权
+              {t("settings.connectWebull")}
             </button>
           </div>
           {web && (
             <p className="muted">
-              {web.status === "PENDING"
-                ? "在 Webull 手机 App 打开 Menu → Messages → OpenAPI Notifications，选择最新消息，点 Check Now 完成验证，再点击这里的「检查手机授权」。"
-                : web.status}
+              {web.status === "PENDING" ? t("settings.webullPending") : web.status}
             </p>
           )}
           {web?.accounts.length > 0 && (
             <div className="fg">
-              <F label="Webull 券商账户">
+              <F label={t("settings.webullAccount")}>
                 <select
                   value={conn?.webullId}
                   onChange={(e) =>
                     run(async () => {
                       await api.saveConnection({ "webull.api-account-id": e.target.value });
                       setConn(await api.connections());
-                    }, "账户已关联")
+                    }, t("settings.accountLinked"))
                   }
                 >
-                  <option value="">选择券商账户</option>
+                  <option value="">{t("settings.chooseBrokerAccount")}</option>
                   {web.accounts.map((a) => (
                     <option key={a.accountId} value={a.accountId}>
                       {a.accountNumber || a.accountId}
@@ -232,28 +223,25 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
           )}
           <div className="acts">
             <button className="btn" disabled={demo} onClick={() => setDialog("webull")}>
-              断开 Webull
+              {t("settings.disconnectWebull")}
             </button>
           </div>
         </details>
       </Panel>
     ),
     market: (
-      <Panel title="行情自动更新">
-        <p className="muted">
-          持仓的每日收盘价、美元兑澳元汇率和标普 500、纳斯达克 100 总回报指数来自 Yahoo Finance 与 FRED
-          的公开数据，无需 API Key。请求只包含证券代码和日期。
-        </p>
+      <Panel title={t("settings.autoMarketTitle")}>
+        <p className="muted">{t("settings.autoMarketDesc")}</p>
         <label className="chk">
           <input
             type="checkbox"
             disabled={demo || !market}
             checked={market?.autoUpdate ?? true}
             onChange={(e) =>
-              run(async () => setMarket(await api.marketSettings({ autoUpdate: e.target.checked })), "行情更新设置已保存")
+              run(async () => setMarket(await api.marketSettings({ autoUpdate: e.target.checked })), t("settings.marketSettingsSaved"))
             }
           />
-          打开软件和进入收益复盘时自动更新
+          {t("settings.autoMarketCheck")}
         </label>
         <div className="acts">
           <button
@@ -264,29 +252,33 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
                 const results = await api.updateMarket();
                 setMarket(await api.marketSettings());
                 const failed = results.filter((r) => r.error);
-                return (
-                  "已更新 " +
-                  results.filter((r) => !r.error).length +
-                  " 项行情" +
-                  (failed.length ? "；未能更新 " + failed.map((r) => r.name + "（" + r.error + "）").join("、") : "")
-                );
+                return t("settings.marketUpdatedResult", {
+                  count: results.filter((r) => !r.error).length,
+                  failed: failed.length
+                    ? t("settings.marketUpdatedFailed", {
+                        items: failed
+                          .map((r) => `${r.name}${t("common.openParen")}${r.error}${t("common.closeParen")}`)
+                          .join(t("common.comma")),
+                      })
+                    : "",
+                });
               }, true)
             }
           >
-            立即更新行情
+            {t("settings.updateMarketNow")}
           </button>
           <span className="cap">
-            {market?.last ? "上次更新 " + new Date(market.last).toLocaleString("zh-CN") : "尚未自动更新过"}
+            {market?.last ? t("settings.lastUpdated", { time: formatDateTime(market.last) }) : t("settings.neverUpdated")}
           </span>
         </div>
       </Panel>
     ),
     reset: (
-      <Fold title="重置某个账户的券商同步标记">
+      <Fold title={t("settings.resetSyncSummary")}>
         <div className="acts">
           <select
             className="btn"
-            aria-label="券商"
+            aria-label={t("settings.resetBrokerAria")}
             value={reset.broker}
             onChange={(e) => setReset({ ...reset, broker: e.target.value })}
           >
@@ -295,7 +287,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
           </select>
           <select
             className="btn"
-            aria-label="账户"
+            aria-label={t("settings.resetAccountAria")}
             value={reset.account}
             onChange={(e) => setReset({ ...reset, account: e.target.value })}
           >
@@ -306,36 +298,36 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
             ))}
           </select>
           <button className="btn" onClick={() => setDialog("reset")}>
-            选择重置
+            {t("settings.resetSyncBtn")}
           </button>
         </div>
       </Fold>
     ),
     book: (
-      <Panel title="当前账本">
+      <Panel title={t("settings.currentBook")}>
         <div className="bsum">
           <span className="av">
             <Database size={24} strokeWidth={1.8} />
           </span>
           <div>
-            <b>{demo ? "示例账本" : "正式账本"}</b>
+            <b>{demo ? t("app.demoBook") : t("app.realBookFormal")}</b>
             <p className="cap">
               {d.migration
-                ? "已从 Wealthfolio 迁入 · " + new Date(d.migration.at).toLocaleDateString("zh-CN")
+                ? t("settings.migratedOn", { date: formatDate(d.migration.at) })
                 : demo
-                  ? "虚构交易、行情及结单，可用于试用。"
-                  : "本机独立保存的投资记录。"}
+                  ? t("settings.demoSummary")
+                  : t("settings.realSummary")}
             </p>
           </div>
         </div>
         {d.migration && (
           <div className="mini">
             {[
-              ["账户", "accounts"],
-              ["历史流水", "activities"],
-              ["估值记录", "valuations"],
-              ["配置数据", "allocation"],
-              ["同步设置与记录", "broker"],
+              [t("settings.mig.accounts"), "accounts"],
+              [t("settings.mig.activities"), "activities"],
+              [t("settings.mig.valuations"), "valuations"],
+              [t("settings.mig.allocation"), "allocation"],
+              [t("settings.mig.broker"), "broker"],
             ].map(([l, k]) => (
               <span key={k}>
                 <b>{d.migration[k]}</b>
@@ -346,20 +338,20 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
         )}
         <div className="acts">
           <button className="btn" onClick={openHome}>
-            切换账本 / 迁入 Wealthfolio
+            {t("settings.switchBook")}
           </button>
           <BookBackups run={run} restored={workspace} />
         </div>
       </Panel>
     ),
     accounts: (
-      <Panel title="账户">
+      <Panel title={t("settings.accountsTitle")}>
         <table>
           <thead>
             <tr>
-              <th className="l">名称</th>
-              <th className="l">基础币种</th>
-              <th className="l">状态</th>
+              <th className="l">{t("settings.col.name")}</th>
+              <th className="l">{t("settings.col.currency")}</th>
+              <th className="l">{t("settings.col.status")}</th>
             </tr>
           </thead>
           <tbody>
@@ -367,7 +359,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
               <tr key={a.id}>
                 <td className="l account-name">{a.name}</td>
                 <td className="l">{a.currency}</td>
-                <td className="l">{a.active ? "启用" : "归档"}</td>
+                <td className="l">{a.active ? t("settings.status.active") : t("settings.status.archived")}</td>
               </tr>
             ))}
           </tbody>
@@ -379,26 +371,26 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
             run(async () => {
               await api.account({ name, currency: ccy });
               setName("");
-            }, "账户已创建");
+            }, t("settings.accountCreated"));
           }}
         >
-          <F label="新账户名称">
-            <input required value={name} onChange={(e) => setName(e.target.value)} placeholder="例如 IBKR" />
+          <F label={t("settings.newAccountName")}>
+            <input required value={name} onChange={(e) => setName(e.target.value)} placeholder={t("settings.newAccountPlaceholder")} />
           </F>
-          <F label="币种">
+          <F label={t("settings.currency")}>
             <select value={ccy} onChange={(e) => setCcy(e.target.value)}>
               <option>AUD</option>
               <option>USD</option>
             </select>
           </F>
-          <button className="btn pri">创建账户</button>
+          <button className="btn pri">{t("settings.createAccount")}</button>
         </form>
       </Panel>
     ),
     price: (
-      <Panel title="维护结单报价">
+      <Panel title={t("settings.manualQuotesTitle")}>
         <div className="fg">
-          <F label="证券或汇率">
+          <F label={t("settings.securityOrFx")}>
             <select value={asset} onChange={(e) => setAsset(e.target.value)}>
               <option value="fx">USD → AUD</option>
               {rows.map((r) => (
@@ -408,10 +400,10 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
               ))}
             </select>
           </F>
-          <F label="报价日期">
+          <F label={t("settings.quoteDate")}>
             <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
           </F>
-          <F label="原币单价 / 汇率">
+          <F label={t("settings.unitPriceOrFx")}>
             <input type="number" min="0" step="any" value={price} onChange={(e) => setPrice(e.target.value)} />
           </F>
         </div>
@@ -422,20 +414,20 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
               run(async () => {
                 await api.savePrice({ assetId: asset === "fx" ? null : asset, from: "USD", date, price });
                 setPrice("");
-              }, "报价已保存")
+              }, t("settings.quoteSaved"))
             }
           >
-            保存报价
+            {t("settings.saveQuote")}
           </button>
         </div>
       </Panel>
     ),
     fund: (
-      <Fold title="手动调整基金数据来源">
+      <Fold title={t("settings.etfSourcesTitle")}>
         {d.etfData.length ? (
           <>
             <div className="fg">
-              <F label="基金">
+              <F label={t("settings.fund")}>
                 <select value={fund} onChange={(e) => setFund(e.target.value)}>
                   {d.etfData.map((v) => (
                     <option key={v.asset.etfKey} value={v.asset.etfKey}>
@@ -444,24 +436,24 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
                   ))}
                 </select>
               </F>
-              <F label="数据源模式">
+              <F label={t("settings.providerMode")}>
                 <select value={pm} onChange={(e) => setPm(e.target.value)}>
-                  <option value="auto">自动选择</option>
-                  <option value="pinned">固定数据源</option>
+                  <option value="auto">{t("settings.modeAuto")}</option>
+                  <option value="pinned">{t("settings.modePinned")}</option>
                 </select>
               </F>
-              <F label="固定数据源">
+              <F label={t("settings.pinnedProvider")}>
                 <select disabled={pm !== "pinned"} value={provider} onChange={(e) => setProvider(e.target.value)}>
                   {["ishares", "invesco", "betashares"].map((v) => (
                     <option key={v}>{v}</option>
                   ))}
                 </select>
               </F>
-              <F label="发行商标识">
+              <F label={t("settings.issuerId")}>
                 <input
                   value={identity}
                   onChange={(e) => setIdentity(e.target.value)}
-                  placeholder="产品 ID、CUSIP 或基金代码"
+                  placeholder={t("settings.issuerIdPlaceholder")}
                 />
               </F>
             </div>
@@ -476,25 +468,25 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
                         pinnedProviders: { ...d.settings.pinnedProviders, [fund]: provider },
                         providerIdentities: { ...d.settings.providerIdentities, [fund]: identity.trim() },
                       }),
-                    "来源已保存",
+                    t("settings.fundSourceSaved"),
                   )
                 }
               >
-                保存基金来源
+                {t("settings.saveFundSource")}
               </button>
             </div>
           </>
         ) : (
-          <p className="muted">持有 ETF 后可设置发行商。</p>
+          <p className="muted">{t("settings.noEtfForSource")}</p>
         )}
       </Fold>
     ),
     classes: (
-      <Fold title="更正证券类别及基金成分匹配">
+      <Fold title={t("settings.typeAndAliasTitle")}>
         <div className="fg">
-          <F label="证券">
+          <F label={t("settings.security")}>
             <select value={override} onChange={(e) => setOverride(e.target.value)}>
-              <option value="">选择证券</option>
+              <option value="">{t("settings.selectSecurity")}</option>
               {rows.map((r) => (
                 <option key={r.assetId} value={r.assetId}>
                   {securityLabel(r)}
@@ -502,13 +494,13 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
               ))}
             </select>
           </F>
-          <F label="分类">
+          <F label={t("settings.classification")}>
             <select value={type} onChange={(e) => setType(e.target.value)}>
-              {Object.entries(kind)
-                .filter(([k]) => k !== "cash")
-                .map(([k, v]) => (
+              {Object.keys(kind)
+                .filter((k) => k !== "cash")
+                .map((k) => (
                   <option key={k} value={k}>
-                    {v}
+                    {kindLabel(k)}
                   </option>
                 ))}
             </select>
@@ -521,21 +513,21 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
             onClick={() =>
               run(
                 () => saveSettings({ typeOverrides: { ...d.settings.typeOverrides, [override]: type } }),
-                "证券分类已保存",
+                t("settings.typeSaved"),
               )
             }
           >
-            保存分类
+            {t("settings.saveType")}
           </button>
         </div>
-        <div className="sub">当前基金的标识映射</div>
+        <div className="sub">{t("settings.aliasHeading")}</div>
         {aliasRows(d.settings.aliases).length > 0 && (
           <table>
             <thead>
               <tr>
-                <th className="l">来源</th>
-                <th className="l">来源标识</th>
-                <th className="l">规范标识</th>
+                <th className="l">{t("settings.aliasProvider")}</th>
+                <th className="l">{t("settings.aliasKey")}</th>
+                <th className="l">{t("settings.aliasId")}</th>
                 <th />
               </tr>
             </thead>
@@ -548,16 +540,16 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
                   <td>
                     <button
                       className="lnk"
-                      aria-label={"移除映射 " + a.source}
+                      aria-label={t("settings.removeAliasAria", { source: a.source })}
                       onClick={() =>
                         run(async () => {
                           const aliases = { ...d.settings.aliases };
                           delete aliases[a.key];
                           await saveSettings({ aliases });
-                        }, "映射已移除")
+                        }, t("settings.aliasRemoved"))
                       }
                     >
-                      移除
+                      {t("app.remove")}
                     </button>
                   </td>
                 </tr>
@@ -569,9 +561,9 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
           <>
             <div className="fg">
               {[
-                ["provider", "来源"],
-                ["key", "来源标识"],
-                ["id", "规范标识"],
+                ["provider", t("settings.aliasProvider")],
+                ["key", t("settings.aliasKey")],
+                ["id", t("settings.aliasId")],
               ].map(([k, l]) => (
                 <F key={k} label={l}>
                   <input value={alias[k]} onChange={(e) => setAlias({ ...alias, [k]: e.target.value })} />
@@ -591,11 +583,11 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
                           [scopedAliasKey({ provider: alias.provider, etfKey: fund }, alias.key)]: alias.id.trim(),
                         },
                       }),
-                    "标识映射已保存",
+                    t("settings.aliasSaved"),
                   )
                 }
               >
-                添加映射
+                {t("settings.addAlias")}
               </button>
             </div>
           </>
@@ -609,15 +601,15 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
     data: ["price", "fund", "classes"],
   }[tab];
   const confirm = {
-    reset: ["重置同步标记", "下次预览会重新与本地流水比对，已入账的流水会保留。", "确认重置"],
-    ibkr: ["断开券商连接", "下次在线同步时需要重新授权。已导入的历史可继续查看。", "确认断开"],
-    webull: ["断开券商连接", "下次在线同步时需要重新授权。已导入的历史可继续查看。", "确认断开"],
+    reset: [t("settings.dialog.resetTitle"), t("settings.dialog.resetDesc"), t("settings.dialog.resetConfirm")],
+    ibkr: [t("settings.dialog.disconnectTitle"), t("settings.dialog.disconnectDesc"), t("settings.dialog.disconnectConfirm")],
+    webull: [t("settings.dialog.disconnectTitle"), t("settings.dialog.disconnectDesc"), t("settings.dialog.disconnectConfirm")],
   }[dialog];
   return (
     <div className="settings">
       <div className="row">
-        <div className="seg" role="group" aria-label="设置页签">
-          {tabs.map(([id, label]) => (
+        <div className="seg" role="group" aria-label={t("settings.tabsAria")}>
+          {tabIds.map((id) => (
             <button
               type="button"
               key={id}
@@ -625,54 +617,76 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
               className={tab === id ? "on" : ""}
               onClick={() => setTab(id)}
             >
-              {label}
+              {t(`settings.tab.${id}`)}
             </button>
           ))}
         </div>
         <label className="row m0">
-          <span className="cap">主题</span>
+          <span className="cap">{t("settings.themeLabel")}</span>
           <select className="btn" value={theme} onChange={(e) => onThemeChange(e.target.value)}>
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
+            <option value="system">{t("settings.theme.system")}</option>
+            <option value="light">{t("settings.theme.light")}</option>
+            <option value="dark">{t("settings.theme.dark")}</option>
+          </select>
+        </label>
+        <label className="row m0">
+          <span className="cap">{t("lang.label")}</span>
+          <select
+            className="btn"
+            aria-label={t("lang.label")}
+            value={languagePreference}
+            onChange={(e) => changeLanguage(e.target.value)}
+          >
+            {localeOptions.map(([id, label]) => (
+              <option key={id} value={id}>{label}</option>
+            ))}
           </select>
         </label>
         {onUserScaleChange && (
-          <div className="row m0 settings-zoom" role="group" aria-label="界面缩放" aria-describedby="zoom-shortcuts">
-            <span className="cap">界面缩放</span>
-            <button type="button" className="btn sm" aria-label="缩小界面"
+          <div className="row m0 settings-zoom" role="group" aria-label={t("settings.zoomAria")} aria-describedby="zoom-shortcuts">
+            <span className="cap">{t("settings.zoomLabel")}</span>
+            <button type="button" className="btn sm" aria-label={t("settings.zoomOutAria")}
               disabled={userScale <= USER_SCALE_LIMITS.min}
               onClick={() => onUserScaleChange({ delta: -USER_SCALE_LIMITS.step })}>−</button>
-            <output aria-label="当前界面缩放">{Math.round(userScale * 100)}%</output>
-            <button type="button" className="btn sm" aria-label="放大界面"
+            <output aria-label={t("settings.zoomCurrentAria")}>{Math.round(userScale * 100)}%</output>
+            <button type="button" className="btn sm" aria-label={t("settings.zoomInAria")}
               disabled={userScale >= USER_SCALE_LIMITS.max}
               onClick={() => onUserScaleChange({ delta: USER_SCALE_LIMITS.step })}>+</button>
-            <button type="button" className="btn sm" aria-label="重置界面缩放"
+            <button type="button" className="btn sm" aria-label={t("settings.zoomResetAria")}
               disabled={userScale === USER_SCALE_LIMITS.default}
-              onClick={() => onUserScaleChange({ reset: true })}>重置</button>
+              onClick={() => onUserScaleChange({ reset: true })}>{t("settings.zoomResetBtn")}</button>
             <span className="cap" id="zoom-shortcuts">Ctrl + / − / 0</span>
           </div>
         )}
       </div>
-      {tab === "connections" && demo && <div className="notice">正式账本可保存券商授权。示例账本使用随附样例。</div>}
+      {tab === "connections" && demo && <div className="notice">{t("settings.demoConnectionsNotice")}</div>}
       {tab === "connections" && !demo && (
-        <Panel title="按账户连接券商" action={<button className="btn pri" onClick={onSetup}>添加或重新授权账户</button>}>
-          <p className="muted">每个账户单独保存授权。选择 IBKR 或 Webull AU 后，可跟随图文教程完成绑定。</p>
+        <Panel title={t("settings.perAccountTitle")} action={<button className="btn pri" onClick={onSetup}>{t("settings.addOrReauthBtn")}</button>}>
+          <p className="muted">{t("settings.perAccountDesc")}</p>
           {conn?.bindings?.map(a => <div className="row binding-row" key={a.id}>
-            <strong>{a.name}</strong><span className="cap">{a.broker === "ibkr" ? "IBKR" : "Webull AU"} ···· {a.suffix} · {a.authorized ? "已保存授权" : "需重新授权"}</span>
+            <strong>{a.name}</strong>
+            <span className="cap">
+              {a.broker === "ibkr" ? "IBKR" : "Webull AU"} ···· {a.suffix} · {a.authorized ? t("settings.bindingAuthSaved") : t("settings.bindingNeedsReauth")}
+            </span>
             <span className="sp" />
-            {a.authorized && <><button className="btn sm" onClick={() => onPage("imports", {broker:a.broker, account:a.id, sync:true})}>预览同步</button>
-              <button className="btn sm" onClick={() => setDisconnect(a)}>断开授权</button></>}
+            {a.authorized && <>
+              <button className="btn sm" onClick={() => onPage("imports", {broker:a.broker, account:a.id, sync:true})}>
+                {t("settings.previewSyncBtn")}
+              </button>
+              <button className="btn sm" onClick={() => setDisconnect(a)}>
+                {t("settings.disconnectAccountBtn")}
+              </button>
+            </>}
           </div>)}
-          <p className="cap">下方的通用连接供尚未单独绑定的账户使用。</p>
+          <p className="cap">{t("settings.genericConnNote")}</p>
         </Panel>
       )}
-      {disconnect && <Modal title={"断开「" + disconnect.name + "」的授权"} close={() => setDisconnect(null)}>
-        <p>此账户下次在线同步前需要重新授权。已导入的流水可继续查看。</p>
-        <div className="acts"><button className="btn" onClick={() => setDisconnect(null)}>取消</button>
+      {disconnect && <Modal title={t("settings.disconnectAccountTitle", { name: disconnect.name })} close={() => setDisconnect(null)}>
+        <p>{t("settings.disconnectAccountDesc")}</p>
+        <div className="acts"><button className="btn" onClick={() => setDisconnect(null)}>{t("app.cancel")}</button>
           <button className="btn pri" onClick={() => run(async () => {
             await api.disconnectAccount({id:disconnect.id}); setDisconnect(null); setConn(await api.connections());
-          }, "已断开此账户的授权")}>确认断开</button></div>
+          }, t("settings.accountDisconnected"))}>{t("settings.confirmDisconnect")}</button></div>
       </Modal>}
       {cols === 1 ? (
         <div className="stack">{keys.map((k) => <React.Fragment key={k}>{cards[k]}</React.Fragment>)}</div>
@@ -701,13 +715,13 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
                     );
                   setDialog("");
                   setConn(await api.connections());
-                }, "设置已更新")
+                }, t("settings.updated"))
               }
             >
               {confirm[2]}
             </button>
             <button className="btn" onClick={() => setDialog("")}>
-              取消
+              {t("app.cancel")}
             </button>
           </div>
         </Modal>

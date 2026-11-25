@@ -1,7 +1,8 @@
 import React, { useId, useLayoutEffect, useRef, useState } from "react";
 import { area, curveLinear, curveStepAfter, line } from "d3-shape";
-import { lineLayout, MARGIN } from "./lineLayout.js";
+import { dateLabeler, lineLayout, MARGIN } from "./lineLayout.js";
 import { useWidth } from "./useWidth.js";
+import { useI18n } from "../i18n.jsx";
 import "./charts.css";
 
 const identity = (v) => String(v);
@@ -46,6 +47,7 @@ export function LineChart({
   onSelect,
   onZoom,
 }) {
+  const { t } = useI18n();
   const [ref, measured] = useWidth();
   const width = fixedWidth ?? measured;
   const [hover, setHover] = useState(null);
@@ -64,7 +66,8 @@ export function LineChart({
     announcement = "",
     tickText = "";
   if (width > 0 && series.length) {
-    const l = lineLayout({ width, height, series, dates, zero, lo, hi, labels, padLeft, padRight, formatAxisDate });
+    const axisDate = formatAxisDate ?? (dates?.length ? dateLabeler(dates[0], dates[dates.length - 1], t) : undefined);
+    const l = lineLayout({ width, height, series, dates, zero, lo, hi, labels, padLeft, padRight, formatAxisDate: axisDate });
     const { plot, x, y } = l;
     const tickLabels = l.ticks.map(({ value }) => formatAxis(value));
     tickText = tickLabels.join("\n");
@@ -172,8 +175,8 @@ export function LineChart({
         height={height}
         role="img"
         aria-label={ariaLabel}
-        aria-description={navigable ? "按左右方向键查看每日数值，Home 和 End 跳到起点和终点。" +
-          (onSelect ? "按 Enter 打开当日明细。" : "") : undefined}
+        aria-description={navigable ? t("chart.lineAriaDesc") +
+          (onSelect ? t("chart.lineAriaEnter") : "") : undefined}
         tabIndex={navigable ? 0 : undefined}
         className={selectable ? "ch-selectable" : undefined}
         onPointerMove={onMove}
@@ -282,10 +285,10 @@ export function LineChart({
       const flip = hx > (plot.left + plot.right) / 2;
       const valueText = formatValue ?? ((v) => formatAxis(v));
       const rows = series.filter((s) => defined(s.values[shown]) || s.axis === "right").map((s) => ({
-        name: s.name, color: s.color, value: defined(s.values[shown]) ? valueText(s.values[shown], s) : "暂无",
+        name: s.name, color: s.color, value: defined(s.values[shown]) ? valueText(s.values[shown], s) : t("chart.noData"),
       }));
       const date = dates?.[shown] == null ? "" : formatDate(dates[shown]);
-      if (keyboardIndex != null) announcement = [date, ...rows.map((r) => r.name + " " + r.value)].join("，");
+      if (keyboardIndex != null) announcement = [date, ...rows.map((r) => r.name + " " + r.value)].join(t("common.comma"));
       tip = (
         <div
           className="ch-tip"

@@ -5,46 +5,18 @@ import { buildRebalanceModel, CASH_TARGET, fullTargetTotal, OTHER_INVESTMENTS, S
 import { api, aud, directedPct, fmt, pct, Card, Delta, Field, Modal, Table, Empty } from "./common";
 import { Bar, BulletBar, RankedBars, StackedBar, Treemap, refinedTileColor } from "./charts";
 import { Detail, useRowKeys, useShell } from "./Shell";
+import { useI18n } from "./i18n.jsx";
 import "./allocation.css";
-const labels = {
-  "Individual stocks": "个股",
-  Cash: "现金",
-  "Other investments": "其他投资",
-  "Other companies": "其他公司",
-  "Other assets": "其他资产",
-  "Bonds & fixed income": "债券与固收",
-  "Fund holdings not available": "未取得成分的基金",
-  Unclassified: "未分类",
-  "Not looked through": "未穿透",
-  Equity: "股票",
-  "Fixed income": "固收",
-  Derivatives: "衍生品",
-  Other: "其他",
-  "United States": "美国",
-  Australia: "澳大利亚",
-  Japan: "日本",
-  "United Kingdom": "英国",
-  Canada: "加拿大",
-  "Mixed/Conflicting": "未分类",
-};
-const lab = (s) => labels[s] || String(s ?? "").replace(/^([A-Z]{3}) cash$/, "$1 现金");
-const status = {
-  Fresh: "最新",
-  Stale: "已过期",
-  Warning: "需要更新",
-  Critical: "过期",
-  Invalid: "无效",
-  Missing: "缺少成分",
-  Unsupported: "待手工补充",
-};
+
 function FundData({ d, run, initialFund }) {
+  const { t, allocationLabel } = useI18n();
   const [text, setText] = useState(""),
     [date, setDate] = useState(d.date),
     [parsed, setParsed] = useState(null),
     [all, setAll] = useState(false),
     [dialog, setDialog] = useState("");
   const f = d.etfData.find((e) => e.asset.etfKey === initialFund);
-  if (!f) return <Empty>所选账户还没有 ETF。</Empty>;
+  if (!f) return <Empty>{t("alloc.noEtfs")}</Empty>;
   const key = f.asset.etfKey,
     s = f.snapshot,
     small = (s?.holdings || []).filter((r) => r.weight <= 0.01);
@@ -57,38 +29,38 @@ function FundData({ d, run, initialFund }) {
   }
   return (
     <>
-      <Card title="基金成分与数据来源">
+      <Card title={t("alloc.fundTitle")}>
         <div className="mini-stats">
           <span>
-            <b>{s?.provider || "—"}</b>数据来源
+            <b>{s?.provider || "—"}</b>{t("alloc.stat.provider")}
           </span>
           <span>
-            <b>{s?.asOfDate || "—"}</b>成分日期
+            <b>{s?.asOfDate || "—"}</b>{t("alloc.stat.asOfDate")}
           </span>
           <span>
-            <b>{pct(f.resolvedWeight)}</b>已覆盖权重
+            <b>{pct(f.resolvedWeight)}</b>{t("alloc.stat.coverage")}
           </span>
           <span>
-            <b>{status[f.status] || f.status}</b>成分状态
+            <b>{t(`alloc.status.${f.status}`) || f.status}</b>{t("alloc.stat.status")}
           </span>
         </div>
-        <details><summary>更新或管理成分表</summary><div className="actions">
-          <button onClick={() => run(() => api.fundRefresh({ asset: f.asset }), "基金成分已更新")}>
-            刷新成分
+        <details><summary>{t("alloc.manageSummary")}</summary><div className="actions">
+          <button onClick={() => run(() => api.fundRefresh({ asset: f.asset }), t("alloc.fundRefreshed"))}>
+            {t("alloc.refreshFund")}
           </button>
           <button disabled={!s} onClick={() => run(() => api.fundExport({ key }), false)}>
-            导出 CSV
+            {t("alloc.exportCsv")}
           </button>
-          <button onClick={() => setDialog("import")}>导入或粘贴 CSV</button>
+          <button onClick={() => setDialog("import")}>{t("alloc.importCsv")}</button>
           <button disabled={!s} onClick={() => setDialog("disable")}>
-            停用成分表
+            {t("alloc.disableFund")}
           </button>
         </div></details>
         <label className="check">
           <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} />
-          展开权重不超过 1% 的成分
+          {t("alloc.showSmallHoldings")}
         </label>
-        <Table head={["代码", "名称", "基金内权重", "行业", "国家"]}>
+        <Table head={[t("alloc.col.symbol"), t("alloc.col.name"), t("alloc.col.fundWeight"), t("alloc.col.sector"), t("alloc.col.country")]}>
           {[...rows]
             .sort((a, b) => b.weight - a.weight)
             .map((r, i) => (
@@ -96,15 +68,15 @@ function FundData({ d, run, initialFund }) {
                 <td>{r.symbol || "—"}</td>
                 <td>{r.name}</td>
                 <td>{pct(r.weight)}</td>
-                <td>{r.sector || "—"}</td>
-                <td>{r.country || "—"}</td>
+                <td>{r.sector ? allocationLabel(r.sector) : "—"}</td>
+                <td>{r.country ? allocationLabel(r.country) : "—"}</td>
               </tr>
             ))}
           {!all && small.length > 0 && (
             <tr>
-              <td>其他</td>
+              <td>{t("alloc.tile.other")}</td>
               <td>
-                {small.length} 项 · {f.asset.symbol}
+                {t("alloc.otherItems", { count: small.length, symbol: f.asset.symbol })}
               </td>
               <td>{pct(small.reduce((n, r) => n + r.weight, 0))}</td>
               <td>—</td>
@@ -114,24 +86,24 @@ function FundData({ d, run, initialFund }) {
         </Table>
       </Card>
       {dialog === "disable" && (
-        <Modal title={"停用 " + f.asset.symbol + " 成分表"} close={() => setDialog("")}>
-          <p>该基金会保留在总资产中，等待新的成分数据。</p>
+        <Modal title={t("alloc.disableTitle", { symbol: f.asset.symbol })} close={() => setDialog("")}>
+          <p>{t("alloc.disableDesc")}</p>
           <button
             className="primary"
             onClick={() =>
               run(async () => {
                 await api.fundDisable({ key });
                 setDialog("");
-              }, "成分表已停用")
+              }, t("alloc.fundDisabled"))
             }
           >
-            确认停用
+            {t("alloc.disableConfirm")}
           </button>
         </Modal>
       )}
       {dialog === "import" && (
-        <Modal title={"导入 " + f.asset.symbol + " 成分"} close={() => setDialog("")}>
-          <Field label="成分日期">
+        <Modal title={t("alloc.importTitle", { symbol: f.asset.symbol })} close={() => setDialog("")}>
+          <Field label={t("alloc.holdingsDate")}>
             <input
               type="date"
               value={date}
@@ -141,7 +113,7 @@ function FundData({ d, run, initialFund }) {
               }}
             />
           </Field>
-          <Field label="粘贴 CSV（symbol 或 name，以及 weight）">
+          <Field label={t("alloc.pasteCsv")}>
             <textarea
               rows={5}
               value={text}
@@ -155,16 +127,20 @@ function FundData({ d, run, initialFund }) {
             />
           </Field>
           <div className="actions">
-            <button onClick={() => check(true)}>选择 CSV 文件</button>
-            <button onClick={() => check(false)}>预览粘贴数据</button>
+            <button onClick={() => check(true)}>{t("alloc.chooseCsvFile")}</button>
+            <button onClick={() => check(false)}>{t("alloc.previewPasted")}</button>
           </div>
           {parsed && (
             <>
               <p>
-                {parsed.rows.length} 行 · 权重合计 {pct(parsed.weightSum)} · {parsed.detectedUnit}
+                {t("alloc.parsedSummary", {
+                  count: parsed.rows.length,
+                  sum: pct(parsed.weightSum),
+                  unit: parsed.detectedUnit,
+                })}
               </p>
               <p>{[...parsed.missingFields, ...parsed.issues, parsed.validation.message].join(" ")}</p>
-              <Table head={["名称", "权重"]}>
+              <Table head={[t("alloc.col.name"), t("alloc.col.weight")]}>
                 {parsed.rows.slice(0, 8).map((r, i) => (
                   <tr key={i}>
                     <td>{r.name}</td>
@@ -180,10 +156,10 @@ function FundData({ d, run, initialFund }) {
                     await api.fundSave({ snapshot: parsed.validation.snapshot, version: f.version });
                     setDialog("");
                     setParsed(null);
-                  }, "成分表已保存")
+                  }, t("alloc.fundSaved"))
                 }
               >
-                确认保存成分表
+                {t("alloc.confirmSaveFund")}
               </button>
             </>
           )}
@@ -192,23 +168,6 @@ function FundData({ d, run, initialFund }) {
     </>
   );
 }
-const sectorLabels = {
-  Technology: "科技",
-  "Information Technology": "科技",
-  Financials: "金融",
-  Healthcare: "医疗保健",
-  "Health Care": "医疗保健",
-  Materials: "原材料",
-  "Consumer Discretionary": "非必需消费",
-  "Consumer Staples": "必需消费",
-  Industrials: "工业",
-  Energy: "能源",
-  "Real Estate": "房地产",
-  Utilities: "公用事业",
-  Communication: "通信服务",
-  "Communication Services": "通信服务",
-};
-const sectorLabel = (sector) => sectorLabels[sector] || (sector ? lab(sector) : "未分类");
 const sumBy = (rows, field) => rows.reduce((sum, row) => sum + row[field], 0);
 const holdingPage = (onPage, holding) => onPage("holdings", { assetId: holding.assetId, symbol: holding.ticker || holding.label });
 
@@ -225,41 +184,45 @@ function Segmented({ label, items, value, select }) {
 }
 
 function ExposureKey() {
-  return <span className="alloc-key"><span><i className="alloc-direct" />直接持有</span><span><i className="alloc-via" />通过 ETF</span></span>;
+  const { t } = useI18n();
+  return <span className="alloc-key"><span><i className="alloc-direct" />{t("alloc.legend.direct")}</span><span><i className="alloc-via" />{t("alloc.legend.viaEtf")}</span></span>;
 }
 
 const scaleSteps = [-8, -4, -2, -0.5, 0.5, 2];
 function DailyKey() {
+  const { t } = useI18n();
   return (
-    <span className="alloc-scale" aria-label="今日涨跌幅从下跌到上涨">
+    <span className="alloc-scale" aria-label={t("alloc.dayScaleAria")}>
       −8%+ {scaleSteps.map((n) => <i key={n} style={{ background: refinedTileColor(n).background }} />)} +3%
     </span>
   );
 }
 
 function CompanySources({ company, holdings, weight, dayChange, day, onClose, onPage }) {
+  const { t, allocationLabel } = useI18n();
   const groups = [...Map.groupBy(company.sources, (s) => holdings.get(s.holdingId)?.assetId ?? s.holdingId)];
   const rowKeys = useRowKeys(groups.filter(([, sources]) => holdings.has(sources[0].holdingId)).map(([key]) => key));
+  const companyTitle = allocationLabel(company.label);
   return (
-    <Detail title={company.label + (company.ticker ? " · " + company.ticker : "")} onClose={onClose}>
+    <Detail title={companyTitle + (company.ticker ? " · " + company.ticker : "")} onClose={onClose}>
       <dl className="alloc-source-stats">
         <div>
-          <dt>占总资产（穿透后）</dt>
+          <dt>{t("alloc.companyShareAfterLook")}</dt>
           <dd>{pct(weight(company.totalAud))}</dd>
           <span className="cap">{aud(company.totalAud, 2)}</span>
         </div>
         <div>
-          <dt>今日涨跌幅</dt>
+          <dt>{t("alloc.dayChangeCol")}</dt>
           <dd><Delta rate={dayChange} /></dd>
           <span className="cap">{day}</span>
         </div>
       </dl>
-      <p className="cap">这些钱从哪来</p>
-      <Table head={["来源", ["占总资产", "num"], ["金额（AUD）", "num"]]} onKeyDown={rowKeys}>
+      <p className="cap">{t("alloc.whereFrom")}</p>
+      <Table head={[t("alloc.col.source"), [t("alloc.col.share"), "num"], [t("alloc.col.amountAud"), "num"]]} onKeyDown={rowKeys}>
         {groups.map(([key, sources]) => {
           const source = sources[0], holding = holdings.get(source.holdingId);
           const direct = source.kind === "direct";
-          const label = direct ? "直接持有" : "通过 " + (holding?.ticker || source.etfSymbol) + " 持有";
+          const label = direct ? t("alloc.directHolding") : t("alloc.viaEtfHolding", { etf: holding?.ticker || source.etfSymbol });
           const value = sumBy(sources, "amountAud");
           return (
             <tr key={key} data-row={holding ? key : undefined} className={holding ? "click" : undefined}
@@ -302,6 +265,7 @@ function CompanyBars({ items, select, selected }) {
 }
 
 function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height }) {
+  const { t, allocationLabel } = useI18n();
   const [view, setView] = useState("tree"),
     [color, setColor] = useState("day"),
     [zoomPath, setZoomPath] = useState([]),
@@ -343,14 +307,17 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
 
   const tiles = named.map((row) => {
     const selectable = row.type === "stock";
-    const change = day(row.key), name = lab(row.label), label = lab(row.ticker || row.label);
+    const change = day(row.key), name = allocationLabel(row.label), label = allocationLabel(row.ticker || row.label);
     const { primaryTicker, secondaryTicker } = row.type === "cash"
       ? { primaryTicker: label, secondaryTicker: null }
       : splitTicker(label);
     const share = row.weight < 0.0105 ? ">1%" : pct(row.weight);
     const sources = row.type !== "etf" && row.directAud >= 0 && row.viaEtfsAud >= 0
-      ? { first: row.directAud, second: row.viaEtfsAud,
-        title: `直接 ${pct(weight(row.directAud))} + 通过 ETF ${pct(weight(row.viaEtfsAud))}` }
+      ? {
+          first: row.directAud,
+          second: row.viaEtfsAud,
+          title: t("alloc.tile.sourcesTitle", { direct: pct(weight(row.directAud)), etf: pct(weight(row.viaEtfsAud)) }),
+        }
       : null;
     const directPct = row.totalAud > 0 && row.directAud >= 0 ? pct(row.directAud / row.totalAud) : null;
     const etfPct = row.totalAud > 0 && row.viaEtfsAud >= 0 ? pct(row.viaEtfsAud / row.totalAud) : null;
@@ -372,15 +339,19 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
       etfPct,
       ...cashInfo,
       detail: color === "day" && change != null ? [share, directedPct(change)] : [share],
-      title: [name === label ? name : `${name} · ${label}`, `占总资产 ${share}`, sources?.title,
-        change != null && `今日 ${directedPct(change)}`].filter(Boolean).join(" · "),
+      title: [
+        name === label ? name : `${name} · ${label}`,
+        t("alloc.tile.shareText", { share }),
+        sources?.title,
+        change != null && t("alloc.tile.todayText", { pct: directedPct(change) }),
+      ].filter(Boolean).join(" · "),
     };
   }).sort((a, b) => b.value - a.value);
 
   if (otherAud > 0) {
     const subItems = visibleOtherBuckets.map((bucket, i) => ({
       id: bucket.key,
-      label: lab(bucket.ticker),
+      label: allocationLabel(bucket.ticker),
       value: bucket.valueAud,
       share: pct(bucket.weight),
       inside: bucket.shareOfOther != null ? pct(bucket.shareOfOther) : undefined,
@@ -388,13 +359,13 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
     }));
     tiles.push({
       id: "composition:other",
-      label: "其他",
+      label: t("alloc.tile.other"),
       value: otherAud,
       rest: true,
       selectable: visibleOtherBuckets.length > 0,
       detail: [pct(weight(otherAud))],
       subItems,
-      title: `其他 · 占总资产 ${pct(weight(otherAud))}，点击查看各 ETF 占比`,
+      title: t("alloc.tile.otherTitle", { pct: pct(weight(otherAud)) }),
     });
   }
 
@@ -405,34 +376,34 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
     return visibleOtherBuckets.map((bucket, i) => {
       const mainShare = otherUnit === "total" ? pct(bucket.weight) : pct(bucket.shareOfOther);
       const subShare = otherUnit === "total"
-        ? `占「其他」${pct(bucket.shareOfOther)}`
-        : `占总资产 ${pct(bucket.weight)}`;
+        ? t("alloc.tile.ofOther", { pct: pct(bucket.shareOfOther) })
+        : t("alloc.tile.ofTotal", { pct: pct(bucket.weight) });
       return {
         id: bucket.key,
-        label: lab(bucket.ticker),
+        label: allocationLabel(bucket.ticker),
         value: bucket.valueAud,
         share: mainShare,
         selectable: bucket.members.length > 0,
         bucketDrillable: bucket.members.length > 0,
         bucketAccent: `var(--s${(i % 6) + 1})`,
         bucketSub: bucket.members.length > 0
-          ? `追踪头部外 ${bucket.members.length + bucket.restCount} 项持股`
+          ? t("alloc.tile.tailTracked", { count: bucket.members.length + bucket.restCount })
           : undefined,
         bucketMainPct: mainShare,
         bucketSubPct: subShare,
         bucketAmount: aud(bucket.valueAud),
         detail: [mainShare, subShare],
-        title: `${lab(bucket.label)} · 占总资产 ${pct(bucket.weight)} · 占「其他」${pct(bucket.shareOfOther)} · ${aud(bucket.valueAud)}`,
+        title: `${allocationLabel(bucket.label)} · ${t("alloc.tile.ofTotal", { pct: pct(bucket.weight) })} · ${t("alloc.tile.ofOther", { pct: pct(bucket.shareOfOther) })} · ${aud(bucket.valueAud)}`,
       };
     });
-  }, [depth, visibleOtherBuckets, otherUnit]);
+  }, [depth, visibleOtherBuckets, otherUnit, t, allocationLabel]);
 
   const memberTiles = useMemo(() => {
     if (depth !== 2 || !activeBucket) return [];
     const items = activeBucket.members.map((m) => {
       const change = day(m.key);
       const share = pct(m.weight);
-      const label = lab(m.ticker || m.label);
+      const label = allocationLabel(m.ticker || m.label);
       const { primaryTicker, secondaryTicker } = splitTicker(label);
       return {
         id: m.key,
@@ -446,23 +417,23 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
         change,
         colorMode: color,
         detail: change != null ? [share, directedPct(change)] : [share],
-        title: [m.label, `占总资产 ${share}`, aud(m.valueAud), change != null && `今日 ${directedPct(change)}`].filter(Boolean).join(" · "),
+        title: [m.label, t("alloc.tile.ofTotal", { pct: share }), aud(m.valueAud), change != null && t("alloc.tile.todayText", { pct: directedPct(change) })].filter(Boolean).join(" · "),
       };
     });
     if (activeBucket.restValueAud > 0) {
       const restWeight = totalAud > 0 ? activeBucket.restValueAud / totalAud : null;
       items.push({
         id: `${activeBucket.key}:rest`,
-        label: activeBucket.members.length ? `其余 ${activeBucket.restCount} 项` : lab(activeBucket.ticker),
+        label: activeBucket.members.length ? t("alloc.tile.otherRemainder", { count: activeBucket.restCount }) : allocationLabel(activeBucket.ticker),
         value: activeBucket.restValueAud,
         rest: true,
         selectable: false,
         detail: [pct(restWeight)],
-        title: `${lab(activeBucket.label)} 其余部分 · ${aud(activeBucket.restValueAud)}`,
+        title: t("alloc.tile.remainderTitle", { label: allocationLabel(activeBucket.label), amount: aud(activeBucket.restValueAud) }),
       });
     }
     return items;
-  }, [depth, activeBucket, totalAud, d.today, color]);
+  }, [depth, activeBucket, totalAud, d.today, color, t, allocationLabel]);
 
   const tileColor = (item) => {
     if (item.cash || item.bucketAccent) return {};
@@ -493,51 +464,53 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
   return (
     <section className="card alloc-company" aria-labelledby="allocation-company-title">
       <div className="row">
-        <h2 id="allocation-company-title">钱最终投在哪些公司</h2>
-        <span className="cap">穿透 ETF 后，占总资产</span>
+        <h2 id="allocation-company-title">{t("alloc.chartTitle")}</h2>
+        <span className="cap">{t("alloc.chartSubtitle")}</span>
         <span className="sp" />
-        <Segmented label="公司敞口图" items={[["tree", "方框图"], ["bars", "条形"]]} value={view} select={setView} />
-        {view === "tree" && depth === 0 && <Segmented label="方框着色" items={[["day", "今日涨跌"], ["sources", "持有方式"]]} value={color} select={setColor} />}
+        <Segmented label={t("alloc.viewAria")} items={[["tree", t("alloc.view.tree")], ["bars", t("alloc.view.bars")]]} value={view} select={setView} />
+        {view === "tree" && depth === 0 && (
+          <Segmented label={t("alloc.colorAria")} items={[["day", t("alloc.color.day")], ["sources", t("alloc.color.sources")]]} value={color} select={setColor} />
+        )}
       </div>
       <dl className="alloc-company-stats">
         <div>
-          <dt className="cap">最大单一公司</dt>
-          <dd title={top?.label}>{top ? top.label + " " + pct(weight(top.totalAud)) : "—"}</dd>
-          {top && <span className="cap">直接 {pct(weight(top.directAud))} + 通过 ETF {pct(weight(top.viaEtfsAud))}</span>}
+          <dt className="cap">{t("alloc.kpi.top1")}</dt>
+          <dd title={top?.label}>{top ? `${allocationLabel(top.label)} ${pct(weight(top.totalAud))}` : "—"}</dd>
+          {top && <span className="cap">{t("alloc.tile.sourcesTitle", { direct: pct(weight(top.directAud)), etf: pct(weight(top.viaEtfsAud)) })}</span>}
         </div>
         <div>
-          <dt className="cap">前五大公司合计</dt>
+          <dt className="cap">{t("alloc.kpi.top5")}</dt>
           <dd>{pct(weight(sumBy(topFive, "totalAud")))}</dd>
-          <span className="cap">{topFive.map((c) => c.ticker || c.label).join("、")}</span>
+          <span className="cap">{topFive.map((c) => c.ticker || allocationLabel(c.label)).join(t("common.comma"))}</span>
         </div>
         <div>
-          <dt className="cap">占比超过 1% 的公司</dt>
-          <dd>{totalAud > 0 ? namedCompanies.length + " 家，共 " + pct(weight(sumBy(namedCompanies, "totalAud"))) : "—"}</dd>
+          <dt className="cap">{t("alloc.kpi.over1")}</dt>
+          <dd>{totalAud > 0 ? t("alloc.kpi.over1Val", { count: namedCompanies.length, pct: pct(weight(sumBy(namedCompanies, "totalAud"))) }) : "—"}</dd>
         </div>
       </dl>
       {view === "tree" && depth > 0 && (
         <div className="row alloc-drillbar">
           <button type="button" className="btn sm" onClick={() => setZoomPath((prev) => prev.slice(0, -1))}>
-            ← 返回{depth === 2 ? "「其他」ETF 分布" : "方框图"} (Esc)
+            {t("alloc.backPrefix")}{depth === 2 ? t("alloc.backOtherEtf") : t("alloc.backMap")} (Esc)
           </button>
           <span className="alloc-drillpath">
             {depth === 1 ? (
-              <><b>其他 · 各 ETF 占比</b>（共 {pct(weight(otherAud))}）</>
+              <><b>{t("alloc.drillOtherTitle")}</b>{t("alloc.drillOtherTotal", { pct: pct(weight(otherAud)) })}</>
             ) : (
               <>
                 <button type="button" className="alloc-link" onClick={() => setZoomPath(["OTHER"])}>
-                  其他 {pct(weight(otherAud))}
+                  {t("alloc.tile.other")} {pct(weight(otherAud))}
                 </button>
                 {" › "}
-                <b>{lab(activeBucket?.ticker)}</b> 尾部持仓（{pct(activeBucket?.weight)}）
+                <b>{allocationLabel(activeBucket?.ticker)}</b>{t("alloc.drillTailSuffix", { pct: pct(activeBucket?.weight) })}
               </>
             )}
           </span>
           <span className="sp" />
           {depth === 1 && (
             <Segmented
-              label="占比基准"
-              items={[["total", "占总资产 %"], ["inside", "占「其他」%"]]}
+              label={t("alloc.unitAria")}
+              items={[["total", t("alloc.unit.total")], ["inside", t("alloc.unit.inside")]]}
               value={otherUnit}
               select={setOtherUnit}
             />
@@ -546,7 +519,7 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
       )}
       <div>
         {!tiles.length ? (
-          <Empty>{d.exposure.rows.length ? "当前无法计算总资产占比。" : "所选账户暂无可估值资产。"}</Empty>
+          <Empty>{d.exposure.rows.length ? t("alloc.empty.cantCompute") : t("alloc.empty.noAssets")}</Empty>
         ) : view === "tree" ? (
           <>
             {depth === 0 && (
@@ -582,10 +555,10 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
             <div className="row alloc-chart-footer">
               <span className="cap">
                 {depth === 0
-                  ? "方框越大，占比越高。点左侧公司看来源，点右侧「其他」看各 ETF 占比。"
+                  ? t("alloc.footer.root")
                   : depth === 1
-                    ? "点选 ETF 方块可继续下钻查看尾部公司。"
-                    : "按占总资产比例展示该桶内尾部持仓。"}
+                    ? t("alloc.footer.buckets")
+                    : t("alloc.footer.members")}
               </span>
               <span className="sp" />
               {depth !== 1 && (color === "day" ? <DailyKey /> : <ExposureKey />)}
@@ -612,12 +585,12 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
       </div>
       {!!waiting.length && (
         <div className="alloc-funds">
-          <b>成分待更新</b>
+          <b>{t("alloc.waitingFunds")}</b>
           {waiting.map((r) => {
             const row = holdings.get(r.sources[0]?.holdingId);
             return (
               <div className="alloc-exposure-remainder" key={r.key}>
-                {row?.etfKey ? <button className="alloc-link" type="button" onClick={() => openFund(row.etfKey)}>{r.ticker || row.ticker}</button> : <span>{r.ticker || "基金"}</span>}
+                {row?.etfKey ? <button className="alloc-link" type="button" onClick={() => openFund(row.etfKey)}>{r.ticker || row.ticker}</button> : <span>{r.ticker || t("alloc.fundFallback")}</span>}
                 <span>{aud(r.totalAud, 2)} · {pct(weight(r.totalAud))}</span>
               </div>
             );
@@ -628,31 +601,32 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
   );
 }
 
-const dimensions = [
-  ["sectors", "行业"],
-  ["countries", "国家"],
-  ["assets", "资产类别"],
-  ["accounts", "账户"],
-  ["currencies", "币种"],
-];
+const dimensionIds = ["sectors", "countries", "assets", "accounts", "currencies"];
 
 function Distributions({ d, expanded, onExpand }) {
+  const { t, allocationLabel } = useI18n();
   const open = expanded ?? false, p = d.portfolio;
   return (
     <details className="card alloc-distributions" open={open}>
       <summary onClick={(e) => { e.preventDefault(); onExpand(!open); }}>
-        <h2>其他分布</h2><span className="cap">行业、国家、资产类别、账户、币种</span>
+        <h2>{t("alloc.distTitle")}</h2><span className="cap">{t("alloc.distSub")}</span>
       </summary>
       {open && (
         <div className="alloc-distribution-grid">
-          {dimensions.map(([key, title]) => {
+          {dimensionIds.map((key) => {
             const weight = p.totalAud > 0;
             const nodes = buildBreakdownNodes(key, p.instrumentAllocation, p.holdings, d.exposure, p.totalAud);
             const rows = nodes.map((r) => {
-              const label = key === "sectors" ? sectorLabel(r.label) : key === "accounts" ? r.label : lab(r.label);
-              return { key: r.key, label, value: weight ? r.valueAud / p.totalAud : r.valueAud, muted: /现金|未分类|未穿透|其他/.test(label), title: aud(r.valueAud, 2) };
+              const label = key === "accounts" ? r.label : allocationLabel(r.label);
+              return {
+                key: r.key,
+                label,
+                value: weight ? r.valueAud / p.totalAud : r.valueAud,
+                muted: /现金|未分类|未穿透|其他|cash|unclassified|not looked|other/i.test(label),
+                title: aud(r.valueAud, 2),
+              };
             });
-            return <section key={key}><h3>{title}</h3><RankedBars rows={rows} format={weight ? pct : aud} /></section>;
+            return <section key={key}><h3>{t(`alloc.dim.${key}`)}</h3><RankedBars rows={rows} format={weight ? pct : aud} /></section>;
           })}
         </div>
       )}
@@ -660,7 +634,7 @@ function Distributions({ d, expanded, onExpand }) {
   );
 }
 
-function targetModel(d, weight) {
+function targetModel(d, weight, t) {
   const groups = Map.groupBy(d.rows, (r) => {
     switch (r.type) {
       case "etf": return r.identityKey;
@@ -682,8 +656,8 @@ function targetModel(d, weight) {
     .map((r) => ({ ...r, valueAud: amount(r.key) }))
     .sort((a, b) => (b.valueAud ?? -1) - (a.valueAud ?? -1));
   items.push(
-    { key: STOCKS_TARGET, label: "个股", name: stocks.length + " 只个股合计", members: stocks, valueAud: amount(STOCKS_TARGET) },
-    { key: CASH_TARGET, label: "现金", name: d.byAccount.length + " 个账户合计", valueAud: d.valuation ? d.valuation.cash : d.cash },
+    { key: STOCKS_TARGET, label: t("alloc.label.individualStocks"), name: t("alloc.stocksBucketName", { count: stocks.length }), members: stocks, valueAud: amount(STOCKS_TARGET) },
+    { key: CASH_TARGET, label: t("alloc.label.cash"), name: t("alloc.cashBucketName", { count: d.byAccount.length }), valueAud: d.valuation ? d.valuation.cash : d.cash },
   );
   const model = buildRebalanceModel(items.map((r) => ({ ...r, weight: weight(r.valueAud) })), d.portfolio.totalAud, d.targets);
   const valueAud = amount(OTHER_INVESTMENTS);
@@ -691,17 +665,18 @@ function targetModel(d, weight) {
   return { ...model, other };
 }
 
-function changeTrade(row) {
-  return (row.adjustmentAud > 0 ? "买入 " : "卖出 ") + aud(Math.abs(row.adjustmentAud));
+function changeTrade(row, t) {
+  return t(row.adjustmentAud > 0 ? "alloc.buy" : "alloc.sell", { amount: aud(Math.abs(row.adjustmentAud)) });
 }
 
-function driftText(drift) {
+function driftText(drift, t) {
   if (drift === null) return "—";
-  if (Math.abs(drift) <= Number.EPSILON) return "符合目标";
-  return (drift > 0 ? "高于目标 " : "低于目标 ") + fmt(Math.abs(drift) * 100, 1) + " 个百分点";
+  if (Math.abs(drift) <= Number.EPSILON) return t("alloc.drift.onTarget");
+  return t(drift > 0 ? "alloc.drift.above" : "alloc.drift.below", { pp: fmt(Math.abs(drift) * 100, 1) });
 }
 
 function TargetCard({ d, model, holdings, weight, open, openFund, onPage }) {
+  const { t } = useI18n();
   const { rows, tolerance, other, configured } = model;
   const outside = rows.filter((r) => r.status === "overweight" || r.status === "underweight");
   const worst = rows.reduce((largest, r) => r.drift != null && (!largest || Math.abs(r.drift) > Math.abs(largest.drift)) ? r : largest, null);
@@ -714,20 +689,23 @@ function TargetCard({ d, model, holdings, weight, open, openFund, onPage }) {
   return (
     <section className="card alloc-targets" aria-labelledby="allocation-target-title">
       <div className="row">
-        <h2 id="allocation-target-title">离目标差多少</h2>
-        <span className="cap">每只 ETF、个股、现金</span>
+        <h2 id="allocation-target-title">{t("alloc.targets.title")}</h2>
+        <span className="cap">{t("alloc.targets.sub")}</span>
         <span className="sp" />
-        <button type="button" className="btn sm" onClick={open} disabled={!d.selected.length}>设置目标</button>
+        <button type="button" className="btn sm" onClick={open} disabled={!d.selected.length}>{t("alloc.targets.editBtn")}</button>
       </div>
       <div className={"alloc-target-summary" + (outside.length ? " outside" : "")}>
         {!configured ? (
-          <b>未设当前范围目标</b>
+          <b>{t("alloc.targets.unconfigured")}</b>
         ) : outside.length ? (
-          <><b>{outside.length} 项超出允许范围</b><span>{outside.map((r) => changeTrade(r) + " " + r.label).join("，")}</span></>
+          <>
+            <b>{t("alloc.targets.outsideCount", { count: outside.length })}</b>
+            <span>{outside.map((r) => changeTrade(r, t) + " " + r.label).join(t("common.comma"))}</span>
+          </>
         ) : (
-          <b>{rows.every((r) => r.drift !== null) ? "都在允许范围内" : "已计算偏离的项目都在允许范围内"}</b>
+          <b>{rows.every((r) => r.drift !== null) ? t("alloc.targets.allInside") : t("alloc.targets.computedInside")}</b>
         )}
-        {worst && <small>最大偏离 {worst.label} · {driftText(worst.drift)}</small>}
+        {worst && <small>{t("alloc.targets.worstDrift", { label: worst.label, drift: driftText(worst.drift, t) })}</small>}
       </div>
       <div className="alloc-target-grid">
         {rows.map((r) => {
@@ -739,25 +717,25 @@ function TargetCard({ d, model, holdings, weight, open, openFund, onPage }) {
                   {r.holding ? <button type="button" className="alloc-link" onClick={() => holdingPage(onPage, r.holding)}>{r.label}</button> : <b>{r.label}</b>}
                   {r.name && <span className="cap" title={r.name}>{r.name}</span>}
                 </div>
-                <span className="alloc-target-value"><b>{pct(r.weight)}</b><span className="cap">目标 {pct(r.targetWeight)}</span></span>
+                <span className="alloc-target-value"><b>{pct(r.weight)}</b><span className="cap">{t("alloc.targets.targetValue", { pct: pct(r.targetWeight) })}</span></span>
               </div>
               <BulletBar
                 actual={r.weight} target={r.targetWeight} tolerance={tolerance} max={max}
-                title={"实际 " + pct(r.weight) + " · 目标 " + pct(r.targetWeight) + " · 允许偏离 " + toleranceText}
+                title={t("alloc.targets.bulletTitle", { actual: pct(r.weight), target: pct(r.targetWeight), tol: toleranceText })}
               />
               <div className="alloc-target-line">
                 {r.drift != null ? (
                   <>
-                    <span className={out ? "warn" : "cap"}>{driftText(r.drift)}</span>
-                    <span className="cap">{out ? "超出允许偏离" : "在允许偏离内"} {toleranceText}</span>
+                    <span className={out ? "warn" : "cap"}>{driftText(r.drift, t)}</span>
+                    <span className="cap">{out ? t("alloc.targets.outsideBand") : t("alloc.targets.insideBand")} {toleranceText}</span>
                     <span className="sp" />
-                    {out ? <b>{changeTrade(r)}</b> : <span className="cap">不用调</span>}
+                    {out ? <b>{changeTrade(r, t)}</b> : <span className="cap">{t("alloc.targets.noAction")}</span>}
                   </>
-                ) : <span className="cap">{r.targetWeight == null ? "未设当前范围目标" : "—"}</span>}
+                ) : <span className="cap">{r.targetWeight == null ? t("alloc.targets.unconfigured") : "—"}</span>}
               </div>
               {!!r.members?.length && (
                 <details className="alloc-members">
-                  <summary>看这 {r.members.length} 只个股</summary>
+                  <summary>{t("alloc.targets.membersSummary", { count: r.members.length })}</summary>
                   <div>
                     {r.members.map((stock) => (
                       <button type="button" className="alloc-link" key={stock.key} aria-label={stock.ticker} onClick={() => holdingPage(onPage, holdings.get(stock.rowIds[0]))}>
@@ -767,23 +745,23 @@ function TargetCard({ d, model, holdings, weight, open, openFund, onPage }) {
                   </div>
                 </details>
               )}
-              {r.etfKey && <button className="alloc-link alloc-fund-link" type="button" aria-label={r.label + " 基金成分"} onClick={() => openFund(r.etfKey)}>基金成分</button>}
+              {r.etfKey && <button className="alloc-link alloc-fund-link" type="button" aria-label={t("alloc.targets.fundBtnAria", { label: r.label })} onClick={() => openFund(r.etfKey)}>{t("alloc.targets.fundBtn")}</button>}
             </section>
           );
         })}
         {other && (
-          <section className="alloc-target-row" aria-label="其他投资">
+          <section className="alloc-target-row" aria-label={t("alloc.targets.otherInvestments")}>
             <div className="alloc-target-line">
-              <b>其他投资</b><span className="sp" /><span><b>{pct(other.weight)}</b> <span className="cap">{aud(other.valueAud)}</span></span>
+              <b>{t("alloc.targets.otherInvestments")}</b><span className="sp" /><span><b>{pct(other.weight)}</b> <span className="cap">{aud(other.valueAud)}</span></span>
             </div>
-            <BulletBar actual={other.weight} max={max} title={"其他投资 " + aud(other.valueAud)} />
+            <BulletBar actual={other.weight} max={max} title={`${t("alloc.targets.otherInvestments")} ${aud(other.valueAud)}`} />
           </section>
         )}
       </div>
       <div className="alloc-key alloc-target-key">
-        <span><i className="alloc-direct" />实际</span>
-        <span><i className="alloc-target-tick" />目标</span>
-        <span><i className="alloc-target-band" />允许偏离</span>
+        <span><i className="alloc-direct" />{t("alloc.targets.keyActual")}</span>
+        <span><i className="alloc-target-tick" />{t("alloc.targets.keyTarget")}</span>
+        <span><i className="alloc-target-band" />{t("alloc.targets.keyBand")}</span>
       </div>
     </section>
   );
@@ -792,6 +770,7 @@ function TargetCard({ d, model, holdings, weight, open, openFund, onPage }) {
 const percentInput = (weight) => weight == null ? "" : String(Number((weight * 100).toPrecision(16)));
 
 function TargetEditor({ d, model, run, close }) {
+  const { t } = useI18n();
   const { rows } = model;
   const [values, setValues] = useState(() => Object.fromEntries(rows.map((r) => [r.key, percentInput(r.targetWeight)])));
   const [tolerance, setTolerance] = useState(() => percentInput(model.tolerance));
@@ -802,7 +781,7 @@ function TargetEditor({ d, model, run, close }) {
   const complete = fullTargetTotal(numbers);
   const valid = complete && numbers.every((v) => Number.isFinite(v) && v >= 0 && v <= 1) && Number(tolerance) >= 0.5 && Number(tolerance) <= 25;
   const canFill = rows.every((r) => r.weight != null && r.weight >= 0 && r.weight <= 1) && fullTargetTotal(rows.map((r) => r.weight));
-  const active = d.byAccount.map((a) => a.name).join("、");
+  const active = d.byAccount.map((a) => a.name).join(t("common.comma"));
   async function submit(e) {
     e.preventDefault();
     if (!valid || saving) return;
@@ -810,20 +789,20 @@ function TargetEditor({ d, model, run, close }) {
     await run(async () => {
       await api.targets({ ids: d.selected, tolerance: Number(tolerance) / 100, targets });
       close();
-    }, "配置目标已保存");
+    }, t("alloc.targets.saved"));
     setSaving(false);
   }
   return (
-    <Modal title="设置目标" close={close}>
+    <Modal title={t("alloc.targets.modalTitle")} close={close}>
       <form className="alloc-target-form" onSubmit={submit}>
-        <p className="cap">{active} · 按含现金总资产计算。目标合计须等于 100%。</p>
-        <Table head={["项目", ["实际", "num"], ["目标", "num"]]}>
+        <p className="cap">{t("alloc.targets.modalDesc", { accounts: active })}</p>
+        <Table head={[t("alloc.targets.colItem"), [t("alloc.targets.colActual"), "num"], [t("alloc.targets.colTarget"), "num"]]}>
           {rows.map((r) => (
             <tr key={r.key}>
               <td><b>{r.label}</b>{r.name && <small>{r.name}</small>}</td>
               <td className="num">{pct(r.weight)}</td>
               <td className="num">
-                <input className="btn" type="number" aria-label={r.label + " 目标（%）"} min="0" max="100" step="any"
+                <input className="btn" type="number" aria-label={t("alloc.targets.inputAria", { label: r.label })} min="0" max="100" step="any"
                   value={values[r.key] ?? ""} onChange={(e) => setValues({ ...values, [r.key]: e.target.value })} disabled={saving}
                 /> %
               </td>
@@ -831,19 +810,19 @@ function TargetEditor({ d, model, run, close }) {
           ))}
         </Table>
         <label className="alloc-tolerance">
-          允许偏离（百分点）
-          <span>± <input className="btn" type="number" aria-label="允许偏离（百分点）" min="0.5" max="25" step="any" required value={tolerance} onChange={(e) => setTolerance(e.target.value)} disabled={saving} /></span>
+          {t("alloc.targets.toleranceLabel")}
+          <span>± <input className="btn" type="number" aria-label={t("alloc.targets.toleranceLabel")} min="0.5" max="25" step="any" required value={tolerance} onChange={(e) => setTolerance(e.target.value)} disabled={saving} /></span>
         </label>
         <div className="row">
           <span role="status" className={complete ? "up" : "warn"}>
-            合计 <b>{fmt(total * 100, 2)}%</b>{!complete && " · 须等于 100%"}
+            {t("alloc.targets.sumLabel")}<b>{fmt(total * 100, 2)}%</b>{!complete && t("alloc.targets.mustEqual100")}
           </span>
           <span className="sp" />
-          {canFill && <button type="button" className="alloc-link" onClick={() => setValues(Object.fromEntries(rows.map((r) => [r.key, percentInput(r.weight)])))} disabled={saving}>按现在的占比填</button>}
+          {canFill && <button type="button" className="alloc-link" onClick={() => setValues(Object.fromEntries(rows.map((r) => [r.key, percentInput(r.weight)])))} disabled={saving}>{t("alloc.targets.fillCurrent")}</button>}
         </div>
         <div className="row m0">
-          <button type="submit" className="btn pri" disabled={!valid || saving}>{saving ? "正在保存…" : "保存目标"}</button>
-          <button type="button" className="btn" onClick={close}>取消</button>
+          <button type="submit" className="btn pri" disabled={!valid || saving}>{saving ? t("alloc.targets.saving") : t("alloc.targets.saveBtn")}</button>
+          <button type="button" className="btn" onClick={close}>{t("app.cancel")}</button>
         </div>
       </form>
     </Modal>
@@ -851,6 +830,7 @@ function TargetEditor({ d, model, run, close }) {
 }
 
 export function Allocation({ d, run, onPage }) {
+  const { t } = useI18n();
   const [fund, setFund] = useState(null), [expanded, setExpanded] = useState(null), [editing, setEditing] = useState(false);
   const [selection, setSelection] = useState(null);
   const { aspect } = useShell();
@@ -859,7 +839,7 @@ export function Allocation({ d, run, onPage }) {
   const choose = (key) => setSelection(key == null ? null : { key, scopeKey });
   const holdings = new Map(d.rows.map((r) => [r.id, r]));
   const weight = (amount) => amount != null && d.portfolio.totalAud > 0 ? amount / d.portfolio.totalAud : null;
-  const model = targetModel(d, weight);
+  const model = targetModel(d, weight, t);
   const companies = d.exposure.rows.filter((row) => row.type === "stock" && row.totalAud != null)
     .sort((a, b) => b.totalAud - a.totalAud);
   const current = d.exposure.rows.find((row) => row.key === chosen);
@@ -869,9 +849,9 @@ export function Allocation({ d, run, onPage }) {
         <CompanyChart key={scopeKey} d={d} weight={weight} holdings={holdings} openFund={setFund}
           chosen={chosen} choose={choose} height={aspect === "21:9" ? 500 : 430} />
         <div className="allocation-breakdown">
-          <Card title="公司敞口明细">
+          <Card title={t("alloc.companyTableTitle")}>
             {companies.length ? (
-              <Table head={["公司", ["直接（AUD）", "num"], ["通过 ETF（AUD）", "num"], ["占比", "num"]]}>
+              <Table head={[t("alloc.companyCol.name"), [t("alloc.companyCol.direct"), "num"], [t("alloc.companyCol.viaEtf"), "num"], [t("alloc.companyCol.share"), "num"]]}>
                 {companies.map((row) => (
                   <tr key={row.key} className={row.key === chosen ? "sel" : undefined}>
                     <td><button className="alloc-link" type="button" onClick={() => choose(row.key)}>{row.label}</button></td>
@@ -881,7 +861,7 @@ export function Allocation({ d, run, onPage }) {
                   </tr>
                 ))}
               </Table>
-            ) : <Empty>暂无可估值的公司敞口。</Empty>}
+            ) : <Empty>{t("alloc.companyEmpty")}</Empty>}
           </Card>
         </div>
       </div>
@@ -893,7 +873,11 @@ export function Allocation({ d, run, onPage }) {
         dayChange={d.today?.companies?.[current.key]} day={d.today?.date} onClose={() => choose(null)} onPage={onPage} />}
       {editing && <TargetEditor d={d} model={model} run={run} close={() => setEditing(false)} />}
       {fund && (
-        <Modal wide title={(d.etfData.find((f) => f.asset.etfKey === fund)?.asset.symbol || "ETF") + " · 基金成分"} close={() => setFund(null)}>
+        <Modal
+          wide
+          title={t("alloc.fundModalTitle", { symbol: d.etfData.find((f) => f.asset.etfKey === fund)?.asset.symbol || "ETF" })}
+          close={() => setFund(null)}
+        >
           <FundData key={fund} d={d} run={run} initialFund={fund} />
         </Modal>
       )}

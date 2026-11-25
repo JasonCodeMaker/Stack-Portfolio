@@ -11,19 +11,21 @@ const root = path.join(__dirname, ".."),
 const env = {
   ...process.env,
   STACK_PORTFOLIO_HEADLESS: "1",
+  STACK_PORTFOLIO_LOCALE: process.env.STACK_PORTFOLIO_LOCALE || "zh-CN",
   STACK_PORTFOLIO_TEST_DIR: directory,
   STACK_PORTFOLIO_TEST_SOURCE: path.join(directory, "empty"),
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
 const packaged = process.argv[2];
-const launch = () => electron.launch({
+const launch = (overrideEnv = {}) => electron.launch({
   executablePath: packaged ? path.resolve(packaged) : require("electron"),
   args: packaged ? [] : [root],
-  env,
+  env: { ...env, ...overrideEnv },
   timeout: 30000,
 });
 const themeControl = (p) => p.getByRole("combobox", { name: "主题", exact: true });
+const languageControl = (p, label = /语言|Language|語言/) => p.getByRole("combobox", { name: label });
 const waitForTheme = (p, dark) => p.waitForFunction(
   (background) => getComputedStyle(document.body).backgroundColor === background,
   dark ? "rgb(14, 20, 16)" : "rgb(236, 241, 234)",
@@ -64,6 +66,9 @@ async function verifyOverviewContrast(p) {
     app = await launch();
     const p = await app.firstWindow();
     p.setDefaultTimeout(10000);
+    const home = await p.evaluate(() => window.portfolio.home());
+    if (!home.mode && !home.hasReal && !home.onboardingSeen)
+      await p.getByRole("button", { name: /^(暂时跳过|Skip for now|暫時略過)$/ }).click();
     // Use Electron's color scheme for this test.
     await p.emulateMedia({ colorScheme: null, reducedMotion: "reduce" });
     const systemDark = await app.evaluate(({ nativeTheme }) => nativeTheme.shouldUseDarkColors);
@@ -166,7 +171,73 @@ async function verifyOverviewContrast(p) {
     assert.equal(await themeControl(reopened).inputValue(), "dark");
     await selectTheme(reopened, "system", systemDark);
 
-    console.log("Settings and welcome verified: tabs, card columns, dialogs, and immediate, remembered theme changes.");
+    // Live language switching without restart & persistence across restart.
+    await languageControl(reopened).selectOption("en");
+    await reopened.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+    assert.equal(await reopened.evaluate(() => document.documentElement.lang), "en");
+    assert.deepEqual(
+      await reopened.getByRole("group", { name: "Settings tabs" }).getByRole("button").allInnerTexts(),
+      ["Connections", "Ledger", "Data"],
+    );
+
+    await languageControl(reopened).selectOption("zh-TW");
+    await reopened.getByRole("heading", { name: "設定", exact: true }).waitFor();
+    assert.equal(await reopened.evaluate(() => document.documentElement.lang), "zh-TW");
+    assert.deepEqual(
+      await reopened.getByRole("group", { name: "設定頁籤" }).getByRole("button").allInnerTexts(),
+      ["券商連線", "帳本", "資料"],
+    );
+    await app.close();
+    app = null;
+
+    app = await launch();
+    const persisted = await app.firstWindow();
+    persisted.setDefaultTimeout(10000);
+    await persisted.getByRole("heading", { name: "總覽", exact: true }).waitFor();
+    assert.equal(await persisted.evaluate(() => document.documentElement.lang), "zh-TW");
+    await persisted.getByRole("button", { name: "設定", exact: true }).click();
+    assert.equal(await languageControl(persisted).inputValue(), "zh-TW");
+    await languageControl(persisted).selectOption("en");
+    await persisted.getByRole("heading", { name: "Settings", exact: true }).waitFor();
+    // Verify English 21:9 Overview fits on a single screen without vertical scroll.
+    await persisted.getByRole("button", { name: "Overview", exact: true }).click();
+    await persisted.getByRole("heading", { name: "Overview", exact: true }).waitFor();
+    await resizeContent(app, persisted, 2560, 1080);
+    await persisted.waitForFunction(() => document.querySelector(".pane")?.dataset.cols === "2");
+    const enOverflow = await persisted.evaluate(() => {
+      const pane = document.querySelector(".pane");
+      return pane.scrollHeight - pane.clientHeight;
+    });
+    assert.ok(enOverflow <= 1, `English 21:9 Overview overflowed by ${enOverflow}px`);
+    await app.close();
+    app = null;
+
+    // System fallback: unsupported locale falls back to English; onboarding & Welcome switcher work immediately.
+    const fallbackDir = fs.mkdtempSync(path.join(os.tmpdir(), "stack-portfolio-i18n-fallback-"));
+    let fallbackApp;
+    try {
+      fallbackApp = await launch({
+        STACK_PORTFOLIO_TEST_DIR: fallbackDir,
+        STACK_PORTFOLIO_TEST_SOURCE: path.join(fallbackDir, "empty"),
+        STACK_PORTFOLIO_LOCALE: "fr-FR",
+      });
+      const wp = await fallbackApp.firstWindow();
+      wp.setDefaultTimeout(10000);
+      await wp.getByRole("button", { name: "Skip for now" }).waitFor();
+      assert.equal(await wp.evaluate(() => document.documentElement.lang), "en");
+      await wp.getByRole("button", { name: "Skip for now" }).click();
+      await wp.getByRole("button", { name: /^Open Sample Ledger/ }).waitFor();
+      assert.equal(await wp.evaluate(() => document.documentElement.lang), "en");
+      assert.equal(await languageControl(wp).inputValue(), "system");
+      await languageControl(wp).selectOption("zh-TW");
+      await wp.getByRole("heading", { name: "開啟投資帳本" }).waitFor();
+      assert.equal(await wp.evaluate(() => document.documentElement.lang), "zh-TW");
+    } finally {
+      if (fallbackApp) await fallbackApp.close();
+      fs.rmSync(fallbackDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+
+    console.log("Settings and welcome verified: tabs, card columns, dialogs, theme & live multi-language switching.");
   } catch (e) {
     if (app) {
       const p = await app.firstWindow();

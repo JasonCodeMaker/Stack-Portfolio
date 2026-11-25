@@ -83,6 +83,7 @@ describe("settings card columns", () => {
 // common.jsx reads the preload bridge at import time; the page reads connections only after mounting.
 globalThis.window ??= {};
 const { Settings } = await import("../../ui/Settings.jsx");
+const { I18nProvider } = await import("../../ui/i18n.jsx");
 
 const book = {
   date: "2026-10-30",
@@ -136,5 +137,31 @@ describe("settings page", () => {
     expect(out).toMatch(/维护结单报价.*手动调整基金数据来源.*更正证券类别及基金成分匹配/);
     expect(out).toContain("Apple Inc. · AAPL · 美国 Nasdaq · USD");
     expect(out).toMatch(/来源 来源标识 规范标识 ishares GOOG US02079K1079/);
+  });
+
+  it("renders English and Traditional Chinese cleanly inside I18nProvider", () => {
+    const enOut = text(
+      renderToStaticMarkup(
+        <I18nProvider locale="en" languagePreference="en" systemLocale="en">
+          <Settings d={book} run={() => {}} onPage={() => {}} mode="real" />
+        </I18nProvider>,
+      ),
+    );
+    expect(enOut).toContain("Connections");
+    expect(enOut).toContain("Ledger");
+    expect(enOut).toContain("Data");
+    expect(enOut).toContain("Automatic Market Updates");
+
+    const twOut = text(
+      renderToStaticMarkup(
+        <I18nProvider locale="zh-TW" languagePreference="zh-TW" systemLocale="zh-TW">
+          <Settings d={book} run={() => {}} onPage={() => {}} mode="real" />
+        </I18nProvider>,
+      ),
+    );
+    expect(twOut).toContain("券商連線");
+    expect(twOut).toContain("帳本");
+    expect(twOut).toContain("資料");
+    expect(twOut).toContain("行情自動更新");
   });
 });

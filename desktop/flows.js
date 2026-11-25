@@ -13,6 +13,7 @@ import { closeBook, reviewContext, summarizePeriod, valuation } from "./periodSu
 import { fxTranslation, listingQuote, recentCloseChanges } from "./liveQuotes.js";
 import { cumulativeIncome, gainBreakdown } from "./gainBreakdown.js";
 import { addPriorWeights, applyTodayChange, asxQuoteChange, todayChange } from "./todayChange.js";
+import { tMain } from "./i18n/index.js";
 
 const D = (n) => new Decimal(n ?? 0);
 const iso = (d) => d.toISOString().slice(0, 10);
@@ -259,7 +260,7 @@ function applyPosting(state, e, sign) {
   if (!live(e)) return;
   const post = posting(e);
   if (!post) {
-    state.warnings.push(`流水 ${e.activityType} 需要核对`);
+    state.warnings.push(tMain("flows.activityNeedsCheck", { type: e.activityType }));
     return;
   }
   if (post.units) add(state.holdings, e.assetId, post.units.mul(sign));
@@ -382,7 +383,8 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
     if (aud) sum[kind] = sum[kind].plus(aud);
     else {
       complete[kind] = false;
-      warnings.push((asset?.symbol || ccy) + (q ? " 缺少汇率" : " 缺少报价"));
+      const label = asset?.symbol || ccy;
+      warnings.push(q ? tMain("flows.missingFx", { label }) : tMain("flows.missingQuote", { label }));
     }
     const profile = asset ? securityProfile(asset) : null;
     const item = normalizeHolding(
@@ -402,7 +404,7 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
         : null,
       asset && (overrides[asset.id] || overrides[asset.instrument_key]),
     );
-    if (!isCash && !item.etfKey && asset?.kind === "ETF") throw Error("无法识别 ETF");
+    if (!isCash && !item.etfKey && asset?.kind === "ETF") throw Error(tMain("flows.unknownEtf"));
     rows.push({
       ...item,
       audValue: aud?.toNumber() ?? null,
@@ -431,7 +433,7 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
   const needsCash = gap && gap.from <= date && (!gap.until || gap.until > date);
   if (needsCash) {
     complete.cash = false;
-    warnings.push("已记录股数，现金余额待结单核对");
+    warnings.push(tMain("flows.cashPending"));
   }
   // An open check stays on the maintenance page. Actual ledger gaps still leave the valuation unknown.
   const ledgerCash = complete.cash && !pos.warnings.length ? sum.cash.toNumber() : null;
@@ -441,7 +443,7 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
       complete.cash = false;
       warnings.push(issue.reason);
     }
-  if (cashPending) for (const r of rows.filter((r) => r.type === "cash")) r.issue = "账本现金待同日结单核实";
+  if (cashPending) for (const r of rows.filter((r) => r.type === "cash")) r.issue = tMain("flows.cashPendingVerify");
   if (pos.warnings.length) {
     complete.cash = false;
     complete.securities = false;
@@ -456,7 +458,7 @@ function snapshot(book, acc, date, overrides = {}, pos = positions(book, acc, da
         .lt("0.005"),
     );
   const useBroker = cashAgrees && quantitiesAgree && !pos.warnings.length;
-  if (sameDay && !useBroker) warnings.push("券商快照与本地现金或持仓数量有差异");
+  if (sameDay && !useBroker) warnings.push(tMain("flows.brokerSnapshotMismatch"));
   const brokerCash = !book.live && useBroker && broker.cashTotal != null ? Number(broker.cashTotal) : null;
   const cash = brokerCash ?? (complete.cash ? sum.cash.toNumber() : null);
   const securities = complete.securities ? sum.securities.toNumber() : null;
@@ -697,8 +699,8 @@ export function replayLots(book, acc, date, { fees = true, fallback } = {}) {
     if (fx) {
       l.aud = l.aud.plus(cost.mul(fx.price));
       if (ccy !== "AUD") {
-        const source = fx.source?.startsWith("IBKR") ? fx.source : "买入日行情汇率";
-        l.fxSource = !l.fxSource || l.fxSource === source ? source : "按各笔买入凭据与当日汇率折算";
+        const source = fx.source?.startsWith("IBKR") ? fx.source : tMain("source.buyFx");
+        l.fxSource = !l.fxSource || l.fxSource === source ? source : tMain("source.mixedBuyFx");
       }
     }
     else l.audKnown = false;
@@ -790,7 +792,7 @@ const selectedTargetScope = (ids) => ALLOCATION + ".targets." + JSON.stringify([
 export function targetScope(db, ids) {
   const active = db.prepare("SELECT id FROM sp_accounts WHERE active=1").all().map((a) => a.id);
   const selected = [...new Set(ids ?? active)];
-  if (!selected.every((id) => active.includes(id))) throw Error("配置目标的账户范围已改变。");
+  if (!selected.every((id) => active.includes(id))) throw Error(tMain("flows.targetsScopeChanged"));
   return selected.length === active.length ? ALLOCATION : selectedTargetScope(selected);
 }
 
@@ -808,18 +810,18 @@ function isGroupedTarget(key, listings) {
 }
 
 export async function saveGroupedTargets(db, { ids, tolerance, targets }) {
-  if (!Array.isArray(ids) || !ids.length) throw Error("请选择设置目标的账户。");
+  if (!Array.isArray(ids) || !ids.length) throw Error(tMain("flows.targetsNeedAccount"));
   const values = targets && typeof targets === "object" && !Array.isArray(targets) ? Object.values(targets) : [];
   if (!Number.isFinite(tolerance) || tolerance < 0.005 || tolerance > 0.25)
-    throw Error("允许偏离须为 0.5 至 25 个百分点。");
+    throw Error(tMain("flows.targetsToleranceRange"));
   if (values.some((v) => !Number.isFinite(v) || v < 0 || v > 1) || !fullTargetTotal(values))
-    throw Error("各项目的目标须介于 0% 和 100%，且合计必须等于 100%。");
+    throw Error(tMain("flows.targetsSumRange"));
 
   const { typeOverrides } = await loadAllocationSettings(storageContext(db, ALLOCATION));
   targetScope(db, ids);
   const listings = targetListings(db.prepare("SELECT * FROM sp_assets").all(), typeOverrides);
   if (Object.keys(targets).some((key) => !isGroupedTarget(key, listings)))
-    throw Error("只能为每只 ETF、个股合计及现金设置目标。");
+    throw Error(tMain("flows.targetsBucketRule"));
 
   putPref(db, selectedTargetScope(ids), GROUPED_TARGETS, JSON.stringify({ schemaVersion: 1, tolerance, targets }));
   return true;
@@ -1166,7 +1168,9 @@ export async function dashboard(db, options = {}) {
     issues: current.accounts.flatMap((a) =>
       a.warnings.map((reason) => {
         const row = a.rows.find(
-          (r) => reason === r.ticker + " 缺少报价" || reason === r.ticker + " 缺少汇率",
+          (r) =>
+            reason === tMain("flows.missingQuote", { label: r.ticker }) ||
+            reason === tMain("flows.missingFx", { label: r.ticker }),
         );
         return {
           account: a.name,

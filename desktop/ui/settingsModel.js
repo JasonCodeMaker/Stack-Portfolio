@@ -1,4 +1,5 @@
 // Pure rules behind the settings page (spec §4.6).
+import { tMain } from "../i18n/index.js";
 
 // Grid layout for one tab's cards: one column in 16:9 and two proportioned columns in 21:9,
 // dealt round-robin so reading order runs across the row.
@@ -18,18 +19,18 @@ export function aliasRows(aliases) {
 }
 
 // Connection state of one broker from the saved connection summary (api.connections()).
-// needsAuth opens the authorisation steps; canUpdate offers 立即更新.
-export function brokerState(conn, broker, demo = false) {
-  if (demo) return { label: "示例连接", tone: "muted", canUpdate: true, needsAuth: false, lastSuccess: null };
-  if (!conn) return { label: "正在读取", tone: "muted", canUpdate: false, needsAuth: false, lastSuccess: null };
+// needsAuth opens the authorisation steps; canUpdate offers immediate sync.
+export function brokerState(conn, broker, demo = false, t = tMain) {
+  if (demo) return { label: t("settings.state.sample"), tone: "muted", canUpdate: true, needsAuth: false, lastSuccess: null };
+  if (!conn) return { label: t("settings.state.loading"), tone: "muted", canUpdate: false, needsAuth: false, lastSuccess: null };
   const present = conn.present || {},
     lastSuccess = conn.lastSuccess?.[broker] || null;
   const ready =
     broker === "ibkr"
       ? !!(conn.query && present["ibkr.flex-token"])
       : !!(conn.webullKey && conn.webullId && present["webull.app-secret"] && present["webull.access-token"]);
-  if (!ready) return { label: "待授权", tone: "muted", canUpdate: false, needsAuth: true, lastSuccess };
+  if (!ready) return { label: t("settings.state.needsAuth"), tone: "muted", canUpdate: false, needsAuth: true, lastSuccess };
   return conn.verified?.[broker]
-    ? { label: "已连接", tone: "up", canUpdate: true, needsAuth: false, lastSuccess }
-    : { label: "待验证", tone: "warn", canUpdate: true, needsAuth: false, lastSuccess };
+    ? { label: t("settings.state.connected"), tone: "up", canUpdate: true, needsAuth: false, lastSuccess }
+    : { label: t("settings.state.needsVerify"), tone: "warn", canUpdate: true, needsAuth: false, lastSuccess };
 }

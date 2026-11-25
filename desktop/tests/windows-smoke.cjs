@@ -35,6 +35,7 @@ async function withDesktop(directory, verify) {
   const env = {
     ...process.env,
     STACK_PORTFOLIO_HEADLESS: "1",
+    STACK_PORTFOLIO_LOCALE: process.env.STACK_PORTFOLIO_LOCALE || "zh-CN",
     STACK_PORTFOLIO_TEST_DIR: directory,
     STACK_PORTFOLIO_TEST_SOURCE: path.join(directory, "empty"),
   };

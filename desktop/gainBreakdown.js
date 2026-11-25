@@ -6,15 +6,11 @@ import { canonicalIdentity } from "./allocation/domain/identifiers";
 import { flowValue, isExternalFlow, last, live, posting, rate, replayLots } from "./flows.js";
 import { dayOf } from "./ledger.js";
 import { valuation } from "./periodSummary.js";
+import { tMain } from "./i18n/index.js";
 
 const D = (n) => new Decimal(n ?? 0);
-const parts = [
-  ["unrealised", "未实现变动"],
-  ["realised", "已实现"],
-  ["income", "分红与利息"],
-  ["fees", "费用"],
-  ["fx", "汇率"],
-];
+const partKeys = ["unrealised", "realised", "income", "fees", "fx"];
+const partList = () => partKeys.map((p) => [p, tMain("bd." + p)]);
 
 // Dividend withholding and borrowing interest arrive as their own tax and fee records.
 const withholding = (e) => /withholding|dividend|股息|预扣/i.test(e.comment || "");
@@ -48,28 +44,28 @@ function shares(book, e) {
         {
           part: "income",
           asset: e.assetId,
-          label: e.activityType === "INTEREST" ? "现金利息" : "未归属分红",
+          label: e.activityType === "INTEREST" ? tMain("bd.cashInterest") : tMain("bd.unattributedDiv"),
           amount: amount.minus(D(e.tax).abs()),
         },
-        { part: "fees", asset: e.assetId, label: "账户费用", amount: D(e.fee).abs().neg() },
+        { part: "fees", asset: e.assetId, label: tMain("bd.accountFees"), amount: D(e.fee).abs().neg() },
       ];
     case "FEE":
       return borrowing(e)
-        ? [{ part: "income", label: "借款利息", amount: charge }]
-        : [{ part: "fees", asset: e.assetId, label: conversion(e) ? "换汇佣金" : "账户费用", amount: charge }];
+        ? [{ part: "income", label: tMain("bd.borrowInterest"), amount: charge }]
+        : [{ part: "fees", asset: e.assetId, label: conversion(e) ? tMain("bd.fxFee") : tMain("bd.accountFees"), amount: charge }];
     case "TAX":
       return withholding(e)
-        ? [{ part: "income", asset: attributedAsset(book, e), label: "股息预扣税", amount: charge }]
-        : [{ part: "fees", asset: e.assetId, label: conversion(e) ? "换汇佣金" : "交易税", amount: charge }];
+        ? [{ part: "income", asset: attributedAsset(book, e), label: tMain("bd.divWithholding"), amount: charge }]
+        : [{ part: "fees", asset: e.assetId, label: conversion(e) ? tMain("bd.fxFee") : tMain("bd.tradeTax"), amount: charge }];
     case "CREDIT":
-      return [{ part: "fees", label: "其他入账与扣款", amount: amount.minus(fees) }];
+      return [{ part: "fees", label: tMain("bd.otherAdjustments"), amount: amount.minus(fees) }];
     case "DEBIT":
-      return [{ part: "fees", label: "其他入账与扣款", amount: charge }];
+      return [{ part: "fees", label: tMain("bd.otherAdjustments"), amount: charge }];
     case "DEPOSIT":
     case "WITHDRAWAL":
     case "TRANSFER_IN":
     case "TRANSFER_OUT":
-      return [{ part: "fees", label: conversion(e) ? "换汇佣金" : "划转费用", amount: fees.neg() }];
+      return [{ part: "fees", label: conversion(e) ? tMain("bd.fxFee") : tMain("bd.transferFees"), amount: fees.neg() }];
     default:
       return [];
   }
@@ -88,6 +84,7 @@ const firstValue = (book) => (id, on) => {
 // remainder, so the parts always add up to the gain.
 export function gainBreakdown(context, summary) {
   if (summary?.gain == null) return null;
+  const parts = partList();
   const { book } = context,
     from = summary.origin,
     to = summary.valuedThrough;
@@ -193,7 +190,7 @@ export function gainBreakdown(context, summary) {
   const totals = Object.fromEntries(parts.map(([p]) => [p, rows.reduce((n, r) => n.plus(r[p]), D(0))]));
   // Foreign cash revalued at new rates, and what the rates leave over, close the identity.
   const fx = D(summary.gain).minus(totals.unrealised).minus(totals.realised).minus(totals.income).minus(totals.fees);
-  group("外币现金", "外币现金", "account").fx = fx.minus(totals.fx);
+  group("foreign-cash", tMain("bd.foreignCash"), "account").fx = fx.minus(totals.fx);
   totals.fx = fx;
   return {
     from,

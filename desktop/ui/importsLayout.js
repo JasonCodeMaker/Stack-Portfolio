@@ -1,4 +1,5 @@
-// Layout and wording rules of the 导入与对账 page (spec §4.5). Pure, so they can be tested without the app.
+// Layout and wording rules of the Import & Sync page (spec §4.5). Pure, so they can be tested without the app.
+import { tMain } from "../i18n/index.js";
 
 // 记录与同步: the import card with either the recent batches (nothing being synced) or one preview card per
 // broker. Layouts are for <Grid>; three columns put each broker in its own column.
@@ -32,11 +33,14 @@ export function checkLayout(evidence) {
 const units = new Intl.NumberFormat("en-AU", { maximumFractionDigits: 8 });
 
 // A statement comparison writes out each security quantity that differs: account, security and units.
-export function quantityGaps(rows, account) {
+export function quantityGaps(rows, account, t = tMain) {
   return rows
     .filter((r) => r.symbol && Math.abs(Number(r.delta)) > 1e-8)
-    .map(
-      (r) =>
-        `${account} 的 ${r.symbol} 比结单${Number(r.delta) < 0 ? "少" : "多"} ${units.format(Math.abs(Number(r.delta)))} 股`,
+    .map((r) =>
+      t(Number(r.delta) < 0 ? "imports.quantityGapShort" : "imports.quantityGapOver", {
+        account,
+        symbol: r.symbol,
+        diff: units.format(Math.abs(Number(r.delta))),
+      }),
     );
 }

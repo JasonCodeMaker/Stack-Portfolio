@@ -1,4 +1,5 @@
 import { scaleLinear } from "d3-scale";
+import { tMain } from "../../i18n/index.js";
 
 // Geometry of the shared line chart, following the prototype kit's `K.line`:
 // points are spaced evenly by index (one per trading day), the value range is the data
@@ -12,15 +13,15 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const pad2 = (n) => String(n).padStart(2, "0");
 const toDate = (d) => (d instanceof Date ? d : new Date(`${d}T00:00:00Z`));
 
-// Axis date text by the span shown: YY-MM beyond ~15 months, M月 beyond ~3 months, else MM-DD.
-export function dateLabeler(first, last) {
+// Axis date text by the span shown: YY-MM beyond ~15 months, month label beyond ~3 months, else MM-DD.
+export function dateLabeler(first, last, t = tMain) {
   const span = toDate(last) - toDate(first);
   return (value) => {
     const d = toDate(value),
       y = d.getUTCFullYear(),
       m = d.getUTCMonth() + 1;
     if (span > 463 * DAY) return `${String(y).slice(2)}-${pad2(m)}`;
-    if (span > 93 * DAY) return `${m}月`;
+    if (span > 93 * DAY) return t(`chart.month.${m}`);
     return `${pad2(m)}-${pad2(d.getUTCDate())}`;
   };
 }

@@ -21,6 +21,7 @@ import {
 } from "./flows.js";
 import { closingDay, marketFor, shiftDay } from "./marketDays.js";
 import { benchmarks } from "./reviewMarket.js";
+import { tMain } from "./i18n/index.js";
 
 import { annualise, daysBetween, resolvePeriod } from "./periods.js";
 export { annualise, daysBetween, periodPresets, resolvePeriod } from "./periods.js";
@@ -46,7 +47,14 @@ export function closeBook(db) {
   const levels = db.prepare("SELECT day,level,source FROM sp_benchmark_levels WHERE series=? ORDER BY day");
   book.benchmarks = benchmarks.map((b) => {
     const rows = levels.all(b.id);
-    return { ...b, rows, source: rows.at(-1)?.source || b.source, first: rows[0]?.day, last: rows.at(-1)?.day };
+    return {
+      ...b,
+      name: tMain(`mkt.benchmark.${b.id}`),
+      rows,
+      source: rows.at(-1)?.source || b.source,
+      first: rows[0]?.day,
+      last: rows.at(-1)?.day,
+    };
   });
   return book;
 }
@@ -54,7 +62,7 @@ export function closeBook(db) {
 // The selected accounts of a close book, with what daily valuation needs to know about each.
 export function reviewContext(book, ids) {
   const selected = book.accounts.filter((a) => ids?.includes(a.id));
-  if (!selected.length || selected.length !== new Set(ids).size) throw Error("请选择有效的复盘账户。");
+  if (!selected.length || selected.length !== new Set(ids).size) throw Error(tMain("perf.invalidAccounts"));
   const events = book.events
     .filter((r) => ids.includes(r.account))
     .map((r) => r.current)
@@ -164,7 +172,12 @@ export function valuation(context, date, detail = false) {
       const fxStale = !fxMissing && r.fxDate < closingDay(date, "FX");
       if ((priceMissing || priceStale) && asset) missingAssets.add(asset.id);
       const describe = (price, fx) =>
-        [price && r.ticker + " 缺少收盘价", fx && r.localCurrency + " 缺少同期汇率"].filter(Boolean).join("、");
+        [
+          price && tMain("perf.missingClose", { ticker: r.ticker }),
+          fx && tMain("perf.missingFx", { currency: r.localCurrency }),
+        ]
+          .filter(Boolean)
+          .join(tMain("common.comma"));
       const reason = describe(priceMissing, fxMissing),
         carried = describe(priceStale, fxStale);
       if (!s.valuationSource && reason) problems.add(reason);
@@ -187,22 +200,22 @@ export function valuation(context, date, detail = false) {
           cash: r.type === "cash",
         });
     }
-    if (valuedTotal == null) problems.add(account.name + " · 估值不完整");
+    if (valuedTotal == null) problems.add(tMain("perf.incompleteValuation", { account: account.name }));
     else total = total.plus(valuedTotal);
     if (valuedCash == null || (!cashKnownHere && !s.valuationSource)) cashKnown = false;
     else cash = cash.plus(valuedCash);
   }
   for (const { account, first, needsOpening, archivedBalance, history } of accounts) {
-    if (account.mode !== "TRANSACTIONS") ledgerGap(account.name + " · 缺少可核实的交易及资金流水");
-    if (needsOpening && date < first) ledgerGap(account.name + " · 早于已知期初余额或首笔流水");
+    if (account.mode !== "TRANSACTIONS") ledgerGap(tMain("perf.noTransactionsMode", { account: account.name }));
+    if (needsOpening && date < first) ledgerGap(tMain("perf.beforeOpening", { account: account.name }));
     if (archivedBalance <= date && (!first || date < first))
-      ledgerGap(account.name + " · 历史净值缺少可核实的持仓或现金流水");
+      ledgerGap(tMain("perf.archivedNeedsFlows", { account: account.name }));
     include(account, detail ? positions(book, account, date) : history(date));
   }
   const inTransit = { cash: new Map(), holdings: new Map(), warnings: [] };
   for (const t of transit) {
     if (date < t.from || date >= t.to) continue;
-    if (!t.matched) ledgerGap("跨日内部划转数量或币种待核实");
+    if (!t.matched) ledgerGap(tMain("perf.transitMismatch"));
     else {
       const amounts = t.asset ? inTransit.holdings : inTransit.cash,
         key = t.asset || t.currency;
@@ -210,7 +223,7 @@ export function valuation(context, date, detail = false) {
     }
   }
   if (inTransit.cash.size || inTransit.holdings.size)
-    include({ id: "@transit", name: "账户间在途" }, inTransit);
+    include({ id: "@transit", name: tMain("perf.inTransit") }, inTransit);
   return {
     total: problems.size ? null : total.toNumber(),
     cash: cashKnown ? cash.toNumber() : null,
@@ -394,12 +407,13 @@ export function summarizePeriod(context, { to, period, from }) {
     const flow = flows ? flows.deposit.minus(flows.withdrawal).toNumber() : null;
     const point = { date, portfolio, value: view.total, flow, gaps: {} };
     fresh.portfolio.push(view.total != null && !view.stale.length);
+    const comma = tMain("common.comma");
     const issue =
-      view.problems.join("、") ||
-      view.stale.join("、") ||
-      (!measured && "组合在该日没有可估值的资产") ||
-      (!flows && date !== origin && "外部划转缺少同日报价或汇率") ||
-      (portfolio == null && "起点净值或资金划转前后的估值不足，请缩短区间");
+      view.problems.join(comma) ||
+      view.stale.join(comma) ||
+      (!measured && tMain("perf.noValuedAssets")) ||
+      (!flows && date !== origin && tMain("perf.missingFlowValuation")) ||
+      (portfolio == null && tMain("perf.insufficientEndpoints"));
     recordGap("portfolio", issue, date);
     // Index levels and the USD rate carry forward like the holdings' closes.
     const fx = rate(book, "USD", date);
@@ -416,11 +430,11 @@ export function summarizePeriod(context, { to, period, from }) {
       recordGap(
         b.id,
         !levelFresh
-          ? "缺少总回报指数收盘点位"
+          ? tMain("perf.missingIndexClose")
           : !fxFresh
-            ? "缺少同期美元兑澳元汇率"
+            ? tMain("perf.missingUsdAudFx")
             : measured && !bases[b.id]
-              ? "所选起点缺少指数点位或汇率"
+              ? tMain("perf.missingBaseIndexOrFx")
               : null,
         date,
       );

@@ -3,6 +3,11 @@
 // { ids: null (全部账户) | [accountId], date: "" (今天) | "YYYY-MM-DD",
 //   period: preset, from/to: a custom range (from the review) or null }
 import { day, periodPresets, resolvePeriod } from "../periods.js";
+import { tMain } from "../i18n/index.js";
+
+export function periodLabel(key, t = tMain) {
+  return periodPresets.includes(key) ? t(`period.${key}`) : t("period.fallback");
+}
 
 export const periodLabels = {
   "1d": "本日", "1w": "本周", mtd: "本月", "3m": "近 3 月", "6m": "近 6 月", ytd: "今年以来", "1y": "近一年", all: "全部",

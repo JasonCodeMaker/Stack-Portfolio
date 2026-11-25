@@ -30,6 +30,7 @@ import { loadBook, live, positions, accountSnapshot, storageContext } from "./fl
 import { attributedAsset } from "./gainBreakdown.js";
 import { recordIdentity, ibkrHistoryPlan, applyIbkrHistoryPlan, enrichIbkrExecutions, mergeIbkrExecution } from "./ibkrHistory.js";
 import { ibkrReportPrices } from "./ibkrPrices.js";
+import { tMain } from "./i18n/index.js";
 import { saveBrokerValue } from "./ledger.js";
 import { activityEdits, valuationEdits } from "./importChanges.js";
 import { EtfCache } from "./allocation/storage/etfCache";
@@ -59,7 +60,7 @@ export const network = {
       url.password ||
       url.port
     )
-      throw Error("数据源地址不受支持。");
+      throw Error(tMain("svc.unsupportedHost"));
     const method = request.method || "GET";
     let res = null;
     // Only anonymous public downloads take this path; signed broker calls keep their exact headers.
@@ -85,7 +86,7 @@ export const network = {
     let n = 0;
     for await (const c of res.body || []) {
       n += c.length;
-      if (n > 32 * 1024 * 1024) throw Error("数据源响应过大。");
+      if (n > 32 * 1024 * 1024) throw Error(tMain("svc.responseTooLarge"));
       chunks.push(c);
     }
     return {
@@ -106,7 +107,7 @@ function exportedDate(raw) {
   if (iso) return day([iso[1], iso[2].padStart(2, "0"), iso[3].padStart(2, "0")].join("-"));
   const au = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (au) return day([au[3], au[2].padStart(2, "0"), au[1].padStart(2, "0")].join("-"));
-  throw Error("成交日期须为 YYYY-MM-DD 或 DD/MM/YYYY。");
+  throw Error(tMain("svc.tradeDateFormat"));
 }
 function cellNumber(value) {
   return money(
@@ -151,7 +152,7 @@ export function parseWebullCsv(text) {
     status: column("Status", "Order Status"),
   };
   if ([cols.symbol, cols.side, cols.qty, cols.price, cols.date].some((i) => i < 0))
-    throw Error("CSV 缺少证券、买卖方向、成交数量、成交价或成交日期列。");
+    throw Error(tMain("svc.csvMissingColumns"));
   rows.forEach((row, i) => {
     const value = (k) => (row[cols[k]] || "").trim();
     if (!row.some(Boolean)) return;
@@ -162,19 +163,19 @@ export function parseWebullCsv(text) {
         value("status") &&
         !/^(filled|fully filled|executed|completed|已成交|全部成交)$/i.test(value("status"))
       )
-        throw Error("订单未完全成交");
+        throw Error(tMain("svc.orderNotFilled"));
       const side = value("side").toUpperCase(),
         symbol = value("symbol").toUpperCase(),
         market = value("market").toUpperCase();
       const ccy =
         value("ccy") ||
         (/ASX|AUSTRALIA|^AU$/.test(market) ? "AUD" : /NYSE|NASDAQ|^US$/.test(market) ? "USD" : "");
-      if (!value("id")) throw Error("缺少可核对的券商记录编号");
+      if (!value("id")) throw Error(tMain("svc.missingBrokerId"));
       const type = /^(B|BUY|买入)$/.test(side) ? "BUY" : /^(S|SELL|卖出)$/.test(side) ? "SELL" : null;
-      if (!type || !symbol) throw Error("无法识别证券或买卖方向");
+      if (!type || !symbol) throw Error(tMain("svc.unknownSideOrSymbol"));
       const qty = cellNumber(value("qty")),
         price = cellNumber(value("price"));
-      if (D(qty).lte(0) || D(price).lte(0)) throw Error("成交数量和价格必须大于零");
+      if (D(qty).lte(0) || D(price).lte(0)) throw Error(tMain("svc.qtyPricePositive"));
       activities.push({
         broker: "webull",
         brokerRecordId: value("id"),
@@ -198,7 +199,7 @@ export function parseWebullCsv(text) {
     activities,
     unknown,
     lastDate: dates.sort().at(-1),
-    audit: { warnings: ["成交文件须与同日现金余额及资金流水一并核对。"] },
+    audit: { warnings: [tMain("svc.csvCashWarning")] },
   };
 }
 export function detailedIbkr(text) {
@@ -246,9 +247,9 @@ export function validActivity(row) {
       ["BUY", "SELL"].includes(row.activityType) &&
       (!row.symbol || D(row.quantity).lte(0) || D(row.unitPrice).lte(0))
     )
-      throw Error("请核对证券、数量和成交价。");
+      throw Error(tMain("svc.checkSymbolQtyPrice"));
     if (!["BUY", "SELL"].includes(row.activityType) && row.amount == null && !row.quantity)
-      throw Error("券商记录缺少金额或转入转出的证券数量。");
+      throw Error(tMain("svc.missingAmountOrTransferQty"));
     for (const k of ["quantity", "unitPrice", "fee", "tax", "amount"])
       if (row[k] != null) money(row[k], true);
   } catch (e) {
@@ -288,20 +289,20 @@ function nativeEvent(db, v, id) {
 export function correctIbkrTradeDate(db, id, date, reportedDateTime) {
   const apply = () => {
     const prior = db.prepare("SELECT data FROM sp_events WHERE id=?").get(id)?.data;
-    if (!prior) throw Error("找不到对应的 IBKR 流水。");
+    if (!prior) throw Error(tMain("svc.ibkrMissingActivity"));
     const before = JSON.parse(prior);
     const oldDay = day(before.date), tradeDay = day(date);
     if (oldDay === tradeDay) return before;
-    if (oldDay !== day(reportedDateTime)) throw Error("流水日期与原始报表时间不符，请核对结单。");
+    if (oldDay !== day(reportedDateTime)) throw Error(tMain("svc.ibkrDateMismatch"));
     const after = { ...before, date, metadata: { ...before.metadata, ibkrReportedDateTime: reportedDateTime } };
     saveEvent(db, after);
     db.prepare("INSERT INTO sp_corrections VALUES(?,?,?,?,?,?)").run(
-      randomUUID(), id, new Date().toISOString(), "按 IBKR Flex 原始成交编号核实交易日", prior, JSON.stringify(after),
+      randomUUID(), id, new Date().toISOString(), tMain("svc.ibkrDateVerifyReason"), prior, JSON.stringify(after),
     );
     const [from, to] = [oldDay, tradeDay].sort();
     db.prepare(`INSERT OR IGNORE INTO sp_checks(account,day,reason)
-      SELECT account,day,'成交交易日已更正，请复核该日结单' FROM sp_statements
-      WHERE account=? AND day>=? AND day<?`).run(after.accountId, from, to);
+      SELECT account,day,? FROM sp_statements
+      WHERE account=? AND day>=? AND day<?`).run(tMain("svc.ibkrDateCorrected"), after.accountId, from, to);
     return after;
   };
   return db.inTransaction ? apply() : transaction(db, apply);
@@ -383,11 +384,11 @@ export function securityHistory(db, { accountIds, assetIds, through, limit }) {
 
 export function amendEvent(db, args) {
   const row = db.prepare("SELECT data FROM sp_events WHERE id=? AND account=?").get(args.id, args.account);
-  if (!row) throw Error("找不到要更正的流水。");
+  if (!row) throw Error(tMain("svc.amendNotFound"));
   const before = json(row.data, {}),
     reason = String(args.reason || "").trim();
-  if (!reason) throw Error("请输入原始凭证或更正依据。");
-  if (args.prior !== row.data) throw Error("流水已经变更，请重新加载并核对。");
+  if (!reason) throw Error(tMain("svc.amendNeedReason"));
+  if (args.prior !== row.data) throw Error(tMain("svc.amendChangedReload"));
   if (
     ![
       "BUY",
@@ -402,7 +403,7 @@ export function amendEvent(db, args) {
       "TRANSFER_OUT",
     ].includes(before.activityType)
   )
-    throw Error("此类历史流水须先核对其专属业务规则。");
+    throw Error(tMain("svc.amendUnsupportedType"));
   const after = {
     ...before,
     date: day(args.date) === dayOf(before.date) ? before.date : day(args.date),
@@ -414,11 +415,11 @@ export function amendEvent(db, args) {
     after.quantity = money(args.quantity, true);
     after.unitPrice = money(args.price, true);
     after.fee = money(args.fee || 0, true);
-    if (D(after.quantity).lte(0) || D(after.unitPrice).lte(0)) throw Error("数量和价格必须大于零。");
+    if (D(after.quantity).lte(0) || D(after.unitPrice).lte(0)) throw Error(tMain("svc.amendQtyPricePositive"));
   } else if (before.assetId && D(before.quantity).gt(0)) after.quantity = money(args.quantity, true);
   else {
     after.amount = money(args.amount, true);
-    if (D(after.amount).lte(0)) throw Error("金额必须大于零。");
+    if (D(after.amount).lte(0)) throw Error(tMain("svc.amendAmountPositive"));
   }
   return transaction(db, () => {
     saveEvent(db, after);
@@ -433,7 +434,7 @@ export function amendEvent(db, args) {
     db.prepare("INSERT OR REPLACE INTO sp_checks VALUES(?,?,?)").run(
       after.accountId,
       [dayOf(after.date), dayOf(before.date)].sort()[0],
-      "流水已更正，请重新核对受影响的结单",
+      tMain("svc.amendCheckNeeded"),
     );
     return after.id;
   });
@@ -471,15 +472,15 @@ function splitConflicts(db, acc, report, history) {
       continue;
     }
     if (!r.brokerRecordId || /^fallback-[a-f0-9]+(?:$|:)/i.test(r.brokerRecordId)) {
-      problems.push({ ...activityDetail(r), reason: "缺少可靠的券商记录编号，请核对原始凭证" });
+      problems.push({ ...activityDetail(r), reason: tMain("svc.missingReliableId") });
       continue;
     }
     if (opening && dayOf(r.date) <= opening) {
-      problems.push({ ...activityDetail(r), reason: "记录落在已确认的期初余额之内" });
+      problems.push({ ...activityDetail(r), reason: tMain("svc.withinOpeningBalance") });
       continue;
     }
     if (counts.get(id) > 1) {
-      problems.push({ ...activityDetail(r), reason: "文件中券商编号重复，请核对" });
+      problems.push({ ...activityDetail(r), reason: tMain("svc.duplicateIdInFile") });
       continue;
     }
     const native = prior?.sourceSystem === r.broker.toUpperCase() && prior.metadata?.brokerSync?.recordId === r.brokerRecordId;
@@ -497,7 +498,7 @@ function splitConflicts(db, acc, report, history) {
         ).some((k) => !D(prior[k]).eq(D(r[k]))));
     if (changed) {
       const detail = activityDetail(r);
-      problems.push({ ...detail, edits: activityEdits(activityDetail(prior), detail), reason: "券商记录与账本不同，请核对原始凭证。" });
+      problems.push({ ...detail, edits: activityEdits(activityDetail(prior), detail), reason: tMain("svc.diffFromLedger") });
       continue;
     }
     active.push(r);
@@ -508,11 +509,11 @@ function splitConflicts(db, acc, report, history) {
 function checkReason(errors) {
   if (!errors?.migration) return Object.values(errors || {}).flat().join(" ");
   const reason = errors.migration.join(" ");
-  if (reason.includes("trade date correction")) return "无法凭原始成交编号和明细核实交易日，请核对券商结单。";
-  if (reason.includes("edited by the user")) return "本地已手工修改，请对照券商记录核实。";
-  if (reason.includes("no longer exists")) return "找不到原来关联的流水，请核对交易记录。";
-  if (reason.includes("different broker record")) return "原关联指向另一笔券商流水，请核对来源。";
-  return "有多笔可能对应的流水，请核对原始凭证。";
+  if (reason.includes("trade date correction")) return tMain("svc.mig.dateVerifyFailed");
+  if (reason.includes("edited by the user")) return tMain("svc.mig.userEdited");
+  if (reason.includes("no longer exists")) return tMain("svc.mig.missingLinked");
+  if (reason.includes("different broker record")) return tMain("svc.mig.linkedOther");
+  return tMain("svc.mig.multipleMatches");
 }
 
 function importRows(active, problems, result, accountId, storedById) {
@@ -588,7 +589,7 @@ export async function batch(db, accountId, broker, report, source, commit = fals
       statement: matchStatement(report.statement),
       valuation: matchStatement(report.valuation),
     };
-    if (commit && choices.length) throw Error("请先确认记录对应的上市证券，再保存。");
+    if (commit && choices.length) throw Error(tMain("svc.confirmListingFirst"));
     const history = broker === "ibkr" ? ibkrHistoryPlan(db, accountId, report.activities) : null;
     const { active, problems, storedById } = splitConflicts(db, accountId, report, history);
     const repaired = history?.superseded.size || 0;
@@ -607,8 +608,18 @@ export async function batch(db, accountId, broker, report, source, commit = fals
     for (const { record, previous, next } of evidence) {
       const edits = [];
       if (next.fxRateToBase && previous?.fxRateToBase !== next.fxRateToBase)
-        edits.push({ label: next.currency + " 兑 " + next.baseCurrency + " 报表折算率", before: previous?.fxRateToBase, after: next.fxRateToBase, format: "rate" });
-      rows.push({ ...activityDetail(record), status: "evidence", edits, reason: next.pair ? "保留换汇成交方向、价格及费用币种" : "补齐券商成交凭据" });
+        edits.push({
+          label: tMain("svc.editFxRate", { from: next.currency, to: next.baseCurrency }),
+          before: previous?.fxRateToBase,
+          after: next.fxRateToBase,
+          format: "rate",
+        });
+      rows.push({
+        ...activityDetail(record),
+        status: "evidence",
+        edits,
+        reason: next.pair ? tMain("svc.evidenceFxEvidence") : tMain("svc.evidenceBrokerFill"),
+      });
     }
     for (const { event, reason } of history?.superseded.values() || [])
       rows.push({ ...activityDetail(event), status: "void", reason });
@@ -676,8 +687,8 @@ export async function batch(db, accountId, broker, report, source, commit = fals
             accountId,
             latest,
             problems.length || result.invalid
-              ? "导入含待核对记录，请核对同日结单及资金流水"
-              : "成交已导入，现金余额与期间资金流水待结单核对",
+              ? tMain("svc.check.importNeedsReview")
+              : tMain("svc.check.tradesImported"),
           );
         }
       }
@@ -717,7 +728,7 @@ export async function combinedBatch(db, parts, commit = false) {
   }
 }
 function manualAsset(db, args) {
-  if (!String(args.symbol || "").trim()) throw Error("请输入证券代码。");
+  if (!String(args.symbol || "").trim()) throw Error(tMain("svc.manual.needSymbol"));
   const { match, candidates } = listingMatch(db, {
     ...args,
     source: "manual",
@@ -726,11 +737,11 @@ function manualAsset(db, args) {
     mic: args.mic,
   });
   if (args.assetId && args.assetId !== "new") {
-    if (!candidates.some((c) => c.id === args.assetId)) throw Error("所选证券与代码、市场或币种不符。");
+    if (!candidates.some((c) => c.id === args.assetId)) throw Error(tMain("svc.manual.listingMismatch"));
     return args.assetId;
   }
   if (match) return match.id;
-  if (candidates.length > 1) throw Error("请选择证券的上市市场。");
+  if (candidates.length > 1) throw Error(tMain("svc.manual.chooseMarket"));
   return resolveAsset(
     db,
     {
@@ -747,11 +758,11 @@ export function recordHolding(db, args) {
   const a = account(db, args.account),
     date = day(args.date);
   const reference = String(args.reference || "").trim();
-  if (!reference) throw Error("请填写股数或成本的依据，例如券商结单编号。");
+  if (!reference) throw Error(tMain("svc.manual.needCostRef"));
   return transaction(db, () => {
     const asset = args.symbol ? manualAsset(db, args) : args.assetId;
     const profile = db.prepare("SELECT currency FROM sp_assets WHERE id=?").get(asset);
-    if (!profile) throw Error("找不到证券。");
+    if (!profile) throw Error(tMain("err.assetNotFound"));
     const quantity = money(args.quantity, true);
     const old = db
       .prepare(
@@ -761,14 +772,14 @@ export function recordHolding(db, args) {
     const sameQuantity = old && D(old.quantity).eq(quantity);
     if (args.costOnly) {
       const held = positions(loadBook(db), a, date).holdings.get(asset);
-      if (!held?.eq(quantity)) throw Error("该日持仓数量已经改变，请重新打开持仓再补成本。");
+      if (!held?.eq(quantity)) throw Error(tMain("svc.manual.qtyChanged"));
     }
     const optional = (value) => (value == null || value === "" ? null : money(value, true));
     const local = optional(args.localCost),
       aud = optional(args.audCost);
-    if (args.costOnly && aud == null && local == null) throw Error("请填写凭据上的持仓总成本。");
+    if (args.costOnly && aud == null && local == null) throw Error(tMain("svc.manual.needTotalCost"));
     if (profile.currency === "AUD" && local != null && aud != null && !D(local).eq(aud))
-      throw Error("澳元证券的两项成本应一致。");
+      throw Error(tMain("svc.manual.audCostMatch"));
     const localCost =
       local ?? (profile.currency === "AUD" ? aud : null) ?? (sameQuantity ? old.local_cost : null);
     const audCost =
@@ -806,12 +817,12 @@ export function addManual(db, args) {
     "TRANSFER_OUT",
   ];
   const opening = preference(db, "opening-date", a.id);
-  if (opening && date <= opening) throw Error("这笔流水落在已确认的期初余额之内。");
-  if (!supported.includes(type)) throw Error("不支持的流水类型。");
+  if (opening && date <= opening) throw Error(tMain("svc.manual.inOpening"));
+  if (!supported.includes(type)) throw Error(tMain("svc.manual.unsupportedType"));
   const sourceId = String(args.reference || "").trim();
-  if (!sourceId) throw Error("请输入可追溯的结单编号或凭证编号。");
+  if (!sourceId) throw Error(tMain("svc.manual.needReference"));
   const id = "manual:" + a.id + ":" + sourceId;
-  if (db.prepare("SELECT 1 FROM sp_events WHERE id=?").get(id)) throw Error("这份凭证已经入账。");
+  if (db.prepare("SELECT 1 FROM sp_events WHERE id=?").get(id)) throw Error(tMain("svc.manual.duplicate"));
   return transaction(db, () => {
     const e = {
       id,
@@ -826,26 +837,26 @@ export function addManual(db, args) {
       status: "POSTED",
     };
     if (type === "BUY" || type === "SELL") {
-      if (!String(args.symbol || "").trim()) throw Error("请输入证券代码。");
+      if (!String(args.symbol || "").trim()) throw Error(tMain("svc.manual.needSymbol"));
       e.assetSymbol = String(args.symbol).trim().toUpperCase();
       e.assetId = manualAsset(db, args);
       e.quantity = money(args.quantity, true);
       e.unitPrice = money(args.price, true);
       e.fee = money(args.fee || 0, true);
-      if (D(e.quantity).lte(0) || D(e.unitPrice).lte(0)) throw Error("数量和成交价必须大于零。");
+      if (D(e.quantity).lte(0) || D(e.unitPrice).lte(0)) throw Error(tMain("svc.manual.positiveQtyPrice"));
     } else {
       if (type === "DIVIDEND" && args.symbol) {
         e.assetId = manualAsset(db, args);
         e.assetSymbol = String(args.symbol).trim().toUpperCase();
       }
       e.amount = money(args.amount, true);
-      if (D(e.amount).lte(0)) throw Error("金额必须大于零。");
+      if (D(e.amount).lte(0)) throw Error(tMain("svc.manual.positiveAmount"));
     }
     if (type.startsWith("TRANSFER_")) e.group = String(args.group || "").trim() || null;
     saveEvent(db, e);
     db.prepare(
-      "INSERT OR REPLACE INTO sp_checks(account,day,reason) SELECT account,day,'结单期间新增了流水，请重新核对' FROM sp_statements WHERE account=? AND day>=?",
-    ).run(a.id, date);
+      "INSERT OR REPLACE INTO sp_checks(account,day,reason) SELECT account,day,? FROM sp_statements WHERE account=? AND day>=?",
+    ).run(tMain("svc.manual.checkAdded"), a.id, date);
     return id;
   });
 }
@@ -855,7 +866,7 @@ export function compareStatement(db, args, commit = false) {
     date = day(args.date),
     input = args.cash || {},
     cashEntries = Object.entries(input);
-  if (!cashEntries.length) throw Error("请填写结单上的分币种现金余额。");
+  if (!cashEntries.length) throw Error(tMain("svc.compare.needCash"));
   const pos = positions(book, a, date, false),
     result = [],
     choices = [];
@@ -863,7 +874,7 @@ export function compareStatement(db, args, commit = false) {
     const expected = input[c] == null ? null : D(money(input[c])),
       actual = pos.cash.get(c) || D(0);
     result.push({
-      label: c + " 现金",
+      label: tMain("cash.currency", { currency: c }),
       expected: expected?.toFixed() ?? null,
       actual: actual.toFixed(),
       delta: expected == null ? null : actual.minus(expected).toFixed(),
@@ -884,7 +895,7 @@ export function compareStatement(db, args, commit = false) {
       const sym = String(v.symbol).toUpperCase();
       const input = {
         account: a.id,
-        source: args.source || "券商结单",
+        source: args.source || tMain("imports.brokerStatementSource"),
         record: JSON.stringify([date, index, sym, v.quantity]),
         symbol: sym,
         currency: v.currency,
@@ -903,7 +914,7 @@ export function compareStatement(db, args, commit = false) {
       const observed = actual.get(s) || D(0),
         expected = map.get(s) || D(0);
       result.push({
-        label: labels.get(s) + " 数量",
+        label: tMain("svc.compare.qtyLabel", { label: labels.get(s) }),
         symbol: book.assets.get(s)?.symbol || labels.get(s),
         expected: expected.toFixed(),
         actual: observed.toFixed(),
@@ -922,12 +933,12 @@ export function compareStatement(db, args, commit = false) {
       );
     const actual = quoted ? view.rows.reduce((n, r) => n.plus(r.audValue), D(0)) : null;
     result.push({
-      label: "总资产 AUD",
+      label: tMain("svc.compare.navLabel"),
       expected: expected.toFixed(),
       actual: actual?.toFixed() ?? null,
       delta: actual ? actual.minus(expected).toFixed() : null,
     });
-    if (!quoted) pos.warnings.push("请补齐与结单同日的报价及澳元汇率，再比较总资产。");
+    if (!quoted) pos.warnings.push(tMain("svc.compare.needQuotesForNav"));
   }
   const ok =
     !choices.length &&
@@ -937,16 +948,16 @@ export function compareStatement(db, args, commit = false) {
         r.delta !== null &&
         D(r.delta)
           .abs()
-          .lte(r.label.endsWith("数量") ? "0.00000001" : "0.005"),
+          .lte(r.symbol ? "0.00000001" : "0.005"),
     );
   if (commit) {
-    if (!ok || !args.flowsReviewed) throw Error("请先核齐差异，并确认期间资金流水齐全。");
+    if (!ok || !args.flowsReviewed) throw Error(tMain("svc.confirm.notAligned"));
     transaction(db, () => {
       db.prepare("INSERT INTO sp_statements VALUES(?,?,?,?,?)").run(
         randomUUID(),
         a.id,
         date,
-        String(args.source || "月结单"),
+        String(args.source || tMain("imports.brokerStatementSource")),
         JSON.stringify({ result, flowsReviewed: true }),
       );
       db.prepare("DELETE FROM sp_checks WHERE account=? AND day<=?").run(a.id, date);
@@ -956,10 +967,10 @@ export function compareStatement(db, args, commit = false) {
 }
 
 export function recordAccountValue(db, args, withinTransaction = false) {
-  if (args.nav == null || !Array.isArray(args.positions)) throw Error("请填写券商总资产及完整持仓。");
+  if (args.nav == null || !Array.isArray(args.positions)) throw Error(tMain("svc.recordNav.needFields"));
   const save = () => {
     const comparison = compareStatement(db, { ...args, nav: null });
-    if (!comparison.ok) throw Error("保存券商估值前，请先核齐各币种现金和持仓数量。");
+    if (!comparison.ok) throw Error(tMain("svc.recordNav.alignFirst"));
     const book = loadBook(db),
       a = account(db, args.account),
       date = day(args.date);
@@ -988,11 +999,11 @@ export function recordAccountValue(db, args, withinTransaction = false) {
 export async function brokerReport(db, broker, secrets, bound) {
   if (broker === "ibkr") {
     const {queryId, token} = bound || {queryId: preference(db, BROKER, "ibkr.flex-query-id"), token: await secrets.get("ibkr.flex-token")};
-    if (!queryId || !token) throw Error("请先保存 IBKR Query ID 和 Flex Token。");
+    if (!queryId || !token) throw Error(tMain("svc.ibkrNeedCreds"));
     return withIbkrStatement(await fetchIbkrFlexReport(network, { queryId, token }, "australia"));
   }
   const { appKey, appSecret, accessToken, accountId } = bound || await webullCredentials(db, secrets);
-  if (!appKey || !appSecret || !accessToken || !accountId) throw Error("请先连接并选择 Webull AU 券商账户。");
+  if (!appKey || !appSecret || !accessToken || !accountId) throw Error(tMain("svc.webullNeedCreds"));
   const credentials = { appKey, appSecret, accessToken, accountId };
   const report = await fetchWebullReport(network, credentials);
   try {
@@ -1000,7 +1011,7 @@ export async function brokerReport(db, broker, secrets, bound) {
     report.valuation = { ...value, nav: D(value.cashTotal).plus(value.securities).toFixed() };
     report.statement = report.valuation;
   } catch {
-    report.audit.warnings.push("Webull 本次未提供完整的账户估值。");
+    report.audit.warnings.push(tMain("svc.webullNoValuation"));
   }
   return report;
 }
@@ -1017,16 +1028,16 @@ export async function connectWebull(db, secrets) {
   return authorizeWebull(creds, (value)=>secrets.set("webull.access-token", value));
 }
 export async function authorizeWebull(creds, saveToken) {
-  if (!creds.appKey || !creds.appSecret) throw Error("请先保存 Webull App Key 与 App Secret。");
+  if (!creds.appKey || !creds.appSecret) throw Error(tMain("svc.webullSaveCredsFirst"));
   let token = creds.accessToken
     ? await checkWebullToken(network, creds, creds.accessToken)
     : await createWebullToken(network, creds);
   if (["INVALID", "EXPIRED"].includes(token.status)) token = await createWebullToken(network, creds);
   const saved = token.token || creds.accessToken;
-  if (!saved) throw Error("Webull 未返回授权令牌。");
+  if (!saved) throw Error(tMain("svc.webullNoToken"));
   await saveToken(saved);
-  if (token.status !== "NORMAL") return { status: token.status || "待确认", accounts: [] };
-  return { status: "已连接", accounts: await listWebullAccounts(network, { ...creds, accessToken: saved }) };
+  if (token.status !== "NORMAL") return { connected: false, status: token.status || tMain("svc.webullPending"), accounts: [] };
+  return { connected: true, status: tMain("svc.webullConnected"), accounts: await listWebullAccounts(network, { ...creds, accessToken: saved }) };
 }
 export function resetSync(db, broker, id) {
   return resetImportedKeysForMappings(syncHost(db), { ibkr: "", webull: "", [broker]: id });
@@ -1038,7 +1049,7 @@ export async function refreshFund(db, asset) {
     cache = new EtfCache(ctx),
     current = await cache.get(asset.etfKey);
   if (current?.snapshot?.sourceMode === "manual")
-    throw Error("此基金使用手工成分。切换数据源前请先导出并停用当前成分表。");
+    throw Error(tMain("svc.fundManualLocked"));
   const providers = createProviders(ctx);
   const result = await resolveEtfHoldings(
     { ...asset, providerSymbol: settings.providerIdentities[asset.etfKey] },
@@ -1050,6 +1061,6 @@ export async function refreshFund(db, asset) {
       force: true,
     },
   );
-  if (!result.snapshot || result.failureReason) throw Error(result.failureReason || "数据源未返回有效成分。");
+  if (!result.snapshot || result.failureReason) throw Error(result.failureReason || tMain("svc.fundNoHoldings"));
   return cache.save(result.snapshot, { expectedVersion: current?.version });
 }

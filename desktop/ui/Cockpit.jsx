@@ -5,6 +5,7 @@ import { api, aud, fmt, kind, num, signedPct, types, Delta } from "./common";
 import { HoldingEditor } from "./HoldingEditor";
 import { Detail, useRowKeys, useShell } from "./Shell";
 import { closeTimeLabel, quoteDetails, quoteStatus } from "./MarketQuotes";
+import { useI18n } from "./i18n.jsx";
 import "./holdings.css";
 
 const price = (n) => new Intl.NumberFormat("en-AU", { minimumFractionDigits: 2, maximumFractionDigits: 4 }).format(n);
@@ -14,7 +15,7 @@ const sorts = {
   gain: (r) => r.gainAud,
   rate: (r) => r.gainRate,
 };
-const categories = [["all", "全部"], ["stock", "股票"], ["etf", "ETF"]];
+const categoryIds = ["all", "stock", "etf"];
 
 function sum(rows, value) {
   const values = rows.map(value);
@@ -26,6 +27,7 @@ function amountWithCash(value, cash) {
 }
 
 function HoldingsTotals({ d, rows, filtered }) {
+  const { t } = useI18n();
   const securities = filtered ? sum(rows, (r) => r.audValue) : d.securities;
   const cash = d.valuation.cash;
   const total = filtered ? amountWithCash(securities, cash) : d.valuation.total;
@@ -38,22 +40,22 @@ function HoldingsTotals({ d, rows, filtered }) {
   const realised = filtered ? sum(rows, (r) => r.realised) : d.cumulative.realised;
   const dividends = filtered ? sum(rows, (r) => r.dividends) : d.cumulative.dividends;
   return (
-    <div className="holdings-totals" role="group" aria-label="持仓合计">
+    <div className="holdings-totals" role="group" aria-label={t("holdings.totalsAria")}>
       <span>
-        <span className="cap">合计市值</span> <b className="holdings-total-value">{aud(total, 2)}</b>{" "}
-        <span className="cap">证券 {aud(securities, 2)} + 现金 {aud(cash, 2)}</span>
+        <span className="cap">{t("holdings.totalValue")}</span> <b className="holdings-total-value">{aud(total, 2)}</b>{" "}
+        <span className="cap">{t("holdings.breakdownInline", { securities: aud(securities, 2), cash: aud(cash, 2) })}</span>
       </span>
-      <span><span className="cap">成本</span> <b>{missingCost ? "待补" : aud(cost, 2)}</b></span>
+      <span><span className="cap">{t("holdings.cost")}</span> <b>{missingCost ? t("common.pending") : aud(cost, 2)}</b></span>
       <span>
-        <span className="cap">未实现盈亏</span>{" "}
-        <b>{missingCost ? "待补" : <Delta amount={gain} rate={gain != null && cost > 0 ? gain / cost : null} />}</b>
+        <span className="cap">{t("holdings.unrealised")}</span>{" "}
+        <b>{missingCost ? t("common.pending") : <Delta amount={gain} rate={gain != null && cost > 0 ? gain / cost : null} />}</b>
       </span>
       <span>
-        <span className="cap">{d.currentMarket ? "最近收盘变动" : "收盘变动" + (d.today?.date ? " · " + d.today.date : "")}</span>{" "}
+        <span className="cap">{d.currentMarket ? t("overview.recentCloseChange") : t("overview.closeChange") + (d.today?.date ? " · " + d.today.date : "")}</span>{" "}
         <b><Delta amount={change} /></b>
       </span>
-      <span><span className="cap">累计已实现</span> <b><Delta amount={realised} /></b></span>
-      <span><span className="cap">累计分红</span> <b>{aud(dividends, 2)}</b></span>
+      <span><span className="cap">{t("holdings.realised")}</span> <b><Delta amount={realised} /></b></span>
+      <span><span className="cap">{t("holdings.dividends")}</span> <b>{aud(dividends, 2)}</b></span>
     </div>
   );
 }
@@ -61,6 +63,7 @@ function HoldingsTotals({ d, rows, filtered }) {
 const cashRowId = (account) => "cash-account:" + account.id;
 
 function AccountCard({ account, rows, filtered, sort, setSort, selectedId, arrival, select, selectCash, current }) {
+  const { t, intlLocale, sourceLabel } = useI18n();
   const title = useId();
   const cash = account.valuation.cash;
   const total = filtered ? amountWithCash(sum(rows, (r) => r.audValue), cash) : account.valuation.total;
@@ -69,7 +72,7 @@ function AccountCard({ account, rows, filtered, sort, setSort, selectedId, arriv
     <button
       type="button"
       className="holdings-sort"
-      aria-label={"按" + label + "排序"}
+      aria-label={t("holdings.sortAria", { label })}
       onClick={() => setSort({ key, down: sort.key === key ? !sort.down : key !== "name" })}
     >
       {label}
@@ -81,23 +84,30 @@ function AccountCard({ account, rows, filtered, sort, setSort, selectedId, arriv
     <section className="card holdings-card" aria-labelledby={title}>
       <div className="row holdings-card-head">
         <h2 id={title}>{account.name}</h2>
-        <span className="cap">{rows.length} 只 · {current && total == null ? "可估值小计 " + aud(account.known, 2) : "市值 " + aud(total, 2)}</span>
+        <span className="cap">
+          {t("holdings.accountSummary", {
+            count: rows.length,
+            summary: current && total == null
+              ? t("holdings.valuedSubtotal", { value: aud(account.known, 2) })
+              : t("holdings.marketValueLabel", { value: aud(total, 2) }),
+          })}
+        </span>
       </div>
       <div className="holdings-table-scroll">
         <table>
           <thead>
             <tr>
-              <th scope="col" aria-sort={sortOrder("name")}>{sortable("name", "证券")}</th>
-              <th scope="col">股数</th>
-              <th scope="col" className="hide-n">成本</th>
-              <th scope="col" aria-sort={sortOrder("value")}>{sortable("value", "市值")}</th>
+              <th scope="col" aria-sort={sortOrder("name")}>{sortable("name", t("holdings.col.security"))}</th>
+              <th scope="col">{t("holdings.col.qty")}</th>
+              <th scope="col" className="hide-n">{t("holdings.col.cost")}</th>
+              <th scope="col" aria-sort={sortOrder("value")}>{sortable("value", t("holdings.col.value"))}</th>
               <th scope="col" aria-sort={sortOrder("gain") || sortOrder("rate")}>
-                {sortable("gain", "未实现盈亏")} <span className="hide-n">/ {sortable("rate", "盈亏率")}</span>
+                {sortable("gain", t("holdings.col.gain"))} <span className="hide-n">/ {sortable("rate", t("holdings.col.rate"))}</span>
               </th>
-              <th scope="col">{current ? "现价" : "收盘贡献"}</th>
-              <th scope="col">{current ? "较本市场前收盘" : "报价涨跌幅"}</th>
-              <th scope="col" className="hide-n">累计已实现</th>
-              <th scope="col" className="hide-n">累计分红</th>
+              <th scope="col">{current ? t("holdings.col.price") : t("holdings.col.closeContrib")}</th>
+              <th scope="col">{current ? t("holdings.col.vsPrevClose") : t("holdings.col.quotePct")}</th>
+              <th scope="col" className="hide-n">{t("holdings.col.realised")}</th>
+              <th scope="col" className="hide-n">{t("holdings.col.dividends")}</th>
             </tr>
           </thead>
           <tbody>
@@ -118,16 +128,16 @@ function AccountCard({ account, rows, filtered, sort, setSort, selectedId, arriv
                     </div>
                   </td>
                   <td>{num(r.rawQuantity)}</td>
-                  <td className="hide-n">{r.costLocal == null ? <span className="warn">待补</span> : aud(r.costAud, 2)}</td>
+                  <td className="hide-n">{r.costLocal == null ? <span className="warn">{t("common.pending")}</span> : aud(r.costAud, 2)}</td>
                   <td>{aud(r.audValue, 2)}</td>
-                  <td>{r.costLocal == null ? <span className="warn">待补</span> : <Delta amount={r.gainAud} rate={r.gainRate} />}</td>
+                  <td>{r.costLocal == null ? <span className="warn">{t("common.pending")}</span> : <Delta amount={r.gainAud} rate={r.gainRate} />}</td>
                   <td>{current ? (
-                    <span title={quoteDetails(r.marketQuote)}>
+                    <span title={quoteDetails(r.marketQuote, t, intlLocale, sourceLabel)}>
                       {r.price == null ? "—" : r.localCurrency + " " + price(r.price)}
-                      <small>{quoteStatus(r.marketQuote)}</small>
+                      <small>{quoteStatus(r.marketQuote, t, intlLocale)}</small>
                     </span>
                   ) : <Delta amount={r.today?.change} />}</td>
-                  <td><Delta rate={quote?.change} />{quote && <small title={current ? "布里斯班时间" : undefined}>{closeTimeLabel(quote.closedAt, quote.date)}</small>}</td>
+                  <td><Delta rate={quote?.change} />{quote && <small title={current ? t("holdings.brisbaneTime") : undefined}>{closeTimeLabel(quote.closedAt, quote.date, intlLocale)}</small>}</td>
                   <td className="hide-n">{r.realised ? <Delta amount={r.realised} /> : "—"}</td>
                   <td className="hide-n">{r.dividends ? aud(r.dividends, 2) : "—"}</td>
                 </tr>
@@ -136,7 +146,7 @@ function AccountCard({ account, rows, filtered, sort, setSort, selectedId, arriv
             <tr data-row={cashRowId(account)}
               className={"holdings-cash click" + (selectedId === cashRowId(account) ? " sel" : "")}
               onClick={() => selectCash(account)}>
-              <td><button type="button" className="ticker" aria-label={account.name + "现金"}>现金</button></td>
+              <td><button type="button" className="ticker" aria-label={t("holdings.cashAccountAria", { account: account.name })}>{t("holdings.cashLabel")}</button></td>
               <td />
               <td className="hide-n" />
               <td>{aud(cash, 2)}</td>
@@ -205,16 +215,22 @@ export function selectedSecurity(d, selection) {
 
 const historyLimit = 60;
 function DetailHistory({ events, error, accounts }) {
+  const { t, typeLabel } = useI18n();
   if (error) return <p className="cap warn" role="status">{error}</p>;
-  if (events == null) return <p className="cap" role="status">正在读取流水…</p>;
-  if (!events.length) return <p className="cap">没有相关流水。</p>;
+  if (events == null) return <p className="cap" role="status">{t("holdings.historyLoading")}</p>;
+  if (!events.length) return <p className="cap">{t("holdings.historyEmpty")}</p>;
   return (
     <>
-      {events.length === historyLimit && <p className="cap">最近 {historyLimit} 笔</p>}
+      {events.length === historyLimit && <p className="cap">{t("holdings.recentCount", { limit: historyLimit })}</p>}
       <div className="holdings-table-scroll">
         <table>
           <thead>
-            <tr><th scope="col">日期</th><th scope="col">类型</th><th scope="col">数量</th><th scope="col">金额</th></tr>
+            <tr>
+              <th scope="col">{t("holdings.col.date")}</th>
+              <th scope="col">{t("holdings.col.type")}</th>
+              <th scope="col">{t("holdings.col.qty")}</th>
+              <th scope="col">{t("holdings.col.amount")}</th>
+            </tr>
           </thead>
           <tbody>
             {events.map((e) => {
@@ -225,13 +241,13 @@ function DetailHistory({ events, error, accounts }) {
                 <tr key={e.id}>
                   <td>{e.date.slice(0, 10)}</td>
                   <td title={execution?.fxRateToBase ? "1 " + execution.currency + " = " + num(execution.fxRateToBase) + " " + execution.baseCurrency : undefined}>
-                    {e.activityType === "DIVIDEND" ? "分红" : types[e.activityType] || e.activityType}
+                    {typeLabel(e.activityType)}
                     {accounts.length > 1 && <small title={name}>{name}</small>}
                   </td>
                   <td>{e.quantity == null ? "—" : num(e.quantity)}</td>
                   <td>
                     {amount == null ? "—" : e.currency + " " + fmt(amount, 2)}
-                    {Boolean(Number(e.fee)) && <small>费用 {fmt(e.fee, 2)}</small>}
+                    {Boolean(Number(e.fee)) && <small>{t("holdings.feeInline", { amount: fmt(e.fee, 2) })}</small>}
                   </td>
                 </tr>
               );
@@ -244,6 +260,7 @@ function DetailHistory({ events, error, accounts }) {
 }
 
 export function SecurityDetail({ d, security, onClose, openRepair, dock }) {
+  const { t, intlLocale, kindLabel, sourceLabel } = useI18n();
   const [history, setHistory] = useState(null);
   const { row, rows, group, closed, daily, currency } = security;
   const quote = group?.quoteChange;
@@ -279,32 +296,35 @@ export function SecurityDetail({ d, security, onClose, openRepair, dock }) {
         <div className="row m0 holdings-detail-meta">
           {security.name && security.name !== security.ticker && <span className="cap">{security.name}</span>}
           {row && <span className="tag">{row.accountName}</span>}
-          {security.type && <span className="tag">{kind[security.type]}</span>}
+          {security.type && <span className="tag">{kindLabel(security.type)}</span>}
           {security.mic && <span className="tag">{security.mic}</span>}
           {currency && <span className="tag">{currency}</span>}
-          {!row && <span className="tag">{events?.some((e) => e.activityType === "SELL") ? "已卖清" : "当前无持仓"}</span>}
+          {!row && <span className="tag">{events?.some((e) => e.activityType === "SELL") ? t("holdings.soldOut") : t("holdings.noCurrentPosition")}</span>}
         </div>
         {group && (
           <div className="dl">
-            <div><span className="cap">市值</span><b>{aud(group.value, 2)}</b></div>
+            <div><span className="cap">{t("holdings.col.value")}</span><b>{aud(group.value, 2)}</b></div>
             <div>
-              <span className="cap">未实现盈亏</span>
-              <b>{missingCost ? <span className="warn">待补</span> : <Delta amount={group.gain} />}</b>
-              {gainRate != null && <span className="cap">盈亏率 {signedPct(gainRate)}</span>}
+              <span className="cap">{t("holdings.unrealised")}</span>
+              <b>{missingCost ? <span className="warn">{t("common.pending")}</span> : <Delta amount={group.gain} />}</b>
+              {gainRate != null && <span className="cap">{t("holdings.detail.returnRate", { rate: signedPct(gainRate) })}</span>}
             </div>
-            <div><span className="cap">成本（含费用）</span><b>{missingCost ? "待补" : aud(group.cost, 2)}</b></div>
+            <div><span className="cap">{t("holdings.detail.costWithFee")}</span><b>{missingCost ? t("common.pending") : aud(group.cost, 2)}</b></div>
             <div>
               {showQuote ? (
                 <>
-                  <span className="cap">{d.currentMarket ? "较本市场前收盘" : "报价涨跌"}{quote && " · " + (d.currentMarket ? "布里斯班 " : "") + closeTimeLabel(quote.closedAt, quote.date)}</span>
+                  <span className="cap">
+                    {d.currentMarket ? t("holdings.col.vsPrevClose") : t("holdings.detail.quoteChange")}
+                    {quote && " · " + (d.currentMarket ? t("holdings.brisbanePrefix") : "") + closeTimeLabel(quote.closedAt, quote.date, intlLocale)}
+                  </span>
                   {quote ? <b>{d.currentMarket ? <><Delta rate={quote.change} /> · {currency} {fmt(quote.amount, 2)}</> :
-                    <Delta amount={quote.amount} rate={quote.change} />}</b> : <b>暂无可核实涨跌</b>}
+                    <Delta amount={quote.amount} rate={quote.change} />}</b> : <b>{t("holdings.detail.unverifiedChange")}</b>}
                 </>
               ) : (
                 <>
-                  <span className="cap">收盘贡献{closeDate && " · " + closeDate}</span><b><Delta amount={daily?.change} /></b>
+                  <span className="cap">{t("holdings.col.closeContrib")}{closeDate && " · " + closeDate}</span><b><Delta amount={daily?.change} /></b>
                   {daily?.priceChange && (
-                    <span className="cap">{daily.priceChange.date} 涨跌幅 {signedPct(daily.priceChange.change)}（{currency}）</span>
+                    <span className="cap">{t("holdings.detail.quotePctDay", { date: daily.priceChange.date, pct: signedPct(daily.priceChange.change), currency })}</span>
                   )}
                 </>
               )}
@@ -312,52 +332,65 @@ export function SecurityDetail({ d, security, onClose, openRepair, dock }) {
           </div>
         )}
         <section>
-          <h3>{group ? "价格与成本" : "累计收益"}</h3>
+          <h3>{group ? t("holdings.detail.priceAndCost") : t("holdings.detail.cumulativeIncome")}</h3>
           <table>
             <tbody>
-              <tr><th scope="row">合计股数</th><td><b>{num(group?.quantity ?? 0)}</b></td></tr>
+              <tr><th scope="row">{t("holdings.detail.totalShares")}</th><td><b>{num(group?.quantity ?? 0)}</b></td></tr>
               {quantities.map((a) => <tr key={a.id}><th scope="row">{a.name}</th><td>{num(a.quantity)}</td></tr>)}
               {row && (
                 <>
-                  <tr><th scope="row">买入均价</th><td>{missingCost ? "待补" : withinCurrency(average)}</td></tr>
+                  <tr><th scope="row">{t("holdings.detail.avgBuyPrice")}</th><td>{missingCost ? t("common.pending") : withinCurrency(average)}</td></tr>
                   <tr>
-                    <th scope="row">现价</th>
-                    <td title={[row.quoteSource, row.priceUpdatedAt].filter(Boolean).join(" · ")}>{withinCurrency(row.price)}</td>
+                    <th scope="row">{t("holdings.col.price")}</th>
+                    <td title={[sourceLabel(row.quoteSource), row.priceUpdatedAt].filter(Boolean).join(" · ")}>{withinCurrency(row.price)}</td>
                   </tr>
-                  {d.currentMarket && <tr><th scope="row">报价状态</th><td>{quoteDetails(row.marketQuote)}</td></tr>}
+                  {d.currentMarket && <tr><th scope="row">{t("holdings.detail.quoteStatus")}</th><td>{quoteDetails(row.marketQuote, t, intlLocale, sourceLabel)}</td></tr>}
                   {row.fx && currency !== "AUD" && (
-                    <tr><th scope="row">汇率</th><td title={[row.fxSource, row.fxDate].filter(Boolean).join(" · ")}>1 {currency} = {num(row.fx)} AUD</td></tr>
+                    <tr><th scope="row">{t("holdings.detail.fxRate")}</th><td title={[sourceLabel(row.fxSource), row.fxDate].filter(Boolean).join(" · ")}>1 {currency} = {num(row.fx)} AUD</td></tr>
                   )}
                 </>
               )}
               {showQuote && daily?.change != null && (
-                <tr><th scope="row">收盘贡献{closeDate && " · " + closeDate}</th><td><Delta amount={daily.change} /></td></tr>
+                <tr><th scope="row">{t("holdings.col.closeContrib")}{closeDate && " · " + closeDate}</th><td><Delta amount={daily.change} /></td></tr>
               )}
-              <tr><th scope="row">累计已实现盈亏</th><td><Delta amount={security.realised} /></td></tr>
-              <tr><th scope="row">累计分红</th><td>{aud(security.dividends, 2)}</td></tr>
+              <tr><th scope="row">{t("holdings.realised")}</th><td><Delta amount={security.realised} /></td></tr>
+              <tr><th scope="row">{t("holdings.dividends")}</th><td>{aud(security.dividends, 2)}</td></tr>
             </tbody>
           </table>
           {row?.costReceipt && (
-            <p className="cap">成本凭据 · {row.costReceipt.day} · {row.costReceipt.reference}
-              {row.costReceipt.historicalAud != null && " · 凭据中的历史澳元成本 " + aud(row.costReceipt.historicalAud, 2)}
+            <p className="cap">
+              {t("holdings.detail.costReceipt", {
+                day: row.costReceipt.day,
+                reference: row.costReceipt.reference,
+                historical: row.costReceipt.historicalAud != null
+                  ? t("holdings.detail.costHistoricalAud", { amount: aud(row.costReceipt.historicalAud, 2) })
+                  : "",
+              })}
             </p>
           )}
           {row?.evidence && (
-            <p className="cap">{row.evidence.day} · {row.evidence.quantityReference} 记载 {num(row.evidence.quantity)} 股，账本当日可解释 {num(row.evidence.ledgerQuantity)} 股。</p>
+            <p className="cap">
+              {t("holdings.detail.evidenceQty", {
+                day: row.evidence.day,
+                ref: row.evidence.quantityReference,
+                qty: num(row.evidence.quantity),
+                ledgerQty: num(row.evidence.ledgerQuantity),
+              })}
+            </p>
           )}
         </section>
         <section>
-          <h3>关联流水</h3>
+          <h3>{t("holdings.detail.relatedActivity")}</h3>
           <DetailHistory events={events} error={error} accounts={d.byAccount} />
         </section>
         {row && (
           <section>
-            <h3>补数据</h3>
+            <h3>{t("holdings.detail.repairSection")}</h3>
             <div className="row m0 holdings-repairs">
-              <button className="btn sm" type="button" onClick={() => openRepair({ row, action: "cost" })}>补成本</button>
-              <button className="btn sm" type="button" onClick={() => openRepair({ row, action: "price" })}>补报价</button>
-              {currency !== "AUD" && <button className="btn sm" type="button" onClick={() => openRepair({ row, action: "fx" })}>补汇率</button>}
-              <button className="btn sm" type="button" onClick={() => openRepair({ row, action: "type" })}>更正证券类别</button>
+              <button className="btn sm" type="button" onClick={() => openRepair({ row, action: "cost" })}>{t("editor.title.cost")}</button>
+              <button className="btn sm" type="button" onClick={() => openRepair({ row, action: "price" })}>{t("editor.title.price")}</button>
+              {currency !== "AUD" && <button className="btn sm" type="button" onClick={() => openRepair({ row, action: "fx" })}>{t("editor.title.fx")}</button>}
+              <button className="btn sm" type="button" onClick={() => openRepair({ row, action: "type" })}>{t("editor.title.type")}</button>
             </div>
           </section>
         )}
@@ -367,6 +400,7 @@ export function SecurityDetail({ d, security, onClose, openRepair, dock }) {
 }
 
 export function Holdings({ d, initial = {}, run }) {
+  const { t } = useI18n();
   const [q, setQ] = useState(initial.search || ""),
     [filter, setFilter] = useState("all"),
     [sort, setSort] = useState({ key: "value", down: true }),
@@ -454,13 +488,13 @@ export function Holdings({ d, initial = {}, run }) {
           <input
             className="btn"
             type="search"
-            placeholder="搜索代码或名称"
-            aria-label="搜索持仓"
+            placeholder={t("holdings.searchPlaceholder")}
+            aria-label={t("holdings.searchAria")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          <span className="seg" role="group" aria-label="证券类别">
-            {categories.map(([id, name]) => (
+          <span className="seg" role="group" aria-label={t("holdings.categoryAria")}>
+            {categoryIds.map((id) => (
               <button
                 key={id}
                 type="button"
@@ -468,16 +502,20 @@ export function Holdings({ d, initial = {}, run }) {
                 aria-pressed={filter === id}
                 onClick={() => setFilter(id)}
               >
-                {name}
+                {t(`holdings.filter.${id}`)}
               </button>
             ))}
           </span>
-          <span className="cap" role="status">{filtered ? "显示 " + rows.length + " / " + securities.length + " 只" : securities.length + " 只证券"}</span>
+          <span className="cap" role="status">
+            {filtered
+              ? t("holdings.showingCount", { shown: rows.length, total: securities.length })
+              : t("holdings.totalCount", { total: securities.length })}
+          </span>
           <span className="sp" />
-          <button className="btn" type="button" onClick={() => setRepair({ action: "position" })}>＋ 补持仓</button>
+          <button className="btn" type="button" onClick={() => setRepair({ action: "position" })}>{t("holdings.addHolding")}</button>
         </div>
         <HoldingsTotals {...{ d, rows, filtered }} />
-        {!rows.length && <p className="card cap">没有匹配的证券。</p>}
+        {!rows.length && <p className="card cap">{t("holdings.noMatch")}</p>}
         <div className="col">
           {rowsByAccount.map(({ account, rows }) => (
             <AccountCard key={account.id} current={Boolean(d.currentMarket)}
@@ -487,7 +525,12 @@ export function Holdings({ d, initial = {}, run }) {
       </div>
       {aspect === "21:9" && (
         <div ref={setDock} className="holdings-inspector">
-          {!cash && !security && <section className="card"><h2>持仓明细</h2><p className="cap">选择一项证券或现金查看明细。</p></section>}
+          {!cash && !security && (
+            <section className="card">
+              <h2>{t("holdings.inspectorPlaceholderTitle")}</h2>
+              <p className="cap">{t("holdings.inspectorPlaceholderBody")}</p>
+            </section>
+          )}
         </div>
       )}
       {cash && <CashDetail account={cash} onClose={closeDetail} dock={dock} />}
@@ -520,14 +563,21 @@ export function Holdings({ d, initial = {}, run }) {
 }
 
 function CashDetail({ account, onClose, dock }) {
+  const { t } = useI18n();
   const rows = account.rows.filter((row) => row.type === "cash");
   return (
-    <Detail title={account.name + " · 现金"} onClose={onClose} wide dock={dock}>
+    <Detail title={t("holdings.cashModalTitle", { account: account.name })} onClose={onClose} wide dock={dock}>
       <div className="holdings-detail">
-        <p className="cap">现金市值 {aud(account.valuation.cash, 2)}</p>
+        <p className="cap">{t("holdings.cashValueHeader", { value: aud(account.valuation.cash, 2) })}</p>
         {rows.length ? (
           <table>
-            <thead><tr><th>币种</th><th>原币余额</th><th>市值（AUD）</th></tr></thead>
+            <thead>
+              <tr>
+                <th>{t("holdings.col.currency")}</th>
+                <th>{t("holdings.col.nativeBalance")}</th>
+                <th>{t("holdings.col.audValue")}</th>
+              </tr>
+            </thead>
             <tbody>
               {rows.map((row) => (
                 <tr key={row.id}>
@@ -538,8 +588,8 @@ function CashDetail({ account, onClose, dock }) {
               ))}
             </tbody>
           </table>
-        ) : <p className="cap">暂无现金余额。</p>}
-        {account.cashUnverified && <p className="warn">现金余额待核对。</p>}
+        ) : <p className="cap">{t("holdings.noCashBalance")}</p>}
+        {account.cashUnverified && <p className="warn">{t("holdings.cashUnverified")}</p>}
       </div>
     </Detail>
   );

@@ -5,14 +5,13 @@ import { DivergingBar, LineChart, divergingScale, seriesColor } from "./charts";
 import { Detail, useMainChartHeight, useRowKeys, useShell } from "./Shell";
 import { resolvePeriod } from "../periods.js";
 import { PeriodControl } from "./FilterControls";
-import { accountScope, choosePreset, chooseRange, isCustom, periodLabels, periodQuery } from "./filters.js";
+import { isCustom, periodLabel, periodQuery, accountScope, choosePreset, chooseRange } from "./filters.js";
+import { useI18n } from "./i18n.jsx";
 import "./performance.css";
 
 const gapPoints = (v) => signedPct(v).replace("%", " pp");
-const seriesOf = (review) => [{ id: "portfolio", name: "我的组合" }, ...review.series];
 const errorText = (e) =>
   String(e.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, "");
-const labels = { totalReturn: "区间收益", gap: "组合收益差", maxDrawdown: "最大回撤" };
 
 function Metric({ title, name = title, value, format = signedPct, children }) {
   const direction = tone(value, 4);
@@ -28,60 +27,63 @@ function Metric({ title, name = title, value, format = signedPct, children }) {
   );
 }
 
-const dateSpan = (from, to) => {
+const dateSpan = (from, to, toWord) => {
   const short = from.slice(0, 4) === to.slice(0, 4);
-  return (short ? from.slice(5) : from) + " 至 " + (short ? to.slice(5) : to);
+  return (short ? from.slice(5) : from) + " " + toWord + " " + (short ? to.slice(5) : to);
 };
 
 function Verdict({ review, benchmark, period }) {
+  const { t } = useI18n();
   const own = review.metrics.portfolio;
   const index = review.metrics[benchmark.id];
   const drawdown = own.drawdown;
   const longest = index.longestUnderperformance;
   return (
     <div className="kpis review-metrics">
-      <Metric name="时间加权收益率" title={"时间加权收益率 · " + period} value={own.totalReturn}>
+      <Metric name={t("review.twrAria")} title={t("review.twrTitle", { period })} value={own.totalReturn}>
         {review.measuredDays < 365
-          ? "不满一年，不显示年化"
-          : <>年化 <Delta rate={own.annualised} />
+          ? t("review.lessThanYear")
+          : <>{t("review.annualisedWord")} <Delta rate={own.annualised} />
               {index.annualised != null && <> · {benchmark.name} <Delta rate={index.annualised} /></>}
             </>}
-        {own.asOf && review.origin > review.base && <small>收益从 {review.origin} 起算</small>}
-        {own.asOf && own.asOf !== review.to && <small>截至 {own.asOf} 收盘</small>}
+        {own.asOf && review.origin > review.base && <small>{t("review.startsFrom", { origin: review.origin })}</small>}
+        {own.asOf && own.asOf !== review.to && <small>{t("review.asOfClose", { date: own.asOf })}</small>}
       </Metric>
-      <Metric title={"对" + benchmark.name} value={index.gap} format={gapPoints}>
-        {index.gap == null ? "暂无同期比较" : <>指数 <Delta rate={index.totalReturn} /></>}
-        {index.gap != null && index.asOf !== own.asOf && <small>截至 {index.asOf} 同期比较</small>}
+      <Metric title={t("review.vsBenchmark", { name: benchmark.name })} value={index.gap} format={gapPoints}>
+        {index.gap == null ? t("review.noSamePeriodCompare") : <>{t("review.indexWord")} <Delta rate={index.totalReturn} /></>}
+        {index.gap != null && index.asOf !== own.asOf && <small>{t("review.samePeriodAsOf", { date: index.asOf })}</small>}
       </Metric>
-      <Metric title="最大回撤" value={own.maxDrawdown}>
+      <Metric title={t("review.metric.maxDrawdown")} value={own.maxDrawdown}>
         {drawdown?.peak ? (
           <>
-            <span title={drawdown.peak + " 至 " + drawdown.trough}>{dateSpan(drawdown.peak, drawdown.trough)}</span>
+            <span title={`${drawdown.peak} ${t("period.toWord")} ${drawdown.trough}`}>
+              {dateSpan(drawdown.peak, drawdown.trough, t("period.toWord"))}
+            </span>
             {drawdown.recovery
-              ? "，" + (drawdown.recovery.slice(0, 4) === drawdown.trough.slice(0, 4)
-                ? drawdown.recovery.slice(5)
-                : drawdown.recovery) + " 收复"
-              : "，尚未收复"}
+              ? t("review.recoveredAt", {
+                  date: drawdown.recovery.slice(0, 4) === drawdown.trough.slice(0, 4)
+                    ? drawdown.recovery.slice(5)
+                    : drawdown.recovery,
+                })
+              : t("review.notRecovered")}
           </>
-        ) : drawdown ? "这段时间没有回撤" : "暂无回撤数据"}
+        ) : drawdown ? t("review.noDrawdown") : t("review.noDrawdownData")}
       </Metric>
-      <Metric title={"最长跑输 · 对" + benchmark.name} value={longest?.worst} format={gapPoints}>
+      <Metric title={t("review.longestLagTitle", { name: benchmark.name })} value={longest?.worst} format={gapPoints}>
         {longest ? (
           <>
-            <span title={longest.from + " 至 " + longest.to}>{dateSpan(longest.from, longest.to)}</span>
-            {"，" + longest.days + " 天"}
+            <span title={`${longest.from} ${t("period.toWord")} ${longest.to}`}>
+              {dateSpan(longest.from, longest.to, t("period.toWord"))}
+            </span>
+            {t("review.daysSuffix", { days: longest.days })}
           </>
-        ) : index.gap == null ? "暂无同期比较" : "这段时间没有明显跑输"}
+        ) : index.gap == null ? t("review.noSamePeriodCompare") : t("review.noSignificantLag")}
       </Metric>
     </div>
   );
 }
 
-const chartModes = [
-  ["returns", "累计收益"],
-  ["gap", "收益差"],
-  ["drawdown", "回撤"],
-];
+const chartModeIds = ["returns", "gap", "drawdown"];
 const benchmarksOf = (review) => review.series.map((b, i) => ({
   ...b,
   color: seriesColor(i + 1),
@@ -90,6 +92,7 @@ const benchmarksOf = (review) => review.series.map((b, i) => ({
 const through = (point, date, value) => date && point.date <= date ? value : null;
 
 function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, zoom }) {
+  const { t } = useI18n();
   const [mode, setMode] = useState("returns");
   const [chartRef, height] = useMainChartHeight();
   const view = mode === "drawdown" && !review.hasQuarter ? "returns" : mode;
@@ -98,14 +101,14 @@ function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, z
     [own.asOf, ...benchmarks.map((b) => review.metrics[b.id].asOf)].filter(Boolean).sort().at(-1);
   const points = review.points.filter((p) => p.date >= review.origin && p.date <= to);
   const dates = points.map((p) => p.date);
-  const portfolio = { name: "我的组合", color: seriesColor(0), width: 2.5 };
+  const portfolio = { name: t("review.portfolioName"), color: seriesColor(0), width: 2.5 };
   const bands = [], markers = [];
   let series, label;
 
   if (view === "gap") {
-    label = "收益差曲线 · 对" + benchmark.name;
+    label = t("review.curve.gap", { name: benchmark.name });
     series = [{
-      name: "对" + benchmark.name,
+      name: t("review.vsBenchmark", { name: benchmark.name }),
       color: "var(--l1)",
       width: 2,
       area: "sign",
@@ -115,10 +118,10 @@ function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, z
     if (longest) bands.push({
       from: dates.indexOf(longest.from),
       to: dates.indexOf(longest.to),
-      label: "最长跑输 " + directedPct(longest.worst, " pp"),
+      label: t("review.longestLagLabel", { pct: directedPct(longest.worst, " pp") }),
     });
   } else if (view === "drawdown") {
-    label = "回撤曲线";
+    label = t("review.curve.drawdown");
     const drawdowns = (rows) => {
       const byDate = new Map(rows?.map((p) => [p.date, p.drawdown]));
       return dates.map((date) => byDate.get(date));
@@ -133,7 +136,7 @@ function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, z
       label: directedPct(own.drawdown.depth),
     });
   } else {
-    label = "累计收益曲线";
+    label = t("review.curve.returns");
     series = [
       { ...portfolio, values: points.map((p) => through(p, own.asOf, p.portfolio)) },
       ...benchmarks.map((b) => ({
@@ -144,18 +147,18 @@ function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, z
   }
 
   return (
-    <section className="card review-chart" aria-label="收益走势">
+    <section className="card review-chart" aria-label={t("review.chartSectionAria")}>
       <div className="row">
-        <div className="seg" role="group" aria-label="主图视图">
-          {(review.hasQuarter ? chartModes : chartModes.slice(0, 2)).map(([id, title]) => (
+        <div className="seg" role="group" aria-label={t("review.chartModeAria")}>
+          {(review.hasQuarter ? chartModeIds : chartModeIds.slice(0, 2)).map((id) => (
             <button type="button" key={id} className={view === id ? "on" : ""}
               aria-pressed={view === id} onClick={() => setMode(id)}>
-              {title}
+              {t(`review.mode.${id}`)}
             </button>
           ))}
         </div>
         <span className="sp" />
-        <div className="review-benchmarks" role="group" aria-label="对比基准">
+        <div className="review-benchmarks" role="group" aria-label={t("review.benchmarksAria")}>
           {benchmarks.map((b) => (
             <button type="button" className="btn sm" key={b.id} aria-pressed={benchmark.id === b.id}
               onClick={() => chooseBenchmark(b.id)}>
@@ -182,21 +185,21 @@ function ReviewChart({ review, benchmarks, benchmark, chooseBenchmark, select, z
             onSelect={select}
             onZoom={zoom}
           />
-        ) : <Empty>{label}暂无数据。</Empty>}
+        ) : <Empty>{t("review.chartEmpty", { label })}</Empty>}
       </div>
     </section>
   );
 }
 
-const methods = [
-  ["时间加权收益率", "每日收盘估值按澳元计。入金计在日初，出金计在日末。逐日收益连乘，剔除出入金影响。"],
-  ["年化收益", "区间满 365 天时，将累计收益按 (1 + R) ^ (365 / 天数) − 1 折成年收益。"],
-  ["收益差", "组合累计收益减所选指数累计收益，以百分点（pp）表示。指数为分红再投资总回报，折算为澳元。按双方都可计量的最近收盘日比较。"],
-  ["最大回撤与最长跑输", "最大回撤是区间内从峰值到随后谷底的最大跌幅。最长跑输从收益差转负的首个收盘日起，至追平或比较结束。"],
-  ["持仓贡献", "区间内证券的澳元价差，加可归属分红并扣交易费用。现金利息等账户收支单列。"],
-];
-
 function Methods() {
+  const { t } = useI18n();
+  const methods = [
+    [t("review.method.twrTitle"), t("review.method.twrDesc")],
+    [t("review.method.annTitle"), t("review.method.annDesc")],
+    [t("review.method.gapTitle"), t("review.method.gapDesc")],
+    [t("review.method.ddTitle"), t("review.method.ddDesc")],
+    [t("review.method.contribTitle"), t("review.method.contribDesc")],
+  ];
   return (
     <dl className="review-methods">
       {methods.map(([title, text]) => (
@@ -207,83 +210,91 @@ function Methods() {
 }
 
 function MethodSummary({ dataPanel }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
     <details className="card review-method" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>口径说明</summary>
+      <summary>{t("review.methodSummary")}</summary>
       {open && dataPanel}
     </details>
   );
 }
 
 function UnderperformancePeriods({ review, benchmark, select }) {
+  const { t } = useI18n();
   const periods = review.intervals.filter((interval) => interval.id === benchmark.id);
   return (
-    <Card title={"跑输时段 · " + benchmark.name}>
+    <Card title={t("review.lagTitle", { name: benchmark.name })}>
       {periods.length ? (
-        <Table head={["首次观察到落后", "最后观察日", "状态", ["最大落后", "num"]]}>
+        <Table head={[t("review.col.firstBehind"), t("review.col.lastObserved"), t("review.col.status"), [t("review.col.maxLag"), "num"]]}>
           {periods.map((interval) => (
             <tr key={interval.from}>
               <td><button type="button" className="text-btn" onClick={() => select(interval.from)}>{interval.from}</button></td>
               <td>{interval.to}</td>
-              <td>{{ recovered: "已追平", interrupted: "数据中断", open: "尚未追平" }[interval.status]}</td>
+              <td>{t(`review.status.${interval.status}`)}</td>
               <td className="num">{gapPoints(interval.worst)}</td>
             </tr>
           ))}
         </Table>
-      ) : <p className="cap">{review.metrics[benchmark.id].gap == null ? "暂无同期比较。" : "所选期间没有跑输时段。"}</p>}
+      ) : <p className="cap">{review.metrics[benchmark.id].gap == null ? t("review.noSamePeriodCompare") : t("review.noLagPeriods")}</p>}
     </Card>
   );
 }
 
-const coverage = (first, last) => first && last ? first + " 至 " + last : "—";
+const coverage = (first, last, t) => (first && last ? t("review.spanRange", { from: first, to: last }) : "—");
 
 function DataPanel({ review, mode, disabled, refresh, results }) {
+  const { t, sourceLabel } = useI18n();
   const done = results.filter((r) => !r.error),
     failed = results.filter((r) => r.error);
   return (
     <>
-      <h3>数据来源</h3>
+      <h3>{t("review.dataSources")}</h3>
       <dl className="review-methods">
         <div>
-          <dt>组合收盘估值</dt>
-          <dd>账本中的历史收盘价、资金流水与汇率</dd>
-          <dd className="cap">{coverage(review.origin, review.metrics.portfolio.asOf)}</dd>
+          <dt>{t("review.portfolioCloseVal")}</dt>
+          <dd>{t("review.ledgerSourcesDesc")}</dd>
+          <dd className="cap">{coverage(review.origin, review.metrics.portfolio.asOf, t)}</dd>
         </div>
         {review.series.map((b) => (
           <div key={b.id}>
             <dt>{b.name}</dt>
-            <dd>{b.source}</dd>
-            <dd className="cap">{coverage(b.first, b.last)}</dd>
-            <dd className="cap">区间最大回撤 <Delta rate={review.metrics[b.id].maxDrawdown} /></dd>
+            <dd>{sourceLabel(b.source)}</dd>
+            <dd className="cap">{coverage(b.first, b.last, t)}</dd>
+            <dd className="cap">{t("review.rangeMaxDd")} <Delta rate={review.metrics[b.id].maxDrawdown} /></dd>
           </div>
         ))}
         <div>
-          <dt>美元兑澳元</dt>
-          <dd>{review.fx.sources.join("、") || "Yahoo Finance · AUDUSD=X"}</dd>
-          <dd className="cap">{coverage(review.fx.first, review.fx.last)}</dd>
+          <dt>{t("review.usdToAud")}</dt>
+          <dd>{review.fx.sources.map(sourceLabel).join(t("common.comma")) || "Yahoo Finance · AUDUSD=X"}</dd>
+          <dd className="cap">{coverage(review.fx.first, review.fx.last, t)}</dd>
         </div>
       </dl>
       {mode === "real" && (
         <div className="actions">
           <button type="button" className="btn" disabled={disabled} onClick={refresh}>
-            <RefreshCw size={14} aria-hidden="true" /> 更新指数、汇率和收盘价
+            <RefreshCw size={14} aria-hidden="true" /> {t("review.updateMarketBtn")}
           </button>
         </div>
       )}
       {results.length > 0 && (
         <p className="review-feedback" role="status">
-          {done.length > 0 && "已更新 " + done.map((r) => r.name).join("、") + "。"}
-          {failed.length > 0 && " 未能更新：" + failed.map((r) => r.name + "（" + r.error + "）").join("、") + "。"}
+          {done.length > 0 && t("review.updatedItems", { items: done.map((r) => r.name).join(t("common.comma")) })}
+          {failed.length > 0 && t("review.failedItems", {
+            items: failed
+              .map((r) => `${r.name}${t("common.openParen")}${r.error}${t("common.closeParen")}`)
+              .join(t("common.comma")),
+          })}
         </p>
       )}
-      <h3>计算方法</h3>
+      <h3>{t("review.calcTitle")}</h3>
       <Methods />
     </>
   );
 }
 
 function DailyTable({ review, benchmark, selected, select, docked }) {
+  const { t } = useI18n();
   const [limit, setLimit] = useState(40);
   const own = review.metrics.portfolio;
   const index = review.metrics[benchmark.id];
@@ -305,7 +316,16 @@ function DailyTable({ review, benchmark, selected, select, docked }) {
   return (
     <div className="review-daily">
       {days.length ? (
-        <Table head={["日期", ["当日收益", "num"], ["累计收益", "num"], [benchmark.name, "num"], ["收益差", "num"]]} onKeyDown={rowKeys}>
+        <Table
+          head={[
+            t("review.dailyCol.date"),
+            [t("review.dailyCol.dayReturn"), "num"],
+            [t("review.dailyCol.cumReturn"), "num"],
+            [benchmark.name, "num"],
+            [t("review.dailyCol.gap"), "num"],
+          ]}
+          onKeyDown={rowKeys}
+        >
           {shown.map((row) => (
             <tr
               key={row.date}
@@ -324,9 +344,9 @@ function DailyTable({ review, benchmark, selected, select, docked }) {
             </tr>
           ))}
         </Table>
-      ) : <Empty>当前区间暂无逐日收益数据。</Empty>}
+      ) : <Empty>{t("review.noDailyData")}</Empty>}
       {days.length > limit && (
-        <button type="button" className="btn sm" onClick={() => setLimit(limit + 40)}>显示更早的日期</button>
+        <button type="button" className="btn sm" onClick={() => setLimit(limit + 40)}>{t("review.showEarlier")}</button>
       )}
     </div>
   );
@@ -335,15 +355,16 @@ function DailyTable({ review, benchmark, selected, select, docked }) {
 const amount = (value) => <Delta amount={value} digits={Number.isInteger(value) ? 0 : 2} />;
 
 function Breakdown({ data, period, selected, select, openHolding }) {
+  const { t } = useI18n();
   const item = data?.items.find((item) => item.key === selected);
   const rowKeys = useRowKeys(item?.rows.filter((row) => row.kind === "security").map((row) => row.key) ?? []);
   return (
-    <section className="card" aria-label="盈亏构成">
+    <section className="card" aria-label={t("review.breakdownTitle")}>
       <div className="row">
-        <h2>盈亏构成</h2>
-        {data && <span className="cap">{period} · 合计 {amount(data.gain)}</span>}
+        <h2>{t("review.breakdownTitle")}</h2>
+        {data && <span className="cap">{t("review.periodTotal", { period })} {amount(data.gain)}</span>}
       </div>
-      {!data ? <Empty>当前区间暂无盈亏构成。</Empty> : (
+      {!data ? <Empty>{t("review.noBreakdown")}</Empty> : (
         <div className="review-breakdown">
           {data.items.map(({ key, label, value }) => (
             <button type="button" key={key} aria-expanded={selected === key}
@@ -357,7 +378,7 @@ function Breakdown({ data, period, selected, select, openHolding }) {
       {item && (item.rows.length ? (
         <div className="tw review-drill">
           <table>
-            <thead><tr><th scope="col">{item.label} · 按证券</th><th scope="col">金额</th></tr></thead>
+            <thead><tr><th scope="col">{t("review.bySecurityCol", { label: item.label })}</th><th scope="col">{t("review.amountCol")}</th></tr></thead>
             <tbody onKeyDown={rowKeys}>
               {item.rows.map((row) => (
                 <tr key={row.key} data-row={row.kind === "security" ? row.key : undefined} className={row.kind === "security" ? "click" : undefined}
@@ -374,12 +395,13 @@ function Breakdown({ data, period, selected, select, openHolding }) {
             </tbody>
           </table>
         </div>
-      ) : <p className="cap">这项在当前区间没有金额。</p>)}
+      ) : <p className="cap">{t("review.noPartAmount")}</p>)}
     </section>
   );
 }
 
 function Contributions({ data, total, period, expanded, setExpanded, openHolding, openEvidence }) {
+  const { t } = useI18n();
   const rows = data?.rows || [];
   const scale = divergingScale(rows.map((row) => row.gain ?? 0));
   const middle = rows.length > 15 ? rows.slice(7, -7) : [];
@@ -394,7 +416,7 @@ function Contributions({ data, total, period, expanded, setExpanded, openHolding
       <>
         <span className={security ? "" : "cap"}>
           {security ? <b title={row.listing}>{row.label}</b> : row.label}
-          {row.closed && <span className="cap"> · 期间已卖清</span>}
+          {row.closed && <span className="cap">{t("review.soldInPeriod")}</span>}
         </span>
         <span aria-hidden="true">
           {row.gain != null && <DivergingBar value={row.gain} scale={scale} />}
@@ -411,35 +433,48 @@ function Contributions({ data, total, period, expanded, setExpanded, openHolding
     );
   };
   return (
-    <section className="card" aria-label="持仓贡献">
+    <section className="card" aria-label={t("review.contribTitle")}>
       <div className="row">
-        <h2>持仓贡献</h2>
-        {data && <span className="cap">{period} · 合计 {amount(total)}</span>}
+        <h2>{t("review.contribTitle")}</h2>
+        {data && <span className="cap">{t("review.periodTotal", { period })} {amount(total)}</span>}
       </div>
       {rows.length ? (
         <div className="review-contributions" onKeyDown={rowKeys}>
           {(folded ? rows.slice(0, 7) : rows).map(renderRow)}
           {middle.length > 0 && (
             <button type="button" className="review-fold" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-              {folded ? <>中间 {middle.length} 项合计 {amount(middleTotal)} · 展开</> : "只看前 7 和后 7"}
+              {folded
+                ? <>{t("review.middleSummary", { count: middle.length })} {amount(middleTotal)}{t("review.expandWord")}</>
+                : t("review.topBottomOnly")}
             </button>
           )}
           {folded && rows.slice(-7).map(renderRow)}
         </div>
-      ) : <Empty>{data ? "区间内没有持仓或收支贡献。" : "当前区间暂无持仓贡献。"}</Empty>}
+      ) : <Empty>{data ? t("review.noContribsRange") : t("review.noContribsYet")}</Empty>}
     </section>
   );
 }
 
 function ContributionEvidence({ row, accountName, onPage }) {
+  const { t, typeLabel, sourceLabel } = useI18n();
   const rowKeys = useRowKeys(row.events.map((e) => e.id));
   return (
-    <Table head={["日期", "账户", "记录", ["金额／成交", "num"], ["费用及税款", "num"], "来源凭据"]} onKeyDown={rowKeys}>
+    <Table
+      head={[
+        t("review.evCol.date"),
+        t("review.evCol.account"),
+        t("review.evCol.record"),
+        [t("review.evCol.amountTrade"), "num"],
+        [t("review.evCol.feeTax"), "num"],
+        t("review.evCol.source"),
+      ]}
+      onKeyDown={rowKeys}
+    >
       {row.events.map((e) => (
         <tr key={e.id} data-row={e.id} className="click" onClick={() => onPage("imports", { tab: "history", account: e.account })}>
           <td>{e.date}</td>
           <td>{accountName(e.account)}</td>
-          <td>{types[e.type] || e.type}</td>
+          <td>{typeLabel(e.type)}</td>
           <td className="num">
             {Number(e.quantity)
               ? num(e.quantity) + " × " + e.currency + " " + num(e.price)
@@ -449,9 +484,9 @@ function ContributionEvidence({ row, accountName, onPage }) {
             {e.currency} {num(Number(e.fee || 0) + Number(e.tax || 0))}
           </td>
           <td>
-            <span>{e.reference}</span>
+            <span>{sourceLabel(e.reference)}</span>
             <button type="button" className="text-btn">
-              查看流水
+              {t("review.viewActivity")}
             </button>
           </td>
         </tr>
@@ -461,6 +496,7 @@ function ContributionEvidence({ row, accountName, onPage }) {
 }
 
 function DayDetail({ review, date, select }) {
+  const { t, typeLabel } = useI18n();
   const [detail, setDetail] = useState(null),
     [error, setError] = useState(""),
     [tab, setTab] = useState("holdings");
@@ -487,9 +523,9 @@ function DayDetail({ review, date, select }) {
   const reading = review.points.find((p) => p.date === date);
   return (
     <Card
-      title="收盘持仓与流水"
+      title={t("review.dayTitle")}
       action={
-        <Field label="观察日">
+        <Field label={t("review.observedDate")}>
           <input
             type="date"
             value={date}
@@ -511,24 +547,24 @@ function DayDetail({ review, date, select }) {
         {detail?.date === date && (
           <p className="review-readout">
             <span>
-              收盘净值 <b>{aud(detail.total, 2)}</b>
+              {t("review.closingNav")} <b>{aud(detail.total, 2)}</b>
             </span>
             <span>
-              现金 <b>{aud(detail.cash, 2)}</b>
+              {t("overview.cashValue")} <b>{aud(detail.cash, 2)}</b>
             </span>
             <span>
-              现金占比 <b>{detail.cashWeight == null ? "—" : fmt(detail.cashWeight * 100, 2) + "%"}</b>
+              {t("review.cashWeight")} <b>{detail.cashWeight == null ? "—" : fmt(detail.cashWeight * 100, 2) + "%"}</b>
             </span>
             <span>
-              自区间起点 <b><Delta rate={reading?.portfolio} /></b>
+              {t("review.sinceStart")} <b><Delta rate={reading?.portfolio} /></b>
             </span>
           </p>
         )}
         <Tabs
           items={[
-            ["holdings", "当日持仓"],
-            ["day", "当日流水"],
-            ["all", "区间流水"],
+            ["holdings", t("review.dayTab.holdings")],
+            ["day", t("review.dayTab.day")],
+            ["all", t("review.dayTab.all")],
           ]}
           value={tab}
           onChange={setTab}
@@ -536,12 +572,20 @@ function DayDetail({ review, date, select }) {
       </div>
       {tab === "holdings" ? (
         !detail || detail.date !== date ? (
-          <small>正在读取持仓…</small>
+          <small>{t("review.loadingHoldings")}</small>
         ) : (
           <>
-            {detail.problems.length > 0 && <p className="warning">{detail.problems.join("、")}</p>}
+            {detail.problems.length > 0 && <p className="warning">{detail.problems.join(t("common.comma"))}</p>}
             {detail.rows.length ? (
-              <Table head={["账户", "证券 / 现金", ["数量", "num"], ["收盘估值（AUD）", "num"], "估值依据"]}>
+              <Table
+                head={[
+                  t("review.dayCol.account"),
+                  t("review.dayCol.holding"),
+                  [t("review.dayCol.qty"), "num"],
+                  [t("review.dayCol.closeVal"), "num"],
+                  t("review.dayCol.basis"),
+                ]}
+              >
                 {detail.rows.map((r, i) => (
                   <tr key={i}>
                     <td>{r.account}</td>
@@ -550,19 +594,28 @@ function DayDetail({ review, date, select }) {
                     <td className="num">{aud(r.value, 2)}</td>
                     <td>
                       {r.reason || r.priceDate || "—"}
-                      {r.currency !== "AUD" && <small>汇率 {r.fxDate || "缺失"}</small>}
+                      {r.currency !== "AUD" && <small>{t("review.fxDateTag", { date: r.fxDate || t("review.missingWord") })}</small>}
                     </td>
                   </tr>
                 ))}
               </Table>
             ) : (
-              <Empty>当日没有持仓或现金余额。</Empty>
+              <Empty>{t("review.noDayHoldings")}</Empty>
             )}
           </>
         )
       ) : events.length ? (
         <>
-          <Table head={["日期", "账户", "记录", ["数量 × 单价 / 金额", "num"], ["费用", "num"]]} onKeyDown={rowKeys}>
+          <Table
+            head={[
+              t("review.evCol.date"),
+              t("review.evCol.account"),
+              t("review.evCol.record"),
+              [t("review.allCol.qtyPrice"), "num"],
+              [t("review.allCol.fee"), "num"],
+            ]}
+            onKeyDown={rowKeys}
+          >
             {shown.map((e) => (
               <tr key={e.id} data-row={e.id} className="click" onClick={() => select(e.date)}>
                 <td>
@@ -572,7 +625,7 @@ function DayDetail({ review, date, select }) {
                 </td>
                 <td>{e.account}</td>
                 <td>
-                  {types[e.type] || e.type} {e.symbol}
+                  {typeLabel(e.type)} {e.symbol}
                   <small>{e.comment}</small>
                 </td>
                 <td className="num">
@@ -585,25 +638,32 @@ function DayDetail({ review, date, select }) {
               </tr>
             ))}
           </Table>
-          {events.length > limit && <button onClick={() => setLimit(limit + 40)}>更多流水</button>}
+          {events.length > limit && <button onClick={() => setLimit(limit + 40)}>{t("review.moreEvents")}</button>}
         </>
       ) : (
-        <Empty>这段时间没有流水。</Empty>
+        <Empty>{t("review.noPeriodEvents")}</Empty>
       )}
     </Card>
   );
 }
 
 function Notes({ review, notes, opened, comparable, reopen, save, busy, accountName }) {
+  const { t, formatDate } = useI18n();
   const [draft, setDraft] = useState("");
   const [writing, setWriting] = useState(false);
   const draftId = useRef(null);
+  const series = [{ id: "portfolio", name: t("review.portfolioName") }, ...review.series];
+  const metricLabels = {
+    totalReturn: t("review.metric.totalReturn"),
+    gap: t("review.metric.gap"),
+    maxDrawdown: t("review.metric.maxDrawdown"),
+  };
   return (
     <Card
-      title="复盘笔记"
+      title={t("review.notesTitle")}
       action={
         <button onClick={() => setWriting(!writing)}>
-          <Bookmark size={15} /> 写笔记
+          <Bookmark size={15} /> {t("review.writeNote")}
         </button>
       }
     >
@@ -620,7 +680,7 @@ function Notes({ review, notes, opened, comparable, reopen, save, busy, accountN
             }
           }}
         >
-          <Field label="这段时间做了什么，下次想验证什么？">
+          <Field label={t("review.notePrompt")}>
             <textarea
               autoFocus
               required
@@ -630,27 +690,27 @@ function Notes({ review, notes, opened, comparable, reopen, save, busy, accountN
             />
           </Field>
           <button className="primary" disabled={busy || !draft.trim()}>
-            保存笔记与当前指标
+            {t("review.saveNoteBtn")}
           </button>
         </form>
       )}
       {opened && (
         <section className="review-note-comparison">
-          <h3>记录时与当前重算</h3>
+          <h3>{t("review.noteComparisonTitle")}</h3>
           <p>{opened.text}</p>
-          {!comparable && <p className="cap">当前无法按此笔记原有的账户范围与期间重算。</p>}
-          <Table head={["对象", "指标", ["记录时", "num"], ["当前重算", "num"]]}>
-            {seriesOf(review).flatMap(({ id, name }) =>
-              Object.keys(labels)
+          {!comparable && <p className="cap">{t("review.notComparableNote")}</p>}
+          <Table head={[t("review.noteCol.subject"), t("review.noteCol.metric"), [t("review.noteCol.atSave"), "num"], [t("review.noteCol.current"), "num"]]}>
+            {series.flatMap(({ id, name }) =>
+              Object.keys(metricLabels)
                 .filter((key) => key in (opened.metrics[id] || {}))
                 .map((key) => {
-                  const unit = key === "gap" ? " 个百分点" : "%";
+                  const unit = key === "gap" ? t("review.metric.gapUnit") : "%";
                   const before = directedPct(opened.metrics[id][key], unit),
                     after = comparable ? directedPct(review.metrics[id]?.[key], unit) : "—";
                   return (
                     <tr key={id + key}>
                       <td>{name}</td>
-                      <td>{labels[key]}</td>
+                      <td>{metricLabels[key]}</td>
                       <td className="num">{before}</td>
                       <td className={"num " + (comparable && before !== after ? "review-changed" : "")}>{after}</td>
                     </tr>
@@ -669,23 +729,26 @@ function Notes({ review, notes, opened, comparable, reopen, save, busy, accountN
                   {note.from} – {note.to}
                 </b>
                 <small>
-                  {note.ids.map(accountName).join("、")} · 记录于{" "}
-                  {new Date(note.created).toLocaleDateString("zh-CN")}
+                  {t("review.recordedOn", {
+                    accounts: note.ids.map(accountName).join(t("common.comma")),
+                    date: formatDate(note.created),
+                  })}
                 </small>
               </span>
               <span>{note.text}</span>
-              <span className="review-note-open">重开区间</span>
+              <span className="review-note-open">{t("review.reopenRange")}</span>
             </button>
           ))}
         </div>
       ) : (
-        !writing && <p className="muted">保存判断时，会一并记录账户、日期和当时的收益与回撤。</p>
+        !writing && <p className="muted">{t("review.notesHint")}</p>
       )}
     </Card>
   );
 }
 
 export function Performance({ d, mode, run, reload, filters, onFilters, onPage }) {
+  const { t } = useI18n();
   const { aspect } = useShell();
   const docked = aspect === "21:9";
   // The account scope, valuation date and period are the global filters (spec §2.3).
@@ -800,7 +863,7 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
   }
   const benchmarks = review ? benchmarksOf(review) : [];
   const benchmark = benchmarks.find((b) => b.id === benchmarkId) || benchmarks[0];
-  const period = isCustom(filters) ? "自定义" : periodLabels[filters.period];
+  const period = isCustom(filters) ? t("period.customLabel") : periodLabel(filters.period, t);
   const dataPanel = review && (
     <DataPanel review={review} mode={mode} disabled={!current || busy || updating > 0} refresh={refresh} results={results} />
   );
@@ -817,16 +880,16 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
         <span className="sp" />
         <div className="review-tools">
           <button type="button" className="btn sm" disabled={!current} onClick={() => setDetail({ kind: "daily" })}>
-            逐日数据
+            {t("review.btnDailyData")}
           </button>
           <button type="button" className="btn sm" disabled={!current} onClick={() => setDetail({ kind: "methods" })}>
-            数据来源与计算方法
+            {t("review.btnMethods")}
           </button>
         </div>
       </PeriodControl>
       {updating > 0 && (
         <p className="review-status" role="status">
-          <RefreshCw size={14} /> 正在更新指数、汇率和持仓收盘价…
+          <RefreshCw size={14} /> {t("review.updatingStatus")}
         </p>
       )}
       {error ? (
@@ -834,13 +897,13 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
           <p role="alert" className="warning">
             {error}
           </p>
-          <button onClick={() => change(choosePreset(filters, "ytd"))}>重设区间</button>
+          <button onClick={() => change(choosePreset(filters, "ytd"))}>{t("review.resetRange")}</button>
         </Card>
       ) : !scope.ids.length ? (
-        <Empty>请先建立或选择一个有投资记录的账户。</Empty>
+        <Empty>{t("review.needAccount")}</Empty>
       ) : !review ? (
         <Card>
-          <p role="status">正在计算每日收益…</p>
+          <p role="status">{t("review.calculating")}</p>
         </Card>
       ) : (
         <div className={"review-body" + (current ? "" : " stale")} aria-busy={!current} inert={!current}>
@@ -905,22 +968,22 @@ export function Performance({ d, mode, run, reload, filters, onFilters, onPage }
             </div>
           </div>
           {inScope && detail?.kind === "daily" && (docked || !detail.date) && (
-            <Detail wide title={detail.date ? detail.date + " · 当日明细" : "逐日数据"} onClose={() => setDetail(null)}>
+            <Detail wide title={detail.date ? t("review.dayDetailTitle", { date: detail.date }) : t("review.dailyDataTitle")} onClose={() => setDetail(null)}>
               <DailyTable review={review} benchmark={benchmark} selected={detail.date} select={selectDaily} docked={docked} />
             </Detail>
           )}
           {inScope && detail?.kind === "methods" && (
-            <Detail title="数据来源与计算方法" onClose={() => setDetail(null)}>
+            <Detail title={t("review.btnMethods")} onClose={() => setDetail(null)}>
               {dataPanel}
             </Detail>
           )}
           {inScope && !docked && detail?.date && (
-            <Detail wide title={detail.date + " · 当日明细"} onClose={() => setDetail(null)}>
+            <Detail wide title={t("review.dayDetailTitle", { date: detail.date })} onClose={() => setDetail(null)}>
               <DayDetail review={review} date={detail.date} select={openDay} />
             </Detail>
           )}
           {inScope && detail?.kind === "source" && (
-            <Detail wide title={detail.row.label + " · 区间原始流水"} onClose={() => setDetail(null)}>
+            <Detail wide title={t("review.sourceDetailTitle", { label: detail.row.label })} onClose={() => setDetail(null)}>
               <ContributionEvidence row={detail.row} accountName={accountName} onPage={onPage} />
             </Detail>
           )}

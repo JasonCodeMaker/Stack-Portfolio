@@ -5,6 +5,7 @@ import { BrokerResult } from "./ImportPreview";
 import { Detail, Grid, useRowKeys, useShell } from "./Shell";
 import { checkLayout, quantityGaps, syncLayout } from "./importsLayout.js";
 import { api, num, fmt, types, Empty, Modal } from "./common";
+import { tMain, useI18n } from "./i18n.jsx";
 import "./imports.css";
 
 const blank = {
@@ -22,17 +23,8 @@ const blank = {
   kind: "EQUITY",
   group: "",
 };
-const tabs = [
-  ["file", "记录与同步"],
-  ["check", "和券商结单核对"],
-  ["history", "交易流水"],
-  ["opening", "从这一天开始记录"],
-];
-const brokerTabs = [
-  ["both", "两家一起"],
-  ["ibkr", "IBKR"],
-  ["webull", "Webull AU"],
-];
+const tabIds = ["file", "check", "history", "opening"];
+const brokerIds = ["both", "ibkr", "webull"];
 const PAGE = 100;
 
 function Seg({ items, value, onChange }) {
@@ -73,9 +65,10 @@ function Panel({ title, action, children, className = "" }) {
   );
 }
 function AccountOptions({ d, value, set, className }) {
+  const { t } = useI18n();
   return (
-    <select className={className} aria-label="账本账户" value={value || ""} onChange={(e) => set(e.target.value)}>
-      {!value && <option value="">选择账户</option>}
+    <select className={className} aria-label={t("app.accountSelectAria")} value={value || ""} onChange={(e) => set(e.target.value)}>
+      {!value && <option value="">{t("app.selectAccount")}</option>}
       {d.accounts
         .filter((a) => a.active)
         .map((a) => (
@@ -88,27 +81,28 @@ function AccountOptions({ d, value, set, className }) {
 }
 
 function StatementLines({ cash, setCash, positions, setPositions, listings = [], opening = false }) {
+  const { t, marketLabel } = useI18n();
   const change = (rows, set, i, patch) => set(rows.map((v, n) => (n === i ? { ...v, ...patch } : v)));
   const remove = (rows, set, i) => (
     <button type="button" className="btn" onClick={() => set(rows.filter((_, n) => n !== i))}>
-      移除
+      {t("app.remove")}
     </button>
   );
   return (
     <>
-      <div className="sub">现金</div>
+      <div className="sub">{t("imports.cashSection")}</div>
       {cash.map((v, i) => (
         <div className="line" key={i}>
           <input
-            aria-label={"现金币种 " + (i + 1)}
-            placeholder="币种"
+            aria-label={t("imports.cashCcyAria", { n: i + 1 })}
+            placeholder={t("imports.cashCcyPlaceholder")}
             maxLength={3}
             value={v.currency}
             onChange={(e) => change(cash, setCash, i, { currency: e.target.value.toUpperCase() })}
           />
           <input
-            aria-label={"现金余额 " + (i + 1)}
-            placeholder="余额"
+            aria-label={t("imports.cashBalAria", { n: i + 1 })}
+            placeholder={t("imports.cashBalPlaceholder")}
             type="number"
             step="any"
             value={v.value}
@@ -118,13 +112,13 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
         </div>
       ))}
       <button type="button" className="lnk cap" onClick={() => setCash([...cash, { currency: "", value: "" }])}>
-        ＋ 添加币种
+        {t("imports.addCurrency")}
       </button>
-      <div className="sub">证券持仓</div>
+      <div className="sub">{t("imports.securitiesSection")}</div>
       {positions.map((v, i) =>
         opening ? (
           <div className="line full" key={i}>
-            <F label="证券代码">
+            <F label={t("editor.symbol")}>
               <input
                 value={v.symbol}
                 onChange={(e) =>
@@ -132,7 +126,7 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
                 }
               />
             </F>
-            <F label="股数／份额">
+            <F label={t("imports.qtyPlaceholder")}>
               <input
                 type="number"
                 step="any"
@@ -141,7 +135,7 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
               />
             </F>
             {listings.some((a) => a.symbol === v.symbol) && (
-              <F label="已有上市证券">
+              <F label={t("imports.existingListing")}>
                 <select
                   value={v.assetId || ""}
                   onChange={(e) => {
@@ -156,18 +150,18 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
                     );
                   }}
                 >
-                  <option value="">手动填写市场及币种</option>
+                  <option value="">{t("imports.manualMarketCurrency")}</option>
                   {listings
                     .filter((a) => a.symbol === v.symbol)
                     .map((a) => (
                       <option key={a.id} value={a.id}>
-                        {listingLabel(a)}
+                        {listingLabel(a, marketLabel)}
                       </option>
                     ))}
                 </select>
               </F>
             )}
-            <F label="交易币种">
+            <F label={t("editor.tradeCurrency")}>
               <input
                 readOnly={!!v.assetId}
                 value={v.currency || ""}
@@ -175,7 +169,7 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
                 onChange={(e) => change(positions, setPositions, i, { currency: e.target.value.toUpperCase() })}
               />
             </F>
-            <F label="上市市场">
+            <F label={t("editor.exchangeMarket")}>
               <input
                 readOnly={!!v.assetId}
                 list="statement-markets"
@@ -183,7 +177,7 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
                 onChange={(e) => change(positions, setPositions, i, { mic: e.target.value.toUpperCase() })}
               />
             </F>
-            <F label="当日市价（可选）">
+            <F label={t("imports.dayPriceOpt")}>
               <input
                 type="number"
                 step="any"
@@ -191,13 +185,13 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
                 onChange={(e) => change(positions, setPositions, i, { price: e.target.value })}
               />
             </F>
-            <F label="类别">
+            <F label={t("imports.categoryLabel")}>
               <select
                 value={v.kind || "EQUITY"}
                 onChange={(e) => change(positions, setPositions, i, { kind: e.target.value })}
               >
-                <option value="EQUITY">股票</option>
-                <option value="ETF">ETF</option>
+                <option value="EQUITY">{t("editor.type.EQUITY")}</option>
+                <option value="ETF">{t("editor.type.ETF")}</option>
               </select>
             </F>
             {remove(positions, setPositions, i)}
@@ -205,16 +199,16 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
         ) : (
           <div className="line" key={i}>
             <input
-              aria-label={"证券代码 " + (i + 1)}
-              placeholder="证券代码"
+              aria-label={t("imports.tickerAria", { n: i + 1 })}
+              placeholder={t("imports.tickerPlaceholder")}
               value={v.symbol}
               onChange={(e) =>
                 change(positions, setPositions, i, { symbol: e.target.value.toUpperCase(), assetId: "", mic: "" })
               }
             />
             <input
-              aria-label={"股数 " + (i + 1)}
-              placeholder="股数／份额"
+              aria-label={t("imports.qtyAria", { n: i + 1 })}
+              placeholder={t("imports.qtyPlaceholder")}
               type="number"
               step="any"
               value={v.quantity}
@@ -229,13 +223,13 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
         className="lnk cap"
         onClick={() => setPositions([...positions, { symbol: "", quantity: "", currency: opening ? "AUD" : "" }])}
       >
-        ＋ 添加证券
+        {t("imports.addSecurity")}
       </button>
       {opening && (
         <datalist id="statement-markets">
-          {Object.entries(marketNames).map(([mic, label]) => (
+          {Object.keys(marketNames).map((mic) => (
             <option key={mic} value={mic}>
-              {label}
+              {marketLabel(mic)}
             </option>
           ))}
         </datalist>
@@ -248,22 +242,23 @@ function cashAmounts(entries) {
   for (const v of entries) {
     if (v.value === "" && !v.currency) continue;
     if (v.value === "" || !/^[A-Z]{3}$/.test(v.currency) || v.currency in amounts)
-      throw Error("请逐项填写币种和余额，同一币种填写一次。");
+      throw Error(tMain("imports.cashDuplicateLineError"));
     amounts[v.currency] = v.value;
   }
   return amounts;
 }
 function ListingChoices({ choices, resolve }) {
+  const { t, marketLabel } = useI18n();
   if (!choices?.length) return null;
   return (
     <div className="fg">
       {choices.map((c) => (
-        <F key={c.record + c.symbol} label={c.symbol + " 对应多个上市证券，请选择"}>
+        <F key={c.record + c.symbol} label={t("imports.multiListingChoice", { symbol: c.symbol })}>
           <select defaultValue="" onChange={(e) => e.target.value && resolve(c, e.target.value)}>
-            <option value="">选择上市证券</option>
+            <option value="">{t("editor.selectListing")}</option>
             {c.candidates.map((a) => (
               <option key={a.id} value={a.id}>
-                {listingLabel(a)}
+                {listingLabel(a, marketLabel)}
               </option>
             ))}
           </select>
@@ -273,6 +268,7 @@ function ListingChoices({ choices, resolve }) {
   );
 }
 export function Imports({ d, mode, run, initial = {}, onPage }) {
+  const { t, formatDateTime, typeLabel, sourceLabel } = useI18n();
   const { cols } = useShell();
   const [tab, setTab] = useState(initial.tab || "file"),
     [broker, setBroker] = useState(initial.broker || "both");
@@ -353,7 +349,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     if (which === "both") {
       if (mapping.ibkr && mapping.ibkr === mapping.webull)
         return run(() => {
-          throw Error("请给两家券商选择不同的入账账户。");
+          throw Error(t("imports.distinctAccountsError"));
         }, false);
       return Promise.all(["ibkr", "webull"].map((b) => prepare(source, b, mapping[b])));
     }
@@ -362,7 +358,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     if (source !== "file") updateReport(which, { broker: which, loading: true });
     await run(async () => {
       try {
-        if (!id) throw Error("请选择这家券商的入账账户。");
+        if (!id) throw Error(t("imports.selectTargetError"));
         const v = await api.preview({ source, broker: which, account: id });
         if (v && requests.current[which] === request) updateReport(which, { ...v, sourceKind: source });
       } catch (e) {
@@ -385,7 +381,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     await run(async () => {
       const v = await api.commit({ token: r.token });
       updateReport(r.broker, { ...v, done: true });
-    }, "已保存该券商的记录");
+    }, t("imports.savedBrokerMsg"));
   }
   function useStatement(v) {
     setDate(v.date);
@@ -405,7 +401,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       positions: pos.length || noSecurities ? pos : undefined,
       nav: nav.trim() || null,
       flowsReviewed: flow,
-      source: webullSample ? "示例 Webull 月结单" : "券商结单",
+      source: webullSample ? t("imports.sampleStatementSource") : t("imports.brokerStatementSource"),
     };
   }
   function openManual(sample = false, type = "DEPOSIT") {
@@ -418,7 +414,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             currency: "AUD",
             amount: "1000",
             reference: "WB-OCT-DEP-01",
-            note: "月结单 · 银行入金",
+            note: t("imports.sampleDepositNote"),
           }
         : { ...blank, date: d.date, type },
     );
@@ -451,7 +447,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   // A booked record replaced by its broker original stays in the book but out of the default list.
   const superseded = (v) => v.metadata?.supersededBy || String(v.status).toUpperCase() === "VOID";
   const entries = ledger.filter((v) => voided || !superseded(v));
-  const sources = { MANUAL: "手工录入", WEBULL: "Webull", IBKR: "IBKR" };
+  const sources = { MANUAL: t("source.manual"), WEBULL: "Webull", IBKR: "IBKR" };
   const rowKeys = useRowKeys(
     entries.map((v) => v.id),
     amend?.id,
@@ -463,10 +459,10 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   if (!d.accounts.some((a) => a.active))
     return (
       <div className="imp imp-page">
-        <Panel title="导入与对账" className="cap880">
-          <Empty>请先建立一个券商账户。</Empty>
+        <Panel title={t("imports.needAccountTitle")} className="cap880">
+          <Empty>{t("imports.needAccountEmpty")}</Empty>
           <button className="btn pri" onClick={() => onPage("settings", { tab: "book" })}>
-            建立账户
+            {t("imports.createAccountBtn")}
           </button>
         </Panel>
       </div>
@@ -474,22 +470,25 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
 
   const brokers = broker === "both" ? ["ibkr", "webull"] : [broker];
   const update = (
-    <Panel title="更新投资记录" action={<Seg items={brokerTabs} value={broker} onChange={chooseBroker} />}>
+    <Panel
+      title={t("imports.updatePanelTitle")}
+      action={<Seg items={brokerIds.map((id) => [id, t(`imports.broker.${id}`)])} value={broker} onChange={chooseBroker} />}
+    >
       <div className="opts">
         <button type="button" onClick={() => prepare(demo ? "sample" : "live")}>
           <CloudDownload size={22} strokeWidth={1.8} />
-          <b>同步券商</b>
-          <small>{demo ? "预览示例券商记录" : "预览交易和账户余额"}</small>
+          <b>{t("imports.opt.sync")}</b>
+          <small>{t(demo ? "imports.opt.syncDemo" : "imports.opt.syncLive")}</small>
         </button>
         <button type="button" onClick={() => setModal("file")}>
           <FileUp size={22} strokeWidth={1.8} />
-          <b>导入文件</b>
-          <small>IBKR 结单或 Webull 成交记录</small>
+          <b>{t("imports.opt.file")}</b>
+          <small>{t("imports.opt.fileSub")}</small>
         </button>
         <button type="button" onClick={() => setModal("entry")}>
           <FileText size={22} strokeWidth={1.8} />
-          <b>手工补一条</b>
-          <small>买卖、持仓或资金收支</small>
+          <b>{t("imports.opt.manual")}</b>
+          <small>{t("imports.opt.manualSub")}</small>
         </button>
       </div>
       <details
@@ -497,11 +496,13 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         open={Object.keys(mapping).some((b) => brokers.includes(b) && !mapping[b]) || undefined}
       >
         <summary>
-          入账账户 · {brokers.map((b) => d.accounts.find((a) => a.id === mapping[b])?.name || "待选择").join("、")}
+          {t("imports.mappingSummary", {
+            names: brokers.map((b) => d.accounts.find((a) => a.id === mapping[b])?.name || t("imports.pendingSelect")).join(t("common.comma")),
+          })}
         </summary>
         <div className="fg">
           {brokers.map((b) => (
-            <F key={b} label={b.toUpperCase() + " 入账账户"}>
+            <F key={b} label={t("imports.targetAccountLabel", { broker: b.toUpperCase() })}>
               <select
                 value={mapping[b]}
                 onChange={(e) => {
@@ -511,7 +512,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   if (broker === b) selectAccount(e.target.value, true);
                 }}
               >
-                <option value="">选择账户</option>
+                <option value="">{t("app.selectAccount")}</option>
                 {d.accounts
                   .filter((a) => a.active && a.mode === "TRANSACTIONS")
                   .map((a) => (
@@ -552,23 +553,23 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     </BrokerResult>
   );
   const batchCard = batches.length > 0 && (
-    <Panel title="最近导入批次">
+    <Panel title={t("imports.recentBatches")}>
       <div className="tw">
         <table>
           <thead>
             <tr>
-              <th>文件或连接</th>
-              <th className="l">时间</th>
-              <th>新增</th>
-              <th>重复</th>
-              <th>更正</th>
+              <th>{t("imports.col.source")}</th>
+              <th className="l">{t("imports.col.time")}</th>
+              <th>{t("imports.col.imported")}</th>
+              <th>{t("imports.col.duplicate")}</th>
+              <th>{t("imports.col.repaired")}</th>
             </tr>
           </thead>
           <tbody>
             {batches.slice(0, 8).map((b) => (
               <tr key={b.id}>
-                <td>{b.source}</td>
-                <td className="l">{new Date(b.created).toLocaleString("zh-CN")}</td>
+                <td>{sourceLabel(b.source)}</td>
+                <td className="l">{formatDateTime(b.created)}</td>
                 <td>{b.data.imported}</td>
                 <td>{b.data.duplicate}</td>
                 <td>{(b.data.updated || 0) + (b.data.repaired || 0)}</td>
@@ -581,17 +582,23 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   );
 
   const evidence = accountReports.length > 0 && (
-    <Panel title="已补录的股数凭据">
+    <Panel title={t("imports.evidenceTitle")}>
       {accountReports.map((r) => (
         <div className="ev" key={r.day + r.asset}>
           <b>
             {r.symbol} · {r.day}
           </b>
           <span>
-            {r.reference} 记载 {num(r.quantity)} 股，账本可解释 {num(r.ledgerQuantity)} 股。
+            {t("imports.evidenceDesc", {
+              ref: sourceLabel(r.reference),
+              qty: num(r.quantity),
+              ledgerQty: num(r.ledgerQuantity),
+            })}
           </span>
           <b className={Number(r.difference) ? "warn" : "up"}>
-            {Number(r.difference) ? "相差 " + num(Math.abs(r.difference)) + " 股" : "股数吻合"}
+            {Number(r.difference)
+              ? t("imports.evidenceGap", { diff: num(Math.abs(r.difference)) })
+              : t("imports.evidenceMatch")}
           </b>
           <button
             type="button"
@@ -602,7 +609,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               chooseTab("history");
             }}
           >
-            查看相关流水
+            {t("imports.viewRelatedActivity")}
           </button>
         </div>
       ))}
@@ -610,17 +617,17 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   );
   const statement = (
     <Panel
-      title="核对同日券商结单"
+      title={t("imports.reconcileTitle")}
       action={
         webullSample ? (
           <button type="button" className="btn sm" onClick={() => setModal("statement")}>
-            查看示例月结单
+            {t("imports.viewSampleStatement")}
           </button>
         ) : null
       }
     >
       <div className="fg">
-        <F label="结单日期">
+        <F label={t("imports.statementDate")}>
           <input
             type="date"
             value={date}
@@ -653,11 +660,11 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               setCompare(null);
             }}
           />
-          结单显示证券持仓为零
+          {t("imports.zeroHoldings")}
         </label>
       )}
       <div className="fg">
-        <F label="结单同日总资产（AUD，可选）">
+        <F label={t("imports.statementNavOpt")}>
           <input
             type="number"
             step=".01"
@@ -675,20 +682,20 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           className="btn pri"
           onClick={() => run(async () => setCompare(await api.compare(compareArgs())), false)}
         >
-          比较结单
+          {t("imports.compareBtn")}
         </button>
         <button type="button" className="btn" onClick={() => openManual(false)}>
-          补录一笔流水
+          {t("imports.addOneFlowBtn")}
         </button>
         {!demo && nav.trim() && (
           <button
             type="button"
             className="btn"
             onClick={() =>
-              run(() => api.recordAccountValue({ ...compareArgs(), positions: pos }), "已保存同日券商估值")
+              run(() => api.recordAccountValue({ ...compareArgs(), positions: pos }), t("imports.brokerNavSaved"))
             }
           >
-            核对现金及持仓，采用券商净值
+            {t("imports.adoptBrokerNavBtn")}
           </button>
         )}
       </div>
@@ -704,7 +711,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             }
           />
           {!compare.choices.length &&
-            quantityGaps(compare.rows, accountName).map((line) => (
+            quantityGaps(compare.rows, accountName, t).map((line) => (
               <p className="warn result" key={line}>
                 {line}
               </p>
@@ -713,11 +720,11 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             <table>
               <thead>
                 <tr>
-                  <th>核对项</th>
-                  <th>结单</th>
-                  <th>本地账本</th>
-                  <th>差异</th>
-                  <th>来源</th>
+                  <th>{t("imports.col.item")}</th>
+                  <th>{t("imports.col.statement")}</th>
+                  <th>{t("imports.col.local")}</th>
+                  <th>{t("imports.col.diff")}</th>
+                  <th>{t("imports.col.ledgerLink")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -727,18 +734,18 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     <td>{num(r.expected)}</td>
                     <td>{num(r.actual)}</td>
                     <td className={r.delta == null || Number(r.delta) !== 0 ? "warn" : "up"}>
-                      {r.delta == null ? "待核对" : num(r.delta).replace(/^-/, "−")}
+                      {r.delta == null ? t("common.pending") : num(r.delta).replace(/^-/, "−")}
                     </td>
                     <td>
                       <button
                         type="button"
                         className="lnk"
                         onClick={() => {
-                          setSearch(r.label.startsWith("总资产") ? "" : r.label.split(" ")[0]);
+                          setSearch(r.symbol ? r.symbol : "");
                           chooseTab("history");
                         }}
                       >
-                        查流水
+                        {t("imports.viewLedger")}
                       </button>
                     </td>
                   </tr>
@@ -747,13 +754,13 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             </table>
           </div>
           <p className={(compare.ok ? "up" : "warn") + " result"}>
-            {compare.ok ? "本地账本与所填结单一致。" : "请检查凭证及相关流水，再次比较。"} {compare.warnings.join(" ")}
+            {compare.ok ? t("imports.matchOk") : t("imports.matchMismatch")} {compare.warnings.join(" ")}
           </p>
           {compare.ok && (
             <>
               <label className="chk">
                 <input type="checkbox" checked={flow} onChange={(e) => setFlow(e.target.checked)} />
-                已核对期间资金流水及所有币种余额
+                {t("imports.flowsChecked")}
               </label>
               <button
                 type="button"
@@ -765,10 +772,10 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     setCompare(null);
                     setFlow(false);
                     onPage("overview");
-                  }, "对账已保存")
+                  }, t("imports.reconcileSaved"))
                 }
               >
-                完成对账并查看总览
+                {t("imports.completeReconcile")}
               </button>
             </>
           )}
@@ -779,18 +786,18 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
 
   const history = (
     <Panel
-      title="交易与资金流水"
+      title={t("imports.historyTitle")}
       action={
         <button type="button" className="btn pri" onClick={() => openManual(false)}>
-          补录流水
+          {t("imports.addEntryBtn")}
         </button>
       }
     >
       <div className="row">
         <input
           className="btn history-search"
-          aria-label="筛选流水"
-          placeholder="按证券、来源或凭证搜索"
+          aria-label={t("imports.filterLedgerAria")}
+          placeholder={t("imports.filterLedgerPlaceholder")}
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
@@ -799,7 +806,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         />
         <label className="chk">
           <input type="checkbox" checked={voided} onChange={(e) => setVoided(e.target.checked)} />
-          显示已冲销的重复记录
+          {t("imports.showVoided")}
         </label>
       </div>
       {entries.length ? (
@@ -807,13 +814,13 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           <table>
             <thead>
               <tr>
-                <th>日期</th>
-                <th className="l">类型</th>
-                <th className="l">证券</th>
-                <th>数量 × 单价</th>
-                <th>金额</th>
-                <th className="hide-n">费用</th>
-                <th className="l hide-n">来源 / 凭证</th>
+                <th>{t("imports.col.date")}</th>
+                <th className="l">{t("imports.col.type")}</th>
+                <th className="l">{t("imports.col.security")}</th>
+                <th>{t("imports.col.qtyPrice")}</th>
+                <th>{t("imports.col.amount")}</th>
+                <th className="hide-n">{t("imports.col.fee")}</th>
+                <th className="l hide-n">{t("imports.col.sourceRef")}</th>
                 <th />
               </tr>
             </thead>
@@ -833,12 +840,12 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     <td>{String(v.date).slice(0, 10)}</td>
                     <td className="l">
                       {v.metadata?.fx
-                        ? "换汇" + (v.activityType === "TRANSFER_OUT" ? "卖出" : "买入")
-                        : types[v.activityType] || v.activityType}
-                      {superseded(v) && <small>已冲销重复流水</small>}
+                        ? (v.activityType === "TRANSFER_OUT" ? t("imports.fxSell") : t("imports.fxBuy"))
+                        : typeLabel(v.activityType)}
+                      {superseded(v) && <small>{t("imports.voidedTag")}</small>}
                       {fx?.sourceCurrency && fx.destinationCurrency && (
                         <small>
-                          {execution?.autoFx && "自动换汇 · "}
+                          {execution?.autoFx && t("imports.autoFxTag")}
                           {fx.sourceCurrency} → {fx.destinationCurrency}
                         </small>
                       )}
@@ -854,12 +861,12 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     <td>{amount == null ? "—" : v.currency + " " + fmt(amount, 2)}</td>
                     <td className="hide-n">{Number(v.fee) ? v.currency + " " + num(v.fee) : "—"}</td>
                     <td className="l hide-n">
-                      {sources[v.sourceSystem] || v.sourceSystem || "原账本"}
+                      {sources[v.sourceSystem] || sourceLabel(v.sourceSystem || "旧账本")}
                       <small>{v.sourceRecordId || v.comment}</small>
                     </td>
                     <td>
                       <button type="button" className="lnk">
-                        核对 / 更正
+                        {t("imports.amendBtn")}
                       </button>
                     </td>
                   </tr>
@@ -869,11 +876,11 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           </table>
         </div>
       ) : (
-        <Empty>{ledger.length ? "这一页只有已冲销的重复记录。" : "没有找到流水。"}</Empty>
+        <Empty>{ledger.length ? t("imports.onlyVoidedOnPage") : t("imports.noEntries")}</Empty>
       )}
       <div className="acts">
         <button type="button" className="btn" disabled={!offset} onClick={() => setOffset(Math.max(0, offset - PAGE))}>
-          上一页
+          {t("imports.prevPage")}
         </button>
         <button
           type="button"
@@ -881,11 +888,11 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           disabled={ledger.length < PAGE}
           onClick={() => setOffset(offset + PAGE)}
         >
-          下一页
+          {t("imports.nextPage")}
         </button>
         {ledger.length > 0 && (
           <span className="cap">
-            第 {offset + 1} – {offset + ledger.length} 笔
+            {t("imports.pageRange", { from: offset + 1, to: offset + ledger.length })}
           </span>
         )}
       </div>
@@ -893,10 +900,10 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   );
 
   const opening = (
-    <Panel title="从这一天开始记录">
-      <p className="muted">选择开始跟踪的日期，按结单分别填写证券和现金。期初资产会作为计算起点。</p>
+    <Panel title={t("imports.openingTitle")}>
+      <p className="muted">{t("imports.openingDesc")}</p>
       <div className="fg">
-        <F label="期初日期">
+        <F label={t("imports.openingDate")}>
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </F>
       </div>
@@ -916,10 +923,10 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             run(async () => {
               await api.opening({ account, date, cash: cashAmounts(openCash), positions: openPos });
               chooseTab("history");
-            }, "期初余额已保存")
+            }, t("imports.openingSaved"))
           }
         >
-          保存期初余额
+          {t("imports.saveOpening")}
         </button>
       </div>
     </Panel>
@@ -928,7 +935,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   return (
     <div className="imp imp-page">
       <div className="row m0">
-        <Seg items={tabs} value={tab} onChange={chooseTab} />
+        <Seg items={tabIds.map((id) => [id, t(`imports.tab.${id}`)])} value={tab} onChange={chooseTab} />
         <span className="sp" />
         {tab !== "file" && <AccountOptions className="btn" d={d} value={account} set={selectAccount} />}
       </div>
@@ -951,17 +958,17 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       {tab === "opening" && <div className="stack cap880">{opening}</div>}
 
       {tab === "history" && amend && (
-        <Detail title="核对 / 更正流水" onClose={() => setAmend(null)}>
+        <Detail title={t("imports.amendModalTitle")} onClose={() => setAmend(null)}>
           <div className="imp">
             <div className="dl">
               <div>
                 <span className="cap">
-                  {String(amend.date).slice(0, 10)} · {types[amend.activityType] || amend.activityType}
+                  {String(amend.date).slice(0, 10)} · {typeLabel(amend.activityType)}
                 </span>
                 <b>{amend.assetSymbol || amend.currency}</b>
               </div>
               <div>
-                <span className="cap">金额</span>
+                <span className="cap">{t("imports.amend.amount")}</span>
                 <b>
                   {amend.amount != null
                     ? amend.currency + " " + fmt(amend.amount, 2)
@@ -972,27 +979,27 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               </div>
             </div>
             <div className="cap">
-              来源 {sources[amend.sourceSystem] || amend.sourceSystem || "原账本"}
+              {t("imports.sourceWord")} {sources[amend.sourceSystem] || sourceLabel(amend.sourceSystem || "旧账本")}
               {amend.sourceRecordId && " · " + amend.sourceRecordId}
             </div>
             <div className="fg w">
               {[
-                ["date", "日期", "date"],
+                ["date", t("imports.field.date"), "date"],
                 ...(["BUY", "SELL"].includes(amend.activityType)
                   ? [
-                      ["quantity", "数量", "number"],
-                      ["price", "单价", "number"],
-                      ["fee", "费用", "number"],
+                      ["quantity", t("imports.amend.qty"), "number"],
+                      ["price", t("imports.amend.price"), "number"],
+                      ["fee", t("imports.amend.fee"), "number"],
                     ]
                   : amend.assetId && Number(amend.quantity) > 0
-                    ? [["quantity", "数量", "number"]]
-                    : [["amount", "金额", "number"]]),
-                ["note", "备注", "text"],
-                ["reason", "更正依据 / 原始凭证", "text"],
-              ].map(([k, l, t]) => (
+                    ? [["quantity", t("imports.amend.qty"), "number"]]
+                    : [["amount", t("imports.amend.amount"), "number"]]),
+                ["note", t("imports.field.note"), "text"],
+                ["reason", t("imports.amend.reason"), "text"],
+              ].map(([k, l, kindType]) => (
                 <F key={k} label={l}>
                   <input
-                    type={t}
+                    type={kindType}
                     step="any"
                     value={amendForm[k] ?? ""}
                     onChange={(ev) => changeAmend(k, ev.target.value)}
@@ -1013,13 +1020,13 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   run(async () => {
                     await api.amend({ ...blank, ...amendForm, account, id: amend.id, prior: JSON.stringify(amend) });
                     setAmend(null);
-                  }, "流水已更正，原始记录及依据已保留")
+                  }, t("imports.amendSaved"))
                 }
               >
-                保存更正
+                {t("imports.saveAmend")}
               </button>
               <button type="button" className="btn" onClick={() => setAmend(null)}>
-                取消
+                {t("app.cancel")}
               </button>
             </div>
           </div>
@@ -1027,11 +1034,11 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       )}
 
       {modal === "file" && (
-        <Modal title="导入券商文件" close={() => setModal(null)}>
+        <Modal title={t("imports.fileModalTitle")} close={() => setModal(null)}>
           <div className="imp">
             {["ibkr", "webull"].map((b) => (
               <div className="fg" key={b} style={{ alignItems: "end" }}>
-                <F label={b.toUpperCase() + " 入账账户"}>
+                <F label={t("imports.targetAccountLabel", { broker: b.toUpperCase() })}>
                   <AccountOptions d={d} value={mapping[b]} set={(id) => setMapping({ ...mapping, [b]: id })} />
                 </F>
                 <button
@@ -1044,7 +1051,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     prepare("file", b, mapping[b]);
                   }}
                 >
-                  {b === "ibkr" ? "选择 Flex XML" : "选择成交 CSV"}
+                  {t(b === "ibkr" ? "imports.chooseIbkrXml" : "imports.chooseWebullCsv")}
                 </button>
               </div>
             ))}
@@ -1052,22 +1059,22 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         </Modal>
       )}
       {modal === "entry" && (
-        <Modal title="手工补一条" close={() => setModal(null)}>
+        <Modal title={t("imports.manualPickTitle")} close={() => setModal(null)}>
           <div className="imp">
             <div className="fg">
-              <F label="所属账户">
+              <F label={t("imports.belongAccount")}>
                 <AccountOptions d={d} value={account} set={selectAccount} />
               </F>
             </div>
             <div className="acts">
               <button type="button" className="btn" onClick={() => openManual(false, "BUY")}>
-                补一笔买卖
+                {t("imports.manualBuySell")}
               </button>
               <button type="button" className="btn" onClick={() => setModal("position")}>
-                补持仓
+                {t("imports.manualHolding")}
               </button>
               <button type="button" className="btn" onClick={() => openManual()}>
-                补资金流水
+                {t("imports.manualCashFlow")}
               </button>
             </div>
           </div>
@@ -1077,16 +1084,16 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         <HoldingEditor d={d} run={run} account={account} action="position" close={() => setModal(null)} />
       )}
       {modal === "statement" && (
-        <Modal title="Webull Australia · 示例月结单" close={() => setModal(null)}>
+        <Modal title={t("imports.sampleModalTitle")} close={() => setModal(null)}>
           <div className="imp">
             <table>
               <tbody>
                 {[
-                  ["结单日期", "2026-10-30"],
-                  ["期末持仓", "A200 200 股 · BHP 150 股"],
-                  ["期末现金", "AUD 7,600.00"],
-                  ["10 月 28 日 · 银行入金", "AUD 1,000.00"],
-                  ["入金凭证", "WB-OCT-DEP-01"],
+                  [t("imports.statementDate"), "2026-10-30"],
+                  [t("imports.sampleEndingPositions"), t("imports.sampleEndingPositionsVal")],
+                  [t("imports.sampleEndingCash"), "AUD 7,600.00"],
+                  [t("imports.sampleDepositDate"), "AUD 1,000.00"],
+                  [t("imports.sampleDepositRef"), "WB-OCT-DEP-01"],
                 ].map(([k, v]) => (
                   <tr key={k}>
                     <td>{k}</td>
@@ -1111,17 +1118,17 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   setModal(null);
                 }}
               >
-                填入结单用于比较
+                {t("imports.fillForCompare")}
               </button>
               <button type="button" className="btn" onClick={() => openManual(true)}>
-                按凭证补录入金
+                {t("imports.addSampleDeposit")}
               </button>
             </div>
           </div>
         </Modal>
       )}
       {modal === "manual" && (
-        <Modal title="补录账本流水" close={() => setModal(null)}>
+        <Modal title={t("imports.manualModalTitle")} close={() => setModal(null)}>
           <form
             className="imp"
             onSubmit={(e) => {
@@ -1130,20 +1137,20 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                 await api.manual({ account, ...form });
                 setModal(null);
                 setCompare(null);
-              }, "流水已入账");
+              }, t("imports.entryBooked"));
             }}
           >
             <div className="fg">
-              <F label="类型">
+              <F label={t("imports.field.type")}>
                 <select
                   value={form.type}
                   onChange={(e) =>
                     setForm({ ...form, type: e.target.value, assetId: "", symbol: "", mic: "", linkDividend: false })
                   }
                 >
-                  {Object.entries(types).map(([k, v]) => (
+                  {Object.keys(types).map((k) => (
                     <option key={k} value={k}>
-                      {v}
+                      {typeLabel(k)}
                     </option>
                   ))}
                 </select>
@@ -1154,31 +1161,31 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               ) : (
                 form.type === "DIVIDEND" && (
                   <button type="button" className="lnk" onClick={() => change("linkDividend", true)}>
-                    关联证券
+                    {t("imports.linkDividend")}
                   </button>
                 )
               )}
               {[
-                ["date", "日期", "date"],
+                ["date", t("imports.field.date"), "date"],
                 ...(["BUY", "SELL"].includes(form.type) ||
                 (form.type === "DIVIDEND" && (form.linkDividend || form.symbol))
                   ? []
-                  : [["currency", "币种", "text"]]),
+                  : [["currency", t("imports.field.currency"), "text"]]),
                 ...(["BUY", "SELL"].includes(form.type)
                   ? [
-                      ["quantity", "成交数量", "number"],
-                      ["price", "成交价", "number"],
-                      ["fee", "手续费", "number"],
+                      ["quantity", t("imports.field.qty"), "number"],
+                      ["price", t("imports.field.price"), "number"],
+                      ["fee", t("imports.field.fee"), "number"],
                     ]
-                  : [["amount", "金额", "number"]]),
-                ...(form.type.startsWith("TRANSFER") ? [["group", "两端共用划转编号", "text"]] : []),
-                ["reference", "结单凭证编号", "text"],
-                ["note", "备注", "text"],
-              ].map(([k, l, t]) => (
+                  : [["amount", t("imports.field.amount"), "number"]]),
+                ...(form.type.startsWith("TRANSFER") ? [["group", t("imports.field.transferGroup"), "text"]] : []),
+                ["reference", t("imports.field.reference"), "text"],
+                ["note", t("imports.field.note"), "text"],
+              ].map(([k, l, kindType]) => (
                 <F key={k} label={l}>
                   <input
                     required={!["note", "fee", "mic", "group"].includes(k)}
-                    type={t}
+                    type={kindType}
                     step="any"
                     value={form[k]}
                     onChange={(e) => change(k, e.target.value)}
@@ -1188,10 +1195,10 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             </div>
             <div className="acts">
               <button className="btn pri" type="submit">
-                确认记入 {accountName}
+                {t("imports.confirmBookTo", { account: accountName })}
               </button>
               <button type="button" className="btn" onClick={() => setModal(null)}>
-                取消
+                {t("app.cancel")}
               </button>
             </div>
           </form>

@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 const actions = [
   "home",
   "setTheme",
+  "setLanguage",
   "beginAccountSetup",
   "checkAccountSetup",
   "bindAccount",

@@ -2,6 +2,7 @@ import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Wallet } from "lucide-react";
 import { inlineLabelGap, subTreemapLayout, treemapLayout } from "./treemapLayout.js";
 import { useWidth } from "./useWidth.js";
+import { useI18n } from "../i18n.jsx";
 import "./charts.css";
 
 /**
@@ -72,6 +73,7 @@ function calloutAlignment(outside, width) {
 }
 
 function OtherNestedTile({ item, text, w, h }) {
+  const { t } = useI18n();
   const showNested = Boolean(item.subItems?.length && w >= 120 && h >= 130);
   if (!showNested) {
     return (
@@ -89,7 +91,7 @@ function OtherNestedTile({ item, text, w, h }) {
         <span>
           <b><span>{item.label}</span></b> <em className="ch-tm-other-pct">{item.detail?.[0]}</em>
         </span>
-        {w > 135 && <small className="ch-tm-drill-badge">下钻查看 ETF ↗</small>}
+        {w > 135 && <small className="ch-tm-drill-badge">{t("tm.drillIntoEtf")}</small>}
       </div>
       {subBoxes.map((sb) => {
         const sw = Math.max(0, sb.w - 4);
@@ -111,7 +113,7 @@ function OtherNestedTile({ item, text, w, h }) {
             {sh > 36 && sw > 44 && (
               <div className="ch-tm-sub-row">
                 <small>{sb.item.share}</small>
-                {sw > 96 && sb.item.inside && <small className="ch-tm-sub-in">{sb.item.inside} 占比</small>}
+                {sw > 96 && sb.item.inside && <small className="ch-tm-sub-in">{sb.item.inside}{t("tm.shareSuffix")}</small>}
               </div>
             )}
           </div>
@@ -122,6 +124,7 @@ function OtherNestedTile({ item, text, w, h }) {
 }
 
 function RefinedTileBody({ item, w, h, text }) {
+  const { t } = useI18n();
   const primary = item.primaryTicker ?? item.label;
   const shareText = item.share ?? item.detail?.[0] ?? "";
   const isCompact = w < 110 || h < 82;
@@ -174,7 +177,7 @@ function RefinedTileBody({ item, w, h, text }) {
           <div className="ch-tm-title-row">
             <b style={{ fontSize: tickerFont }}>{primary}</b>
             {item.bucketDrillable && w >= 110 && h >= 68 && (
-              <small className="ch-tm-drill-badge">下钻 ↗</small>
+              <small className="ch-tm-drill-badge">{t("tm.drillBtn")}</small>
             )}
           </div>
           {w >= 140 && h >= 92 && item.bucketSub && (
@@ -220,9 +223,9 @@ function RefinedTileBody({ item, w, h, text }) {
             {item.change >= 0 ? "▲" : "▼"} {Math.abs(item.change * 100).toFixed(2)}%
           </span>
         )}
-        {showUnquotedPill && <span className="ch-tm-badge-soft">待报价</span>}
+        {showUnquotedPill && <span className="ch-tm-badge-soft">{t("tm.unquoted")}</span>}
         {showHowSub && (
-          <span className="ch-tm-how-sub">直接 {item.directPct} · ETF {item.etfPct}</span>
+          <span className="ch-tm-how-sub">{t("tm.directShort")} {item.directPct} · {t("tm.etfShort")} {item.etfPct}</span>
         )}
       </div>
     </div>

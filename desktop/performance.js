@@ -6,6 +6,7 @@ import { canonicalIdentity } from "./allocation/domain/identifiers";
 import { reviewDates } from "./reviewMarket.js";
 import { reviewBook, summarizePeriod, valuation } from "./periodSummary.js";
 import { attributedAsset, gainBreakdown } from "./gainBreakdown.js";
+import { tMain } from "./i18n/index.js";
 
 const D = (n) => new Decimal(n);
 
@@ -136,12 +137,12 @@ export function periodContributions(context, from, to, gain) {
         const amount = external || internal ? fees.neg() : cashPosting;
         if (amount.isZero()) continue;
         const label = e.metadata?.fx
-          ? "换汇差额及费用"
+          ? tMain("perf.fxDiffFees")
           : external || internal
-            ? "划转费用"
+            ? tMain("perf.transferFees")
             : e.activityType === "INTEREST"
-              ? "现金利息"
-              : "待归属";
+              ? tMain("perf.cashInterest")
+              : tMain("perf.unattributed");
         const row = entry(label, label, "account");
         add(row, convert(amount));
         row.events.push(receipt);
@@ -151,7 +152,7 @@ export function periodContributions(context, from, to, gain) {
   for (const [code, balance] of cash) {
     if (code === "AUD" || !balance.known || !balance.units.abs().lt("0.000001") || balance.value.isZero())
       continue;
-    add(entry("fx:" + code, code + " 现金汇率变动", "account"), balance.value);
+    add(entry("fx:" + code, tMain("perf.cashFxChange", { code }), "account"), balance.value);
   }
   const rows = [...groups.values()]
     .map((r) => ({
@@ -168,7 +169,7 @@ export function periodContributions(context, from, to, gain) {
   if (remainder.abs().gte("0.005"))
     rows.push({
       key: "unreconciled",
-      label: "尚待核对的估值或流水差额",
+      label: tMain("perf.pendingValOrFlowGap"),
       kind: "account",
       events: [],
       gain: remainder.toNumber(),
@@ -204,7 +205,7 @@ export function portfolioReview(db, args) {
       : { start: summary.startValue, end: summary.endValue, flows: summary.netFlow, gain: summary.gain };
   const fxQuotes = ["FX:USD/AUD", "FX:AUD/USD"].flatMap((id) => context.book.prices.get(id) || []);
   const fxDates = fxQuotes.map((q) => q.day).sort();
-  const fetchable = /收盘价|汇率|点位/;
+  const fetchable = /收盘价|收盤價|汇率|匯率|点位|點位|close|FX|index/i;
   return {
     ids: context.ids,
     accountNames: Object.fromEntries(context.accounts.map(({ account }) => [account.id, account.name])),
@@ -239,9 +240,9 @@ export function portfolioReview(db, args) {
 
 export function saveReviewNote(db, review, text, id = randomUUID()) {
   const body = String(text || "").trim();
-  if (!body || body.length > 8000) throw Error("请输入 1 至 8000 字的复盘笔记。");
+  if (!body || body.length > 8000) throw Error(tMain("perf.noteLength"));
   const { ids, from, to, metrics } = review;
-  if (typeof id !== "string" || !/^[a-f\d-]{36}$/i.test(id)) throw Error("笔记编号无效。");
+  if (typeof id !== "string" || !/^[a-f\d-]{36}$/i.test(id)) throw Error(tMain("perf.invalidNoteId"));
   const prior = db.prepare("SELECT data FROM sp_review_notes WHERE id=?").get(id);
   if (prior) {
     const saved = JSON.parse(prior.data);
@@ -252,7 +253,7 @@ export function saveReviewNote(db, review, text, id = randomUUID()) {
       JSON.stringify(saved.ids) === JSON.stringify(ids)
     )
       return saved;
-    throw Error("此笔记已保存，请新建笔记。");
+    throw Error(tMain("perf.noteAlreadySaved"));
   }
   const note = {
     id,

@@ -15,6 +15,7 @@ async function open(verify) {
     STACK_PORTFOLIO_TEST_DIR: profile,
     STACK_PORTFOLIO_TEST_SOURCE: path.join(profile, "empty"),
     STACK_PORTFOLIO_HEADLESS: "1",
+    STACK_PORTFOLIO_LOCALE: process.env.STACK_PORTFOLIO_LOCALE || "zh-CN",
   };
   delete env.ELECTRON_RUN_AS_NODE;
   const app = await electron.launch({ executablePath, args: process.argv[2] ? [] : [appRoot], env });

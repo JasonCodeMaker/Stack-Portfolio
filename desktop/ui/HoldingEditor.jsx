@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { AccountSelect, api, Field, kind, Modal, num } from "./common";
+import { useI18n } from "./i18n.jsx";
 
 export const marketNames = {
   XASX: "澳大利亚 ASX",
@@ -8,16 +9,17 @@ export const marketNames = {
   ARCX: "美国 NYSE Arca",
   BATS: "美国 Cboe",
 };
-export const listingLabel = (a) =>
-  [a.name || a.symbol, marketNames[a.mic] || a.mic || "上市地待补", a.currency].join(" · ");
+export const listingLabel = (a, marketLabel, pending = "上市地待补") =>
+  [a.name || a.symbol, (marketLabel ? marketLabel(a.mic) : marketNames[a.mic] || a.mic || pending), a.currency].join(" · ");
 
 export function SecurityFields({ d, form, setForm }) {
+  const { t, marketLabel } = useI18n();
   const symbol = (form.symbol || "").trim().toUpperCase();
   const candidates = d.listings.filter((a) => a.symbol.toUpperCase() === symbol);
   const selected = candidates.find((a) => a.id === form.assetId);
   return (
     <>
-      <Field label="证券代码">
+      <Field label={t("editor.symbol")}>
         <input
           required
           value={form.symbol}
@@ -37,7 +39,7 @@ export function SecurityFields({ d, form, setForm }) {
         />
       </Field>
       {candidates.length > 0 && (
-        <Field label="上市证券">
+        <Field label={t("editor.listing")}>
           <select
             required
             value={form.assetId || ""}
@@ -52,19 +54,19 @@ export function SecurityFields({ d, form, setForm }) {
               });
             }}
           >
-            <option value="">选择上市证券</option>
+            <option value="">{t("editor.selectListing")}</option>
             {candidates.map((a) => (
               <option key={a.id} value={a.id}>
-                {listingLabel(a)}
+                {listingLabel(a, marketLabel)}
               </option>
             ))}
-            <option value="new">添加另一个上市证券</option>
+            <option value="new">{t("editor.addListing")}</option>
           </select>
         </Field>
       )}
       {!selected && (
         <>
-          <Field label="交易币种">
+          <Field label={t("editor.tradeCurrency")}>
             <input
               required
               maxLength={3}
@@ -72,34 +74,34 @@ export function SecurityFields({ d, form, setForm }) {
               onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
             />
           </Field>
-          <Field label="上市市场">
+          <Field label={t("editor.exchangeMarket")}>
             <input
               list="holding-markets"
-              placeholder="选择市场或输入交易所代码"
+              placeholder={t("editor.exchangePlaceholder")}
               value={form.mic}
               required={form.assetId === "new"}
               onChange={(e) => setForm({ ...form, mic: e.target.value.toUpperCase() })}
             />
             <datalist id="holding-markets">
-              {Object.entries(marketNames).map(([mic, label]) => (
+              {Object.keys(marketNames).map((mic) => (
                 <option key={mic} value={mic}>
-                  {label}
+                  {marketLabel(mic)}
                 </option>
               ))}
             </datalist>
           </Field>
-          <Field label="证券名称（可选）">
+          <Field label={t("editor.securityNameOpt")}>
             <input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </Field>
-          <Field label="证券类别">
+          <Field label={t("editor.securityType")}>
             <select
               value={form.kind || "EQUITY"}
               onChange={(e) => setForm({ ...form, kind: e.target.value })}
             >
-              <option value="EQUITY">股票</option>
-              <option value="ETF">ETF</option>
-              <option value="BOND">债券</option>
-              <option value="UNKNOWN">待分类</option>
+              <option value="EQUITY">{t("editor.type.EQUITY")}</option>
+              <option value="ETF">{t("editor.type.ETF")}</option>
+              <option value="BOND">{t("editor.type.BOND")}</option>
+              <option value="UNKNOWN">{t("editor.type.UNKNOWN")}</option>
             </select>
           </Field>
         </>
@@ -108,8 +110,8 @@ export function SecurityFields({ d, form, setForm }) {
   );
 }
 
-const titles = { position: "补持仓", cost: "补成本", price: "补报价", fx: "补汇率", type: "更正证券类别" };
 export function HoldingEditor({ d, run, action, row, account, close }) {
+  const { t, kindLabel } = useI18n();
   const [form, setForm] = useState({
     account: row?.accountId || account || d.selected[0] || d.accounts.find((a) => a.active)?.id || "",
     date: d.date,
@@ -157,48 +159,48 @@ export function HoldingEditor({ d, run, action, row, account, close }) {
         costOnly: action === "cost",
       });
       return true;
-    }, "已保存");
+    }, t("app.saved"));
     setSaving(false);
     if (ok) close(true);
   }
   return (
-    <Modal title={titles[action] + (row ? " · " + row.ticker : "")} close={() => close(false)}>
+    <Modal title={t(`editor.title.${action}`) + (row ? " · " + row.ticker : "")} close={() => close(false)}>
       {row && (
         <p className="muted">
-          {row.accountName} · {row.name} · {num(row.quantity)} 股／份
+          {t("editor.summaryMeta", { account: row.accountName, name: row.name, qty: num(row.quantity) })}
         </p>
       )}
       <form onSubmit={save}>
         <div className="form-grid">
           {!row && (
-            <Field label="记录所属账户">
+            <Field label={t("editor.recordAccount")}>
               <AccountSelect data={d} value={form.account} set={(account) => setForm({ ...form, account })} />
             </Field>
           )}
           {action !== "type" &&
             (action === "cost" ? (
-              <Field label="成本凭据日期">
+              <Field label={t("editor.costReceiptDate")}>
                 <input type="date" readOnly value={form.date} />
               </Field>
             ) : (
-              field("date", "记录日期", "date")
+              field("date", t("editor.recordDate"), "date")
             ))}
           {action === "position" && (
             <>
               <SecurityFields d={d} form={form} setForm={setForm} />
-              {field("quantity", "截至该日的股数或份额", "number")}
+              {field("quantity", t("editor.qtyAsOfDate"), "number")}
             </>
           )}
-          {action === "price" && field("price", "每股／份报价（" + row.localCurrency + "）", "number")}
-          {action === "fx" && field("price", "1 " + row.localCurrency + " 等于多少 AUD", "number")}
+          {action === "price" && field("price", t("editor.unitPrice", { currency: row.localCurrency }), "number")}
+          {action === "fx" && field("price", t("editor.fxUnits", { currency: row.localCurrency }), "number")}
           {action === "type" && (
-            <Field label="证券类别">
+            <Field label={t("editor.securityType")}>
               <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-                {Object.entries(kind)
-                  .filter(([k]) => k !== "cash")
-                  .map(([k, v]) => (
+                {Object.keys(kind)
+                  .filter((k) => k !== "cash")
+                  .map((k) => (
                     <option key={k} value={k}>
-                      {v}
+                      {kindLabel(k)}
                     </option>
                   ))}
               </select>
@@ -206,23 +208,29 @@ export function HoldingEditor({ d, run, action, row, account, close }) {
           )}
           {["position", "cost"].includes(action) && (
             <>
-              {field("localCost", "这些股数的总买入成本（" + form.currency + "，含买入费用" +
-                (action === "position" ? "，可留空" : "") + "）", "number",
-                action === "cost" && (form.currency === "AUD" || !form.audCost))}
+              {field(
+                "localCost",
+                t("editor.totalCostLocal", {
+                  currency: form.currency,
+                  optional: action === "position" ? t("editor.optionalComma") : "",
+                }),
+                "number",
+                action === "cost" && (form.currency === "AUD" || !form.audCost),
+              )}
               {form.currency !== "AUD" && (
                 <details>
-                  <summary>记录历史澳元成本（可选）</summary>
-                  {field("audCost", "凭据中的历史金额（AUD）", "number", false)}
-                  <small>估值日的持仓成本按上方的 {form.currency} 总买入成本折算。</small>
+                  <summary>{t("editor.recordHistoricalAud")}</summary>
+                  {field("audCost", t("editor.historicalAudAmount"), "number", false)}
+                  <small>{t("editor.historicalAudHint", { currency: form.currency })}</small>
                 </details>
               )}
-              {field("reference", "凭据（如券商结单日期或编号）")}
+              {field("reference", t("editor.evidenceRef"))}
             </>
           )}
         </div>
         <div className="actions">
           <button className="primary" disabled={saving}>
-            保存{action === "position" ? "持仓" : ""}
+            {action === "position" ? t("editor.saveHolding") : t("app.save")}
           </button>
         </div>
       </form>

@@ -2,6 +2,7 @@ import { EtfCache } from "./allocation/storage/etfCache";
 import { storageContext } from "./flows.js";
 import { ALLOCATION, preference, putPref, saveEvent, savePrice, transaction } from "./ledger.js";
 import { closingDay, shiftDay } from "./marketDays.js";
+import { tMain } from "./i18n/index.js";
 
 export const demoDay = "2026-10-30";
 export const demoCsv =
@@ -56,14 +57,14 @@ export async function seedDemo(db) {
         amount: "1000",
         date: "2026-10-16",
         group: "demo-paired",
-        comment: "两个账户之间划转",
+        comment: tMain("demo.transferComment"),
         status: "POSTED",
       });
     }
     db.prepare("INSERT INTO sp_checks VALUES(?,?,?)").run(
       "demo-webull",
       "2026-10-27",
-      "Webull 只有成交数据，现金及期间盈亏待月结单核对",
+      tMain("demo.webullNote"),
     );
     putPref(db, "app", "demo", "1");
   });
@@ -139,7 +140,7 @@ function seedDemoReview(db) {
         ["demo-ibkr", "aapl", "100", "18000", "27000"],
         ["demo-ibkr", "ivv", "100", "32000", "48000"],
         ["demo-webull", "a200", "200", "27300", "27300"],
-      ]) add.run({account, asset, start, units, local, aud, reference:"示例券商成本凭据 · " + asset.toUpperCase()});
+      ]) add.run({account, asset, start, units, local, aud, reference: tMain("demo.costEvidence", { asset: asset.toUpperCase() })});
       putPref(db, "app", "demo-costs-v1", "1");
     });
   }

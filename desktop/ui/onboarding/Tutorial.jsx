@@ -2,11 +2,13 @@ import React, { useEffect, useRef, useState } from "react";
 import { BookOpen, ChevronDown } from "lucide-react";
 import { StepNotes, FieldSource } from "./StepNotes";
 import { Modal } from "../common";
-import { brokerNames, brokerGuides, accountChapter, importChapter } from "./brokerGuide";
+import { brokerNames, buildBrokerGuides, accountChapter, importChapter } from "./brokerGuide";
 import { Screenshots } from "./Screenshots";
 import { PhoneGuide } from "./PhoneGuide";
+import { useI18n } from "../i18n.jsx";
 
 function Tutorial({ initialBroker, initialStep, close }) {
+  const { t } = useI18n();
   const [broker, setBroker] = useState(initialBroker);
   const [expanded, setExpanded] = useState(initialStep);
   const chaptersList = useRef(null);
@@ -17,7 +19,8 @@ function Tutorial({ initialBroker, initialStep, close }) {
       list.scrollTop += active.getBoundingClientRect().top - list.getBoundingClientRect().top - 8;
     }
   }, [broker, expanded]);
-  const chapters = [...brokerGuides[broker], accountChapter(broker), importChapter(broker)];
+  const guides = buildBrokerGuides(t);
+  const chapters = [...guides[broker], accountChapter(broker, t), importChapter(broker, t)];
   function switchBroker(next) {
     if (next !== broker) {
       setBroker(next);
@@ -25,8 +28,8 @@ function Tutorial({ initialBroker, initialStep, close }) {
     }
   }
   return (
-    <Modal title="完整账户教程" close={close} wide>
-      <div className="ob-manual-brokers" role="group" aria-label="选择要阅读的券商教程">
+    <Modal title={t("ob.tut.title")} close={close} wide>
+      <div className="ob-manual-brokers" role="group" aria-label={t("ob.tut.brokerPickAria")}>
         {Object.entries(brokerNames).map(([id, label]) => (
           <button key={id} aria-pressed={broker === id} onClick={() => switchBroker(id)}>
             {label}
@@ -75,7 +78,7 @@ function Tutorial({ initialBroker, initialStep, close }) {
       </ol>
       <div className="ob-manual-footer">
         <button className="ob-primary" onClick={close}>
-          返回当前页面
+          {t("ob.tut.backCurrent")}
         </button>
       </div>
     </Modal>
@@ -83,9 +86,11 @@ function Tutorial({ initialBroker, initialStep, close }) {
 }
 
 export function TutorialLauncher({ broker, page, step = 0 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const initialBroker = broker || "ibkr";
-  const guideLength = brokerGuides[initialBroker].length;
+  const guides = buildBrokerGuides(t);
+  const guideLength = guides[initialBroker].length;
   const initialStep =
     page === "guide"
       ? step
@@ -98,7 +103,7 @@ export function TutorialLauncher({ broker, page, step = 0 }) {
     <>
       <button className="ob-manual-button" aria-haspopup="dialog" onClick={() => setOpen(true)}>
         <BookOpen size={17} />
-        查看完整教程
+        {t("ob.tut.openBtn")}
       </button>
       {open && (
         <Tutorial initialBroker={initialBroker} initialStep={initialStep} close={() => setOpen(false)} />

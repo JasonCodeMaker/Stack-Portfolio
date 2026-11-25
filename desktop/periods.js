@@ -1,6 +1,7 @@
 // Period resolution shared by the period summary engine and the screens' period control.
 // Pure date arithmetic on YYYY-MM-DD strings, so the renderer can bundle it too.
 import { shiftDay } from "./marketDays.js";
+import { tMain } from "./i18n/index.js";
 
 export const dayOf = (date) => String(date || "").slice(0, 10);
 export function day(value) {
@@ -10,7 +11,7 @@ export function day(value) {
     !Number.isFinite(Date.parse(text)) ||
     new Date(text).toISOString().slice(0, 10) !== text
   )
-    throw Error("请输入有效日期。");
+    throw Error(tMain("period.invalidDate"));
   return text;
 }
 
@@ -43,8 +44,8 @@ export function resolvePeriod({ to, period = "ytd", from, earliest }) {
   else if (period === "ytd") start = to.slice(0, 5) + "01-01";
   else if (period === "all") start = earliest && earliest <= to ? earliest : to;
   else if (monthPresets[period]) start = shiftDay(monthsBefore(to, monthPresets[period]), 1);
-  else throw Error("无法识别的期间：" + period);
-  if (start > to) throw Error("期间起点须早于或等于终点。");
+  else throw Error(tMain("period.unknown", { period }));
+  if (start > to) throw Error(tMain("period.invalidOrder"));
   const requested = start,
     clipped = Boolean(earliest) && start < earliest && earliest <= to;
   if (clipped) start = earliest;

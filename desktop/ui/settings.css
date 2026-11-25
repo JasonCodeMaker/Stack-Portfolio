@@ -79,6 +79,9 @@
 }
 
 /* ---------- Settings ---------- */
+.settings > .row {
+  flex-wrap: wrap;
+}
 .settings .stack {
   display: grid;
   gap: var(--gap);
