@@ -39,7 +39,6 @@ const { refreshBenchmarks, refreshCloses } = require("./reviewMarket.js");
 const { marketFor, marketSession, marketTime, shiftDay } = require("./marketDays.js");
 const { createMacroMarket } = require("./macroMarket.js");
 const { macroSources } = require("./macroSources.js");
-const { createSentiment } = require("./marketSentiment.js");
 const { initialWindow, minimumWindowSize } = require("./windowState.js");
 const { computeDisplayState, normalizeUserScale, USER_SCALE_LIMITS } = require("./adaptiveLayout.js");
 const {
@@ -138,23 +137,8 @@ function writeFileAtomic(file, data) {
   }
 }
 const macroCacheFile = () => path.join(dataDir(), "macro-market.json");
-const macroProviders = macroSources((url, options) => net.fetch(url, options));
-const marketSentiment = createSentiment({
-  fetchScore: macroProviders.sentiment,
-  readPrivate: () => {
-    const stored = readPreferences().finMindSentiment;
-    return stored ? JSON.parse(safeStorage.decryptString(Buffer.from(stored, "base64"))) : null;
-  },
-  writePrivate: (value) => {
-    if (value === null) return writePreferences({ finMindSentiment: null });
-    if (!safeStorage.isEncryptionAvailable()) throw Error(tMain("err.dpapiUnavailable"));
-    const stored = safeStorage.encryptString(JSON.stringify(value)).toString("base64");
-    writePreferences({ finMindSentiment: stored });
-  },
-});
 const macroMarket = createMacroMarket({
-  providers: macroProviders,
-  sentiment: marketSentiment,
+  providers: macroSources((url, options) => net.fetch(url, options)),
   readCache: () => fs.readFileSync(macroCacheFile(), "utf8"),
   writeCache: (data) => writeFileAtomic(macroCacheFile(), data),
 });
@@ -338,7 +322,6 @@ const nativeBackup = () => [{ name: tMain("dialog.filter.restoreBackup"), extens
 const handlers = {
   macroMarket: () => macroMarket.snapshot(),
   refreshMacroMarket: () => macroMarket.refresh(),
-  configureMarketSentiment: ({ token }) => marketSentiment.configure(token),
   displayState: () => syncDisplay(),
   setUserScale,
   async home() {
@@ -866,8 +849,7 @@ for (const [name, fn] of Object.entries(handlers))
     if (event.sender !== win?.webContents || event.senderFrame !== win.webContents.mainFrame ||
         event.senderFrame?.url !== page) throw Error(tMain("err.invalidRequestOrigin"));
     // Display and Macro Analysis actions use workspace state independently of the ledger.
-    if (["displayState", "setUserScale", "macroMarket", "refreshMacroMarket", "configureMarketSentiment"].includes(name))
-      return fn(args ?? {});
+    if (["displayState", "setUserScale", "macroMarket", "refreshMacroMarket"].includes(name)) return fn(args ?? {});
     if (!switchingBooks && ["dashboard", "history", "connections", "preview"].includes(name)) {
       const read = Promise.resolve().then(() => fn(args || {}));
       readers.add(read);

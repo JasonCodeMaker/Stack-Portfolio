@@ -7,8 +7,6 @@ const cpiSeries = "CUUR0000SA0";
 const cpiUrl = "https://api.bls.gov/publicAPI/v2/timeseries/data/" + cpiSeries;
 const scheduleUrl = "https://www.bls.gov/schedule/news_release/cpi.htm";
 const h15Series = "RIFLGFCY10_N.B";
-const finMindUrl = "https://api.finmindtrade.com/api/v4/data";
-const sentimentRatings = new Set(["extreme fear", "fear", "neutral", "greed", "extreme greed"]);
 const mib = 1024 * 1024;
 const xmlLimit = 100 * mib;
 const maxHistoryDays = 366;
@@ -29,16 +27,15 @@ function finiteNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-async function readResponse(fetch, url, byteLimit, headers) {
+async function readResponse(fetch, url, byteLimit) {
   const response = await fetch(url, {
     credentials: "omit",
     redirect: "error",
-    headers,
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok || !response.body || Number(response.headers.get("content-length")) > byteLimit) {
     await response.body?.cancel();
-    throw Object.assign(Error("Macro source did not return a usable response"), { status: response.status });
+    throw Error("Macro source did not return a usable response");
   }
   const chunks = [];
   let bytes = 0;
@@ -172,36 +169,8 @@ export const bundledCpiSchedule = [
   ["2027-10", "2027-11-10"], ["2027-11", "2027-12-10"],
 ].map(([month, date]) => eventInEasternTime(month, date, 8, 30));
 
-export function parseFinMindSentiment(payload, throughDate) {
-  if (payload?.status !== 200) {
-    throw Object.assign(Error("FinMind did not return the CNN dataset"), { status: payload?.status });
-  }
-  if (!Array.isArray(payload.data) || !payload.data.length) throw Error("FinMind sentiment observations are missing");
-  const rows = new Map();
-  for (const row of payload.data) {
-    const date = row?.date;
-    const score = row?.fear_greed;
-    const rating = typeof row?.fear_greed_emotion === "string" ? row.fear_greed_emotion.trim().toLowerCase() : "";
-    if (!isDate(date) || date > throughDate || !Number.isFinite(score) || score < 0 || score > 100 ||
-        !sentimentRatings.has(rating) || rows.has(date)) throw Error("Invalid FinMind sentiment observation");
-    rows.set(date, { score, rating, observationDate: date });
-  }
-  return rows.get([...rows.keys()].sort().at(-1));
-}
-
 export function macroSources(fetch) {
   return {
-    async sentiment(token, at) {
-      const date = marketTime(at, "US").date;
-      const url = new URL(finMindUrl);
-      url.search = new URLSearchParams({
-        dataset: "CnnFearGreedIndex",
-        start_date: shiftDay(date, -14),
-        end_date: date,
-      });
-      const body = await readResponse(fetch, url.toString(), mib, { Authorization: "Bearer " + token });
-      return parseFinMindSentiment(JSON.parse(body.toString("utf8")), date);
-    },
     async treasury() {
       const download = await readResponse(fetch, h15Url, 10 * mib);
       const archive = await yauzl.fromBufferPromise(download);

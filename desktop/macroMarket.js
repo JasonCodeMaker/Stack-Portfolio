@@ -44,7 +44,7 @@ function validRecord(key, record) {
     data.every((event) => isMonth(event?.referenceMonth) && isTimestamp(event.scheduledAt));
 }
 
-export function createMacroMarket({ providers, readCache, writeCache, sentiment, now = Date.now }) {
+export function createMacroMarket({ providers, readCache, writeCache, now = Date.now }) {
   const attempts = {};
   let records;
   let pending;
@@ -118,7 +118,12 @@ export function createMacroMarket({ providers, readCache, writeCache, sentiment,
           awaiting,
         },
       },
-      sentiment: sentiment?.snapshot(at) ?? null,
+      sentiment: {
+        source: "CNN Fear & Greed Index",
+        status: "unavailable",
+        reason: "noVerifiedDataFeed",
+        score: null,
+      },
     };
   }
 
@@ -189,10 +194,8 @@ export function createMacroMarket({ providers, readCache, writeCache, sentiment,
       attempts.cpi = at;
       save();
     }
-    const publicRefresh = Promise.all(keys.map((key) => update(key, at))).then((changed) => {
-      if (changed.some(Boolean)) save();
-    });
-    await Promise.all([publicRefresh, sentiment?.refresh(at)]);
+    const changed = await Promise.all(keys.map((key) => update(key, at)));
+    if (changed.some(Boolean)) save();
     return snapshot();
   }
 
