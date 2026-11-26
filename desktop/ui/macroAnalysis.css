@@ -129,10 +129,13 @@
 }
 
 .macro-fg-dial {
+  display: grid;
+  justify-items: center;
   text-align: center;
 }
 
 .macro-fg-svg-wrap {
+  width: 100%;
   max-width: 220px;
   margin: 0 auto;
 }
@@ -154,15 +157,20 @@
 }
 
 .macro-fg-score {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
   font: 700 48px/52px var(--display);
   letter-spacing: -0.02em;
+  color: var(--hero-text);
   margin-top: 2px;
 }
 
 .macro-fg-score small {
   font: 400 15px/20px var(--text);
-  opacity: 0.82;
-  margin-left: 4px;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .macro-fg-rating {
@@ -233,9 +241,11 @@
   opacity: 0.88;
 }
 
-.macro-fg-foot {
+.hero .macro-fg-foot {
   margin-top: 14px;
-  background: rgba(255, 255, 255, 0.11);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.12);
   color: var(--hero-text);
   display: flex;
   flex-wrap: wrap;

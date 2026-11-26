@@ -193,7 +193,7 @@ function SentimentHero({ fmt, sentiment, loading }) {
         </div>
       </div>
 
-      <div className="note macro-fg-foot">
+      <div className="macro-fg-foot">
         <span>{t("macro.sentiment.note")}</span>
         <span className="macro-fg-sep">·</span>
         <span>{t("macro.sentiment.source", { name: sentiment?.source ?? "Fear & Greed Flow" })}</span>
