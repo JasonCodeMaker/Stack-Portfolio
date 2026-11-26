@@ -61,6 +61,19 @@ const paths = {
       <path d="M7 3v4m10-4v4M3 10h18M8 17v-2m4 2v-4m4 4v-3" />
     </>
   ),
+  gauge: (
+    <>
+      <path d="M3 17a9 9 0 0 1 18 0" />
+      <path d="M12 17l4-8" />
+      <circle cx="12" cy="17" r="1.2" />
+    </>
+  ),
+  calendar: (
+    <>
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
+    </>
+  ),
 };
 export function Icon({ name, size = 18 }) {
   return (
