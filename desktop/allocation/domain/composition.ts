@@ -1,11 +1,32 @@
-import type { AllocationRow, AssetType, ExposureModel, ExposureRow, RebalanceModel, RebalanceRow } from "./types";
+import type { AllocationRow, AssetType, EtfSource, ExposureModel, ExposureRow, RebalanceModel, RebalanceRow } from "./types";
+
+export interface TailSource {
+  key: string;
+  ticker: string;
+  label: string;
+  valueAud: number;
+  weight: number | null;
+}
 
 export interface TailMember {
   key: string;
   ticker?: string;
   label: string;
+  sector?: string;
+  country?: string;
   valueAud: number;
   weight: number | null;
+  fundWeight?: number | null;
+  sources?: TailSource[];
+  overlaps?: boolean;
+}
+
+export interface TailSectorSlice {
+  sector: string;
+  valueAud: number;
+  weight: number | null;
+  shareOfBucket: number | null;
+  count: number;
 }
 
 export type OtherBucketKind = "etf" | "small-direct" | "opaque" | "residual" | "small-cash" | "other-assets";
@@ -16,36 +37,95 @@ export interface OtherBucket {
   ticker: string;
   label: string;
   subtitle?: string;
+  etfKey?: string;
+  etfTotalAud?: number;
   valueAud: number;
   weight: number | null;
   shareOfOther: number | null;
   memberCount: number;
   members: TailMember[];
+  allMembers: TailMember[];
+  unattributedAud: number;
+  sectors: TailSectorSlice[];
   restValueAud: number;
   restCount: number;
 }
 
+export interface MergedTailModel {
+  totalAud: number;
+  weight: number | null;
+  members: TailMember[];
+  overlapCount: number;
+  unattributedAud: number;
+  sectors: TailSectorSlice[];
+}
+
+function buildSectorSlices(
+  members: Array<{ valueAud: number; sector?: string }>,
+  unattributedAud: number,
+  bucketTotalAud: number,
+  totalAud: number | null,
+): TailSectorSlice[] {
+  const map = new Map<string, { valueAud: number; count: number }>();
+  for (const m of members) {
+    if (m.valueAud <= 0) continue;
+    const sec = !m.sector || m.sector === "Mixed/Conflicting" ? "Unclassified" : m.sector;
+    const cur = map.get(sec) ?? { valueAud: 0, count: 0 };
+    cur.valueAud += m.valueAud;
+    cur.count += 1;
+    map.set(sec, cur);
+  }
+  if (unattributedAud > 0) {
+    const cur = map.get("Unclassified") ?? { valueAud: 0, count: 0 };
+    cur.valueAud += unattributedAud;
+    map.set("Unclassified", cur);
+  }
+  const weightOf = (v: number) => (totalAud != null && totalAud > 0 ? v / totalAud : null);
+  return [...map.entries()]
+    .map(([sector, acc]) => ({
+      sector,
+      valueAud: acc.valueAud,
+      weight: weightOf(acc.valueAud),
+      shareOfBucket: bucketTotalAud > 0 ? acc.valueAud / bucketTotalAud : null,
+      count: acc.count,
+    }))
+    .sort((a, b) => b.valueAud - a.valueAud);
+}
+
+const heldEtfKey = (source: EtfSource) => source.path[0] ?? source.etfKey;
+
 function buildOtherBuckets(
   foldedRows: ExposureRow[],
+  allExposureRows: ExposureRow[],
   totalAud: number | null,
   maxTailMembersPerBucket = 14,
-): OtherBucket[] {
+): { otherBuckets: OtherBucket[]; mergedTail: MergedTailModel } {
   interface BucketAcc {
     key: string;
     kind: OtherBucketKind;
     ticker: string;
     label: string;
     subtitle?: string;
+    etfKey?: string;
     valueAud: number;
     unattributedAud: number;
-    members: Map<string, { key: string; ticker?: string; label: string; valueAud: number }>;
+    members: Map<string, { key: string; ticker?: string; label: string; sector?: string; country?: string; valueAud: number }>;
   }
   const bucketMap = new Map<string, BucketAcc>();
-  const ensure = (key: string, kind: OtherBucketKind, ticker: string, label: string, subtitle?: string): BucketAcc => {
+  const ensure = (
+    key: string,
+    kind: OtherBucketKind,
+    ticker: string,
+    label: string,
+    subtitle?: string,
+    etfKey?: string,
+  ): BucketAcc => {
     let acc = bucketMap.get(key);
     if (!acc) {
-      acc = { key, kind, ticker, label, subtitle, valueAud: 0, unattributedAud: 0, members: new Map() };
+      acc = { key, kind, ticker, label, subtitle, etfKey, valueAud: 0, unattributedAud: 0, members: new Map() };
       bucketMap.set(key, acc);
+    } else if (etfKey && !acc.etfKey) {
+      acc.etfKey = etfKey;
     }
     return acc;
   };
@@ -57,16 +137,29 @@ function buildOtherBuckets(
         key: row.key,
         ticker: row.ticker,
         label: displayName(row.label),
+        sector: row.sector,
+        country: row.country,
         valueAud: amountAud,
       });
     }
   };
+
+  // Attribute cash, residuals and nested amounts back to the ETF held in the account.
+  const etfValues = new Map<string, number>();
+  for (const row of allExposureRows) {
+    for (const source of row.sources) {
+      if (source.kind === "direct") continue;
+      const key = source.kind === "etf" ? heldEtfKey(source) : source.etfKey;
+      etfValues.set(key, (etfValues.get(key) ?? 0) + source.amountAud);
+    }
+  }
 
   for (const row of foldedRows) {
     if (row.totalAud <= 0) continue;
     if (row.type === "cash") {
       const acc = ensure("small-cash", "small-cash", "现金", "小额现金");
       acc.valueAud += row.totalAud;
+      acc.unattributedAud += row.totalAud;
       continue;
     }
     if (!row.sources.length) {
@@ -79,18 +172,21 @@ function buildOtherBuckets(
     for (const source of row.sources) {
       if (source.amountAud <= 0) continue;
       if (source.kind === "etf") {
-        const sym = source.etfSymbol || source.etfKey;
-        const acc = ensure(`etf:${sym}`, "etf", sym, sym);
+        const key = heldEtfKey(source);
+        const sym = source.etfSymbol || key;
+        const acc = ensure(`etf:${key}`, "etf", sym, sym, undefined, key);
         acc.valueAud += source.amountAud;
         if (isSyntheticOthers) acc.unattributedAud += source.amountAud;
         else addMember(acc, row, source.amountAud);
       } else if (source.kind === "opaque") {
         const sym = source.etfSymbol || source.etfKey;
-        const acc = ensure(`opaque:${sym}`, "opaque", sym, `${sym}（未穿透）`, source.reason || "缺少成分表");
+        const acc = ensure(`opaque:${source.etfKey}`, "opaque", sym, `${sym}（未穿透）`, source.reason || "缺少成分表", source.etfKey);
         acc.valueAud += source.amountAud;
+        acc.unattributedAud += source.amountAud;
       } else if (source.kind === "residual") {
         const acc = ensure("residual", "residual", "未穿透余项", "未穿透基金余项", "成分表未覆盖的 ETF 尾项");
         acc.valueAud += source.amountAud;
+        acc.unattributedAud += source.amountAud;
       } else if (row.type === "stock") {
         const acc = ensure("small-direct", "small-direct", "直接小仓位", "直接持有小仓位", "单家占比 ≤ 1%");
         acc.valueAud += source.amountAud;
@@ -105,35 +201,135 @@ function buildOtherBuckets(
   }
 
   const raw = [...bucketMap.values()].filter((b) => b.valueAud > 0).sort((a, b) => b.valueAud - a.valueAud);
+  const etfCountsByTicker = new Map<string, number>();
+  for (const bucket of raw) {
+    if (bucket.kind === "etf") etfCountsByTicker.set(bucket.ticker, (etfCountsByTicker.get(bucket.ticker) ?? 0) + 1);
+  }
   const otherTotal = raw.reduce((sum, b) => sum + b.valueAud, 0);
   const weightOf = (v: number) => (totalAud != null && totalAud > 0 ? v / totalAud : null);
 
-  return raw.map((acc) => {
+  const otherBuckets = raw.map((acc) => {
+    const etfTotalAud = acc.kind === "etf" && acc.etfKey ? etfValues.get(acc.etfKey) : undefined;
+    const label = acc.kind === "etf" && (etfCountsByTicker.get(acc.ticker) ?? 0) > 1
+      ? `${acc.label} · ${acc.etfKey}` : acc.label;
     const sorted = [...acc.members.values()].sort((a, b) => b.valueAud - a.valueAud);
-    const visible = sorted.slice(0, maxTailMembersPerBucket);
-    const hidden = sorted.slice(maxTailMembersPerBucket);
+    const allMembers: TailMember[] = sorted.map((m) => ({
+      key: m.key,
+      ticker: m.ticker,
+      label: m.label,
+      sector: m.sector,
+      country: m.country,
+      valueAud: m.valueAud,
+      weight: weightOf(m.valueAud),
+      fundWeight: etfTotalAud != null && etfTotalAud > 0 ? m.valueAud / etfTotalAud : null,
+      sources: [{ key: acc.key, ticker: acc.ticker, label, valueAud: m.valueAud, weight: weightOf(m.valueAud) }],
+      overlaps: false,
+    }));
+    const visible = allMembers.slice(0, maxTailMembersPerBucket);
+    const hidden = allMembers.slice(maxTailMembersPerBucket);
     const restValueAud = hidden.reduce((sum, m) => sum + m.valueAud, 0) + acc.unattributedAud;
     return {
       key: acc.key,
       kind: acc.kind,
       ticker: acc.ticker,
-      label: acc.label,
+      label,
       subtitle: acc.subtitle,
+      etfKey: acc.etfKey,
+      etfTotalAud,
       valueAud: acc.valueAud,
       weight: weightOf(acc.valueAud),
       shareOfOther: otherTotal > 0 ? acc.valueAud / otherTotal : null,
       memberCount: sorted.length,
-      members: visible.map((m) => ({
-        key: m.key,
-        ticker: m.ticker,
-        label: m.label,
-        valueAud: m.valueAud,
-        weight: weightOf(m.valueAud),
-      })),
+      members: visible,
+      allMembers,
+      unattributedAud: acc.unattributedAud,
+      sectors: buildSectorSlices(allMembers, acc.unattributedAud, acc.valueAud, totalAud),
       restValueAud,
       restCount: hidden.length + (acc.unattributedAud > 0 ? 1 : 0),
     };
   });
+
+  // Merge all tail buckets by company identity so cross-ETF <1% overlaps are exposed directly.
+  const mergedMap = new Map<
+    string,
+    {
+      key: string;
+      ticker?: string;
+      label: string;
+      sector?: string;
+      country?: string;
+      valueAud: number;
+      sources: Map<string, TailSource>;
+      etfSourceKeys: Set<string>;
+    }
+  >();
+  let totalUnattributedAud = 0;
+  for (const bucket of otherBuckets) {
+    totalUnattributedAud += bucket.unattributedAud;
+    for (const m of bucket.allMembers) {
+      let entry = mergedMap.get(m.key);
+      if (!entry) {
+        entry = {
+          key: m.key,
+          ticker: m.ticker,
+          label: m.label,
+          sector: m.sector,
+          country: m.country,
+          valueAud: 0,
+          sources: new Map(),
+          etfSourceKeys: new Set(),
+        };
+        mergedMap.set(m.key, entry);
+      } else {
+        entry.sector = entry.sector ?? m.sector;
+        entry.country = entry.country ?? m.country;
+      }
+      entry.valueAud += m.valueAud;
+      if (bucket.kind === "etf") entry.etfSourceKeys.add(bucket.key);
+      const existingSrc = entry.sources.get(bucket.key);
+      if (existingSrc) {
+        existingSrc.valueAud += m.valueAud;
+        existingSrc.weight = weightOf(existingSrc.valueAud);
+      } else {
+        entry.sources.set(bucket.key, {
+          key: bucket.key,
+          ticker: bucket.ticker,
+          label: bucket.label,
+          valueAud: m.valueAud,
+          weight: weightOf(m.valueAud),
+        });
+      }
+    }
+  }
+
+  const mergedMembers: TailMember[] = [...mergedMap.values()]
+    .map((entry) => {
+      const sources = [...entry.sources.values()].sort((a, b) => b.valueAud - a.valueAud);
+      return {
+        key: entry.key,
+        ticker: entry.ticker,
+        label: entry.label,
+        sector: entry.sector,
+        country: entry.country,
+        valueAud: entry.valueAud,
+        weight: weightOf(entry.valueAud),
+        fundWeight: null,
+        sources,
+        overlaps: entry.etfSourceKeys.size > 1,
+      };
+    })
+    .sort((a, b) => b.valueAud - a.valueAud);
+
+  const mergedTail: MergedTailModel = {
+    totalAud: otherTotal,
+    weight: weightOf(otherTotal),
+    members: mergedMembers,
+    overlapCount: mergedMembers.filter((m) => m.overlaps).length,
+    unattributedAud: totalUnattributedAud,
+    sectors: buildSectorSlices(mergedMembers, totalUnattributedAud, otherTotal, totalAud),
+  };
+
+  return { otherBuckets, mergedTail };
 }
 
 /** Use the untruncated exposure model so direct and ETF positions count toward one company weight. */
@@ -170,8 +366,8 @@ export function buildComposition(exposure: ExposureModel, totalAud: number | nul
       }
     }
   }
-  const otherBuckets = buildOtherBuckets(foldedRows, totalAud);
-  return { named, otherAud, otherBuckets, companies, waiting };
+  const { otherBuckets, mergedTail } = buildOtherBuckets(foldedRows, exposure.rows, totalAud);
+  return { named, otherAud, otherBuckets, mergedTail, companies, waiting };
 }
 
 /** Provider constituent names often arrive upper-case ("ALPHABET INC CLASS A"). */
