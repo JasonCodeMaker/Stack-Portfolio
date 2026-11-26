@@ -4,7 +4,7 @@ coverage/
 .vite/
 *.local
 *.tsbuildinfo
-release/desktop/
+release/
 *.sqlite
 *.sqlite-*
 *.sqlite3
@@ -14,3 +14,20 @@ release/desktop/
 *.spbackup
 ledger-key.v1
 *.sqlite.*.tmp
+
+# AI / agent / research auxiliary files
+.agents/
+.claude/
+.codex/
+.customize/
+.github/ISSUE_TEMPLATE/
+.research/
+AGENTS.md
+CLAUDE.md
+CODING_STANDARDS.md
+docs/agents/
+docs/codebase.md
+docs/live-market-data-research.md
+docs/us-premarket-research.md
+desktop/prototypes/
+fig/

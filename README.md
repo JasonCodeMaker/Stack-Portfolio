@@ -6,13 +6,13 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
-[![Latest Release](https://img.shields.io/github/v/release/JasonCodeMaker/Stack-Portfolio?style=flat&color=2563EB&label=release)](https://github.com/JasonCodeMaker/Stack-Portfolio/releases)
+[![Latest Release](https://img.shields.io/github/v/release/JasonCodeMaker/Stock-Portfolio?style=flat&color=2563EB&label=release)](https://github.com/JasonCodeMaker/Stock-Portfolio/releases)
 ![Platform](https://img.shields.io/badge/Windows-x64-0078D6?style=flat&logo=windows&logoColor=white)
 ![Brokers](https://img.shields.io/badge/brokers-IBKR%20%7C%20Webull%20AU-16A34A?style=flat)
 ![Local](https://img.shields.io/badge/data-local%20%26%20encrypted-475569?style=flat)
 ![Languages](https://img.shields.io/badge/UI-EN%20%7C%20%E7%AE%80%E4%B8%AD%20%7C%20%E7%B9%81%E4%B8%AD-64748B?style=flat)
 
-[Download](https://github.com/JasonCodeMaker/Stack-Portfolio/releases) ·
+[Download](https://github.com/JasonCodeMaker/Stock-Portfolio/releases) ·
 [Highlights](#highlights) ·
 [Panels](#panels) ·
 [Broker support](#broker-support) ·
@@ -105,7 +105,7 @@ Sync a broker or import a statement file, check the changes first, then confirm.
 
 ## Getting started
 
-1. Download `Stock-Portfolio-Setup-<version>-x64.exe` from [Releases](https://github.com/JasonCodeMaker/Stack-Portfolio/releases) and install it.
+1. Download `Stock-Portfolio-Setup-<version>-x64.exe` from [Releases](https://github.com/JasonCodeMaker/Stock-Portfolio/releases) and install it.
 2. Open the app and pick one of these:
    - **Sample Portfolio** — try every feature with made-up data first.
    - **Add broker account** — connect IBKR or Webull Australia by following the step-by-step guide in the app.
