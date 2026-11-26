@@ -47,3 +47,4 @@ Historical sessions supply examples for evaluating the current-market view. Hist
 - [Direction tracking issue](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/56) holds the preparation goal and relationships.
 - [Preparation decision](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/57) records the use-case choice and its implications for the Proposal.
 - [Indicator screening and first-release recommendation](research/indicator-screening.md) compares the candidates, ranks the shortlist, and links the source audit and session evidence.
+- [U.S. Market page layout and wireframes](research/market-page-layout-research.md) compares three layouts and recommends how the first-release indicators fit the desktop shell.
