@@ -6,6 +6,12 @@ const h15Url = "https://www.federalreserve.gov/releases/h15/data/FRB_h15_xml.zip
 const cpiSeries = "CUUR0000SA0";
 const cpiUrl = "https://api.bls.gov/publicAPI/v2/timeseries/data/" + cpiSeries;
 const scheduleUrl = "https://www.bls.gov/schedule/news_release/cpi.htm";
+const sentimentUrl = "https://feargreedflow.com/api/fear-greed";
+const sentimentRatings = new Map([
+  ["extreme fear", "extremeFear"], ["fear", "fear"], ["neutral", "neutral"],
+  ["greed", "greed"], ["extreme greed", "extremeGreed"],
+]);
+const sentimentRatingKeys = new Set(sentimentRatings.values());
 const h15Series = "RIFLGFCY10_N.B";
 const mib = 1024 * 1024;
 const xmlLimit = 100 * mib;
@@ -169,8 +175,49 @@ export const bundledCpiSchedule = [
   ["2027-10", "2027-11-10"], ["2027-11", "2027-12-10"],
 ].map(([month, date]) => eventInEasternTime(month, date, 8, 30));
 
+export function validFearGreedReading(data) {
+  return isDate(data?.observationDate) && Number.isFinite(data.score) && data.score >= 0 && data.score <= 100 &&
+    sentimentRatingKeys.has(data.rating) && typeof data.updatedAt === "string" &&
+    Number.isFinite(Date.parse(data.updatedAt));
+}
+
+export function parseFearGreed(series, csv) {
+  const dates = series?.dates;
+  const values = series?.values;
+  if (!Array.isArray(dates) || !Array.isArray(values) || dates.length !== values.length || !dates.length)
+    throw Error("Fear & Greed Flow time series is missing");
+  const observationDate = dates.at(-1);
+  const score = values.at(-1);
+  const timestamp = series.asOf;
+  const hasOffset = typeof timestamp === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(timestamp);
+  const update = hasOffset && isDate(timestamp.slice(0, 10)) ? Date.parse(timestamp) : NaN;
+  if (!Number.isFinite(update)) throw Error("Fear & Greed Flow update time is missing");
+
+  const updatedAt = new Date(update).toISOString();
+  const [header, ...rows] = csv.trim().split(/\r?\n/);
+  if (header !== "date,value,rating") throw Error("Fear & Greed Flow ratings are missing");
+  // The CSV publishes ratings that are absent from the JSON series. Join on the provider's
+  // date and score, which can differ from the US trading date of the update timestamp.
+  const matches = rows.map((row) => row.split(",")).filter(([date]) => date === observationDate);
+  const [match] = matches;
+  const rating = sentimentRatings.get(match?.[2]?.trim().toLowerCase());
+  const data = { observationDate, score, rating, updatedAt };
+  if (matches.length !== 1 || match.length !== 3 || finiteNumber(match[1]) !== score ||
+      !validFearGreedReading(data) || observationDate > updatedAt.slice(0, 10))
+    throw Error("Fear & Greed Flow score and rating do not match");
+  return data;
+}
+
 export function macroSources(fetch) {
   return {
+    async sentiment() {
+      const [json, csv] = await Promise.all([
+        readResponse(fetch, sentimentUrl, mib),
+        readResponse(fetch, sentimentUrl + "/csv", mib),
+      ]);
+      return parseFearGreed(JSON.parse(json.toString("utf8")), csv.toString("utf8"));
+    },
     async treasury() {
       const download = await readResponse(fetch, h15Url, 10 * mib);
       const archive = await yauzl.fromBufferPromise(download);

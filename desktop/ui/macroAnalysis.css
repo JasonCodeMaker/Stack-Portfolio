@@ -1,0 +1,108 @@
+.macro-sentiment {
+  max-inline-size: 44rem;
+}
+
+.macro-sentiment > .card-head {
+  flex-wrap: wrap;
+}
+
+.macro-sentiment-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.5rem 2.25rem;
+  padding-block: 0.5rem;
+}
+
+.macro-sentiment-figure {
+  flex: 0 1 16rem;
+  min-inline-size: 0;
+}
+
+.macro-sentiment-gauge {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 2 / 1;
+}
+
+.macro-sentiment-arc,
+.macro-sentiment-arc::after {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.macro-sentiment-arc {
+  inset: 0 0 auto;
+  height: 200%;
+  background: var(--surface2);
+}
+
+.macro-sentiment-gauge[data-available="true"] .macro-sentiment-arc {
+  background: conic-gradient(
+    from 270deg, var(--down), var(--warn) 70deg, var(--sep) 90deg,
+    var(--s1) 115deg, var(--up) 180deg, transparent 180deg
+  );
+}
+
+.macro-sentiment-arc::after {
+  content: "";
+  inset: 9%;
+  background: var(--surface);
+}
+
+.macro-sentiment-needle {
+  position: absolute;
+  inset: auto auto 0 calc(50% - 1.5px);
+  width: 3px;
+  height: 84%;
+  border-radius: 2px;
+  background: var(--l1);
+  transform: rotate(var(--needle-angle));
+  transform-origin: bottom center;
+}
+
+.macro-sentiment-hub {
+  position: absolute;
+  inset: auto auto 0 calc(50% - 7px);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  translate: 0 50%;
+  background: var(--l1);
+}
+
+.macro-sentiment-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-block-start: 0.4rem;
+}
+
+.macro-sentiment-scale,
+.macro-sentiment-reading time,
+.macro-sentiment-source {
+  color: var(--l2);
+}
+
+.macro-sentiment-reading {
+  min-inline-size: 0;
+  display: grid;
+  gap: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+.macro-sentiment-score {
+  font: 600 2.75rem/1.1 var(--display);
+}
+
+.macro-sentiment-score span {
+  font: 400 0.95rem/1 var(--text);
+  color: var(--l2);
+}
+
+.macro-sentiment-rating {
+  font-weight: 600;
+}
+
+.macro-sentiment-stale {
+  color: var(--warn);
+}

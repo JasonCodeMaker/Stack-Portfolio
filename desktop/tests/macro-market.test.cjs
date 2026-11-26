@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const { Readable } = require("node:stream");
 const test = require("node:test");
 const { createMacroMarket } = require("../out/macroMarket.cjs");
-const { macroSources, parseCpi, parseCpiSchedule, parseTreasuryXml } = require("../out/macroSources.cjs");
+const { macroSources, parseCpi, parseCpiSchedule, parseFearGreed, parseTreasuryXml } = require("../out/macroSources.cjs");
 
 const treasury = {
   sourceReleaseDate: "2026-11-25",
@@ -251,4 +251,94 @@ test("H.15 publication waits on the Board calendar and retries a late release", 
   const arrived = await market.refresh();
   assert.equal(arrived.treasury.publication.status, "released");
   assert.equal(calls, 3);
+});
+
+test("Fear & Greed Flow joins the latest score and provider rating without shifting its timestamp", async () => {
+  const series = {
+    dates: ["2026-11-25", "2026-11-26"],
+    values: [15.6, 15],
+    asOf: "2026-11-26T01:59:59+00:00",
+  };
+  const csv = "\uFEFFdate,value,rating\r\n2026-11-25,15.6,Extreme Fear\r\n2026-11-26,15,Extreme Fear\r\n";
+  const expected = {
+    observationDate: "2026-11-26",
+    score: 15,
+    rating: "extremeFear",
+    updatedAt: "2026-11-26T01:59:59.000Z",
+  };
+  const urls = [];
+  const source = macroSources(async (url, options) => {
+    urls.push(url);
+    assert.equal(options.credentials, "omit");
+    assert.equal(options.redirect, "error");
+    return url.endsWith("/csv") ? new Response(csv) : Response.json(series);
+  });
+  assert.deepEqual(await source.sentiment(), expected);
+  assert.deepEqual(urls, [
+    "https://feargreedflow.com/api/fear-greed",
+    "https://feargreedflow.com/api/fear-greed/csv",
+  ]);
+  assert.throws(() => parseFearGreed(series, csv.replace(",15,", ",16,")), /do not match/);
+  assert.throws(() => parseFearGreed(series, csv.replace(/Extreme Fear\r\n$/, "Unavailable")), /do not match/);
+  assert.throws(() => parseFearGreed({ ...series, asOf: "2026-11-26T01:59:59" }, csv), /update time is missing/);
+  assert.throws(() => parseFearGreed({ ...series, values: [15.6, 101] }, csv), /do not match/);
+});
+
+test("the sentiment snapshot exposes only display data and retains the last reading across failed refresh and restart", async () => {
+  let clock = Date.parse("2026-11-26T15:00:00Z");
+  let stored;
+  let calls = 0;
+  const reading = {
+    observationDate: "2026-11-26",
+    score: 0,
+    rating: "extremeFear",
+    updatedAt: "2026-11-26T01:59:59.000Z",
+  };
+  let next = reading;
+  const options = {
+    providers: {
+      treasury: async () => treasury,
+      cpi: async () => cpi,
+      schedule: async () => schedule,
+      sentiment: async () => { calls++; return next; },
+    },
+    readCache: () => stored,
+    writeCache: (data) => { stored = data; },
+    now: () => clock,
+  };
+  const market = createMacroMarket(options);
+  assert.deepEqual(market.snapshot().sentiment, {
+    source: "Fear & Greed Flow", status: "unavailable", score: null, rating: null, updatedAt: null, fetchedAt: null,
+  });
+  const first = await market.refresh();
+  assert.deepEqual(first.sentiment, {
+    source: "Fear & Greed Flow",
+    status: "available",
+    score: 0,
+    rating: "extremeFear",
+    updatedAt: reading.updatedAt,
+    fetchedAt: "2026-11-26T15:00:00.000Z",
+  });
+  assert.equal(JSON.stringify(first.sentiment).includes("https://"), false);
+  await market.refresh();
+  assert.equal(calls, 1);
+
+  clock += 15 * 60_000;
+  next = { ...reading, score: 49, rating: "neutral", updatedAt: "2026-11-25T20:59:59.000Z" };
+  const failed = await market.refresh();
+  assert.deepEqual(failed.sentiment, { ...first.sentiment, status: "stale" });
+  assert.equal(failed.treasury.status, "available");
+  assert.deepEqual(createMacroMarket(options).snapshot().sentiment, failed.sentiment);
+
+  clock += 5 * 60_000;
+  next = { ...reading, updatedAt: "2026-11-27T01:00:00.000Z" };
+  assert.deepEqual((await market.refresh()).sentiment, failed.sentiment);
+  clock += 5 * 60_000;
+  next = { ...reading, score: 16, updatedAt: "2026-11-26T15:20:00.000Z" };
+  const recovered = await market.refresh();
+  assert.equal(recovered.sentiment.status, "available");
+  assert.equal(recovered.sentiment.score, 16);
+
+  clock = Date.parse("2026-11-27T18:30:00Z");
+  assert.equal(market.snapshot().sentiment.status, "stale");
 });

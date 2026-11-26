@@ -1,5 +1,5 @@
 import { closingDay, marketSession, marketTime, shiftDay } from "./marketDays.js";
-import { bundledCpiSchedule, isDate } from "./macroSources.js";
+import { bundledCpiSchedule, isDate, validFearGreedReading } from "./macroSources.js";
 
 const minute = 60_000;
 const day = 24 * 60 * minute;
@@ -10,6 +10,7 @@ const sources = {
   treasury: { refresh: day, staleAfter: 2 * day },
   cpi: { refresh: day, staleAfter: 2 * day },
   schedule: { refresh: day, staleAfter: 2 * day },
+  sentiment: { refresh: 15 * minute, staleAfter: 2 * day },
 };
 
 const sourceNames = {
@@ -40,6 +41,7 @@ function validRecord(key, record) {
     return isMonth(data?.referenceMonth) && Number.isFinite(data.indexValue) && isTimestamp(record.firstSeenAt) &&
       (data.yearOverYearPct === null || Number.isFinite(data.yearOverYearPct));
   }
+  if (key === "sentiment") return validFearGreedReading(data);
   return Array.isArray(data) && data.length > 0 &&
     data.every((event) => isMonth(event?.referenceMonth) && isTimestamp(event.scheduledAt));
 }
@@ -76,7 +78,7 @@ export function createMacroMarket({ providers, readCache, writeCache, now = Date
 
   function snapshot(at = now()) {
     load();
-    const { date, phase } = marketSession(at, "US");
+    const { date, phase, completed } = marketSession(at, "US");
     const treasury = records.treasury;
     const expectedReleaseDate = expectedTreasuryRelease(at);
     const cpi = records.cpi;
@@ -87,6 +89,10 @@ export function createMacroMarket({ providers, readCache, writeCache, now = Date
       bundledCpiSchedule.find((event) => event.referenceMonth === releaseMonth);
     const upcoming = relevant.find((event) => Date.parse(event.scheduledAt) > at) ?? null;
     const awaiting = relevant.findLast((event) => Date.parse(event.scheduledAt) <= at) ?? null;
+    const sentiment = records.sentiment;
+    const updatedAt = sentiment?.data.updatedAt ?? null;
+    const priorSession = sentiment && (sentiment.data.observationDate < completed ||
+      marketTime(Date.parse(updatedAt), "US").date < completed);
     return {
       market: { date, phase, timeZone: "America/New_York" },
       treasury: {
@@ -119,10 +125,12 @@ export function createMacroMarket({ providers, readCache, writeCache, now = Date
         },
       },
       sentiment: {
-        source: "CNN Fear & Greed Index",
-        status: "unavailable",
-        reason: "noVerifiedDataFeed",
-        score: null,
+        source: "Fear & Greed Flow",
+        status: priorSession ? "stale" : status("sentiment", at),
+        score: sentiment?.data.score ?? null,
+        rating: sentiment?.data.rating ?? null,
+        updatedAt,
+        fetchedAt: sentiment?.fetchedAt ?? null,
       },
     };
   }
@@ -170,6 +178,9 @@ export function createMacroMarket({ providers, readCache, writeCache, now = Date
       if (key === "schedule" && !data.some((event) => Date.parse(event.scheduledAt) > at))
         throw Error("BLS CPI calendar has no upcoming release");
       if (!validRecord(key, record)) throw Error("Invalid macro source data");
+      if (key === "sentiment" && (Date.parse(data.updatedAt) > Date.parse(fetchedAt) + minute ||
+          (old && Date.parse(data.updatedAt) < Date.parse(old.data.updatedAt))))
+        throw Error("Fear & Greed Flow update time is inconsistent");
       records[key] = record;
       return true;
     } catch {
