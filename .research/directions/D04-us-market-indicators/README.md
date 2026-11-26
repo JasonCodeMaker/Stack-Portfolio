@@ -6,11 +6,11 @@ Proposal status: DRAFT
 
 ## Objective
 
-Determine which indicators Stock Portfolio should integrate to help users understand the U.S. equity market. Deliver a ranked shortlist, evidence of what each indicator adds beyond existing market returns, and an integration recommendation supported by source, display rights, update timing, and historical coverage. The findings can support deferring any candidate that fails the product or data checks.
+Determine which indicators Stock Portfolio should integrate to help users understand the current U.S. equity market. Deliver a ranked shortlist, evidence of what each indicator adds beyond existing market returns, and an integration recommendation supported by source, display rights, update timing, and historical coverage. The findings can support deferring any candidate that fails the product or data checks.
 
 ## Research Question
 
-Which combination of market sentiment, expected volatility, interest rates, and credit conditions gives users distinct context for U.S. equity moves? For each candidate, what information was available at the time, and can Stock Portfolio obtain and display it reliably?
+Which combination of market sentiment, expected volatility, interest rates, and credit conditions helps users read what is changing in the U.S. equity market now? Which candidates provide distinct context, and can Stock Portfolio obtain and display each one with a reliable timestamp and clear update status?
 
 ## Motivation
 
@@ -28,14 +28,15 @@ The proposed route compares a small set of complementary indicators against the 
 | ICE BofA U.S. High Yield option-adjusted spread | Credit-market stress for lower-rated U.S. corporate borrowers | Verify reuse terms and decide whether FRED's documented three-year history is sufficient. Compare against Fear & Greed's credit input. [FRED BAMLH0A0HYM2](https://fred.stlouisfed.org/series/BAMLH0A0HYM2) |
 | U.S. Consumer Price Index | Inflation context around scheduled releases | Evaluate whether a release-date annotation adds more context than a persistent indicator. [BLS Consumer Price Index](https://www.bls.gov/cpi/) |
 
-For each shortlisted series, document the publisher, units, observation time, actual availability time, refresh cadence, history, and stale or missing behavior. Check permissions for programmatic retrieval, caching, and product display. Compare the existing benchmark view with the smallest useful indicator set across periods with different market conditions. A historical comparison must use the values available at the time, accounting for publication delays and revisions where applicable.
+## How the research will judge usefulness
 
-The proposed first-release objective is current market context. For example, when the S&P 500 falls and VIX rises, the combined view can show that option prices implied more near-term volatility on the same day. It leaves the cause of the market move open. A historical review or a predictive use case would require different evidence.
+On 2026-11-26, the Researcher chose current U.S. equity market context as the primary use case for the first release. [Q1 decision](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/57#issuecomment-7187018624)
 
-> [!WARNING]
-> **[DRAFT — NEEDS CLARIFICATION BEFORE DIRECTION CONFIRMATION]**
->
-> The Researcher still needs to choose the first-release use case. That choice sets the main evaluation criteria. [Preparation decision](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/57)
+1. **Additional information.** Compare the existing benchmark view with the same view plus candidate indicators across contrasting market sessions. Check whether users can correctly identify what each indicator measures, whether it rose or fell over the stated interval, and what it adds to the benchmark move. For example, when the S&P 500 falls and VIX rises, a reader can identify higher option-implied near-term volatility alongside the equity decline. The cause of the decline remains open.
+2. **Distinct contribution.** Include sessions in which candidates agree and sessions in which they diverge. Check whether each standalone measure adds a specific interpretation when Fear & Greed is already visible. Recommend the smallest set that covers the supported user questions.
+3. **Availability and interpretation.** For each shortlisted series, verify the publisher, units, observation time, actual availability time, refresh cadence, and history. Check permissions for programmatic retrieval, caching, and display. Include delayed or missing updates in the comparison so readers can distinguish data available for the current session from the last available observation. Use the data that would have been available at the time of each historical example, accounting for publication delays and revisions where applicable.
+
+Historical sessions supply examples for evaluating the current-market view. Historical portfolio review and prediction are outside the first-release evaluation scope.
 
 ## Related Work and Records
 
