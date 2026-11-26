@@ -1,9 +1,99 @@
-.macro-sentiment {
-  max-inline-size: 44rem;
+.macro-page {
+  display: grid;
+  gap: var(--gap);
 }
 
-.macro-sentiment > .card-head {
+.macro-toolbar,
+.macro-refresh {
+  display: flex;
+  align-items: center;
   flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.macro-toolbar {
+  justify-content: space-between;
+}
+
+.macro-market-phase,
+.macro-cpi-event h3 {
+  font-weight: 600;
+}
+
+.macro-cpi-event h3 {
+  font-size: inherit;
+}
+
+.macro-refresh .btn {
+  min-block-size: 2.75rem;
+}
+
+.macro-refresh [role="status"]:empty {
+  display: none;
+}
+
+.macro-card {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.macro-card-head {
+  flex-wrap: wrap;
+  margin-block-end: 0;
+}
+
+.macro-value {
+  font: 600 2.25rem/1.12 var(--display);
+}
+
+.macro-value span {
+  font: 400 0.95rem/1 var(--text);
+  color: var(--l2);
+}
+
+.macro-meta,
+.macro-cpi-event time {
+  color: var(--l2);
+}
+
+.macro-stale {
+  color: var(--warn);
+}
+
+.macro-cpi-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13.5rem), 1fr));
+  gap: 0.625rem;
+}
+
+.macro-cpi-event {
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+  background: var(--surface2);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.macro-trend-chart {
+  min-block-size: 240px;
+  min-inline-size: 0;
+}
+
+.macro-method {
+  margin-block-start: 0.5rem;
+  padding-block-start: 0.625rem;
+  border-block-start: 1px solid var(--sep);
+}
+
+.macro-method summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.macro-method p {
+  color: var(--l2);
+  margin-block-start: 0.5rem;
 }
 
 .macro-sentiment-body {
@@ -78,8 +168,7 @@
 }
 
 .macro-sentiment-scale,
-.macro-sentiment-reading time,
-.macro-sentiment-source {
+.macro-sentiment-reading time {
   color: var(--l2);
 }
 
@@ -101,8 +190,4 @@
 
 .macro-sentiment-rating {
   font-weight: 600;
-}
-
-.macro-sentiment-stale {
-  color: var(--warn);
 }
