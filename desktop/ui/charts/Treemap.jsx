@@ -132,15 +132,12 @@ function OtherNestedTile({ item, text, w, h, onSelectSubItem }) {
         if (sw < 16 || sh < 16) return null;
         const appearance = subTileAppearance(sb.item);
         const SubTag = interactive ? "button" : "div";
-        const showEtfBadge = sb.item.isEtf && sw > 84 && sh > 46;
-        const showTailMeta = Boolean(sb.item.tailCountLabel) && sw > 78 && sh > 78;
-        const showPreview = Boolean(sb.item.preview) && sw > 95 && sh > 130;
-        const showChangePill = sb.item.colorMode !== "sources" && sb.item.change != null && sw > 108 && sh > 56;
+        const compact = sw < 110 || sh < 82;
         return (
           <SubTag
             key={sb.item.id}
             type={interactive ? "button" : undefined}
-            className={`ch-tm-sub ${appearance.semantic ? "semantic" : ""} ${interactive ? "click" : ""}`.trim()}
+            className={["ch-tm-sub", appearance.semantic && "semantic", interactive && "click", compact && "compact"].filter(Boolean).join(" ")}
             title={sb.item.title}
             onClick={interactive ? () => onSelectSubItem(sb.item.id) : undefined}
             style={{
@@ -151,29 +148,7 @@ function OtherNestedTile({ item, text, w, h, onSelectSubItem }) {
               ...appearance.style,
             }}
           >
-            <div className="ch-tm-sub-top">
-              <div className="ch-tm-sub-head">
-                <strong className="ch-tm-sub-tk">{sb.item.label}</strong>
-                {showEtfBadge && <span className="ch-tm-sub-badge">{t("alloc.tail.etfBadge")}</span>}
-              </div>
-              {showTailMeta && <div className="ch-tm-sub-meta">{sb.item.tailCountLabel}</div>}
-              {showPreview && <div className="ch-tm-sub-preview">{sb.item.preview}</div>}
-            </div>
-            {sh > 36 && sw > 44 && (
-              <div className="ch-tm-sub-bot">
-                <div className="ch-tm-sub-row">
-                  <small>{sb.item.share}</small>
-                  {showChangePill && (
-                    <span className="ch-tm-badge-dark">
-                      {sb.item.change >= 0 ? "▲" : "▼"} {Math.abs(sb.item.change * 100).toFixed(2)}%
-                    </span>
-                  )}
-                </div>
-                {sw > 96 && sh > 88 && sb.item.inside && (
-                  <small className="ch-tm-sub-in">{sb.item.inside}{t("tm.shareSuffix")}</small>
-                )}
-              </div>
-            )}
+            <RefinedTileBody item={sb.item} w={sw} h={sh} nested />
           </SubTag>
         );
       })}
@@ -181,14 +156,14 @@ function OtherNestedTile({ item, text, w, h, onSelectSubItem }) {
   );
 }
 
-function RefinedTileBody({ item, w, h, text }) {
+function RefinedTileBody({ item, w, h, text, nested = false }) {
   const { t } = useI18n();
   const primary = item.primaryTicker ?? item.label;
   const shareText = item.share ?? item.detail?.[0] ?? "";
   const isCompact = w < 110 || h < 82;
   const isTiny = h < 54 || w < 64;
   const tickerFont = isTiny
-    ? Math.min(text.font, 13)
+    ? Math.min(text?.font ?? 13, 13)
     : isCompact
       ? Math.min(Math.max(13, Math.round(Math.min(w, h) * 0.17)), 16)
       : Math.min(Math.max(15, Math.round(Math.min(w * 0.14, h * 0.18))), 22);
@@ -260,8 +235,10 @@ function RefinedTileBody({ item, w, h, text }) {
   const showSecondary = Boolean(item.secondaryTicker && w >= 128);
   const showFullName = Boolean(item.name && item.name !== primary && w >= 124 && h >= 88);
   const showChangePill = item.colorMode !== "sources" && item.change != null && w >= 116 && h >= 72;
-  const showUnquotedPill = item.colorMode !== "sources" && item.change == null && w >= 102 && h >= 72;
+  const showUnquotedPill = (!nested || item.isEtf) && item.colorMode !== "sources" && item.change == null && w >= 102 && h >= 72;
   const showHowSub = item.colorMode === "sources" && item.sources && w >= 150 && h >= 76;
+  const inside = nested && w > 96 && h > 88 && item.inside;
+  const share = <span className="ch-tm-pct">{shareText}</span>;
 
   return (
     <div className="ch-tm-card">
@@ -271,11 +248,19 @@ function RefinedTileBody({ item, w, h, text }) {
             <b style={{ fontSize: tickerFont }}>{primary}</b>
             {showSecondary && <span className="ch-tm-sec">/ {item.secondaryTicker}</span>}
           </div>
+          {nested && item.isEtf && w > 84 && <span className="ch-tm-sub-badge">{t("alloc.tail.etfBadge")}</span>}
         </div>
         {showFullName && <span className="ch-tm-fullname">{item.name}</span>}
+        {nested && item.tailCountLabel && w > 78 && h > 78 && <span className="ch-tm-fullname">{item.tailCountLabel}</span>}
+        {nested && item.preview && w > 95 && h > 130 && <span className="ch-tm-fullname">{item.preview}</span>}
       </div>
       <div className="ch-tm-card-bot">
-        <span className="ch-tm-pct">{shareText}</span>
+        {inside ? (
+          <div className="ch-tm-pct-stack">
+            <span className="ch-tm-fullname">{inside}{t("tm.shareSuffix")}</span>
+            {share}
+          </div>
+        ) : share}
         {showChangePill && (
           <span className="ch-tm-badge-dark">
             {item.change >= 0 ? "▲" : "▼"} {Math.abs(item.change * 100).toFixed(2)}%
