@@ -2,6 +2,16 @@ import Decimal from "decimal.js";
 import { day, resolveAsset } from "./ledger.js";
 import { tMain } from "./i18n/index.js";
 
+// Stored source names stay fixed; preview labels name them in the active language.
+const SOURCE_KEYS = {
+  "IBKR 成交报表折算率": "source.ibkrExecFx",
+  "IBKR 成交报表收盘价": "source.ibkrExecClose",
+  "IBKR 结单报价": "source.ibkrQuote",
+  "IBKR 结单汇率": "source.ibkrFx",
+  "IBKR 每日报表汇率": "source.ibkrDailyFx",
+  "IBKR 每日报表反向汇率": "source.ibkrDailyInvFx",
+};
+
 // Prices belong to the reporting account. A trade price or an FX execution price is never a closing mark.
 export function ibkrReportPrices(db, account, report, trades, checked, write) {
   const quotes = new Map();
@@ -52,7 +62,7 @@ export function ibkrReportPrices(db, account, report, trades, checked, write) {
     const args = [account, q.id, q.date, q.source];
     const before = previous.get(...args)?.price ?? null;
     if (q.price === null ? before === null : before !== null && new Decimal(before).eq(q.price)) continue;
-    edits.push({ label: tMain("ibkr.price.editLabel", { date: q.date, label: q.label, source: q.source }), format: q.format, before, after: q.price, currency: q.currency });
+    edits.push({ label: tMain("ibkr.price.editLabel", { date: q.date, label: q.label, source: tMain(SOURCE_KEYS[q.source]) }), format: q.format, before, after: q.price, currency: q.currency });
     if (write) {
       if (q.price === null) withdraw.run(...args);
       else save.run(...args, q.price, q.priority);
