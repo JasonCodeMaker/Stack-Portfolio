@@ -22,6 +22,7 @@ const actions = [
   "refreshReview",
   "macroMarket",
   "refreshMacroMarket",
+  "configureMarketSentiment",
   "marketSettings",
   "updateMarket",
   "account",

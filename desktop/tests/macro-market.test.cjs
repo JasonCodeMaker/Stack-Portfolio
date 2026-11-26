@@ -138,7 +138,7 @@ test("refresh coalesces requests and preserves independent public data across re
   assert.equal(initial.treasury.status, "unavailable");
   assert.deepEqual(initial.cpi.schedule.upcoming, schedule[1]);
   assert.equal(initial.cpi.schedule.status, "bundled");
-  assert.equal(initial.sentiment.score, null);
+  assert.equal(initial.sentiment, null);
   const [first, repeated] = await Promise.all([market.refresh(), market.refresh()]);
   assert.deepEqual(first, repeated);
   assert.deepEqual(calls, { treasury: 1, cpi: 1, schedule: 1 });
