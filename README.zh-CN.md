@@ -6,13 +6,13 @@
 
 [English](README.md) · **简体中文**
 
-[![Latest Release](https://img.shields.io/github/v/release/JasonCodeMaker/Stack-Portfolio?style=flat&color=2563EB&label=release)](https://github.com/JasonCodeMaker/Stack-Portfolio/releases)
+[![Latest Release](https://img.shields.io/github/v/release/JasonCodeMaker/Stock-Portfolio?style=flat&color=2563EB&label=release)](https://github.com/JasonCodeMaker/Stock-Portfolio/releases)
 ![Platform](https://img.shields.io/badge/Windows-x64-0078D6?style=flat&logo=windows&logoColor=white)
 ![Brokers](https://img.shields.io/badge/brokers-IBKR%20%7C%20Webull%20AU-16A34A?style=flat)
 ![Local](https://img.shields.io/badge/data-local%20%26%20encrypted-475569?style=flat)
 ![Languages](https://img.shields.io/badge/UI-EN%20%7C%20%E7%AE%80%E4%B8%AD%20%7C%20%E7%B9%81%E4%B8%AD-64748B?style=flat)
 
-[下载安装包](https://github.com/JasonCodeMaker/Stack-Portfolio/releases) ·
+[下载安装包](https://github.com/JasonCodeMaker/Stock-Portfolio/releases) ·
 [主要特点](#主要特点) ·
 [功能面板](#功能面板) ·
 [券商支持](#券商支持) ·
@@ -97,7 +97,7 @@
 
 ## 快速开始
 
-1. 从 [Releases](https://github.com/JasonCodeMaker/Stack-Portfolio/releases) 下载 `Stock-Portfolio-Setup-<版本>-x64.exe` 并安装。
+1. 从 [Releases](https://github.com/JasonCodeMaker/Stock-Portfolio/releases) 下载 `Stock-Portfolio-Setup-<版本>-x64.exe` 并安装。
 2. 打开应用，在欢迎页按需要选择：
    - **示例组合** — 用虚构数据先体验全部功能；
    - **添加券商账户** — 按 [IBKR](docs/onboarding/ibkr.md) 或 [Webull AU](docs/onboarding/webull-au.md) 图文教程授权；
