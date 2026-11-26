@@ -1,0 +1,93 @@
+<div align="center">
+
+# Stock Portfolio
+
+**一款本地运行的 Windows 投资组合管理应用**
+
+[English](README.md) · **简体中文**
+
+![Windows x64](https://img.shields.io/badge/Windows-x64-0078D6?logo=windows&logoColor=white)
+![Brokers](https://img.shields.io/badge/brokers-IBKR%20%7C%20Webull%20AU-2E7D32)
+![Local](https://img.shields.io/badge/data-local%20%26%20encrypted-555555)
+
+[下载安装包](https://github.com/JasonCodeMaker/Stack-Portfolio/releases) ·
+[IBKR 接入教程](docs/onboarding/ibkr.md) ·
+[Webull AU 接入教程](docs/onboarding/webull-au.md) ·
+[详细使用说明](desktop/README.md)
+
+![总览](docs/screenshots/zh-CN/overview.png)
+
+</div>
+
+## 简介
+
+这是我个人用来监控和管理投资组合的项目。我同时在 **IBKR（盈透证券）** 和 **Webull Australia（微牛澳洲）** 两家券商持有股票和 ETF，想在一个地方看清楚：
+
+- 两个账户合起来一共有多少钱，今天、今年赚了多少；
+- 收益和标普 500、纳斯达克 100 比起来是好是差；
+- 买的 ETF 穿透之后，钱实际投在了哪些公司；
+- 本地记录和券商结单是否一致。
+
+目前**仅支持 IBKR 和 Webull Australia**，估值以澳元为准。如果你有相同的需求，欢迎下载使用。
+
+## 主要特点
+
+- **数据只存在本机**：账本是加密的本地文件，没有云端账户，不上传持仓。
+- **两家券商合并看**：持仓、现金和流水按同一日期、同一汇率换算成澳元后汇总。
+- **ETF 穿透**：把 ETF 拆到成分公司，与直接持有的个股合并计算真实敞口。
+- **先预览再入账**：同步券商时先列出变更，确认后才写入，并可与月结单逐项核对。
+
+## 功能面板
+
+### 总览
+
+总资产、当日变动、期间投资盈亏、时间加权收益率和净投入；资产走势和各账户占比。提供「经典总览」和「日常查账」两种布局。
+
+![总览 · 日常查账](docs/screenshots/zh-CN/overview-daily.png)
+
+### 收益复盘
+
+对比标普 500、纳斯达克 100 等基准，查看最大回撤、最长跑输区间和各持仓的收益贡献。可以拖选任意区间重新计算，并记录复盘笔记。
+
+![收益复盘](docs/screenshots/zh-CN/performance.png)
+
+### 配置分析
+
+方框图展示穿透 ETF 后每家公司的占比。可为 ETF、个股和现金设置目标比例，查看当前偏离。
+
+![配置分析](docs/screenshots/zh-CN/allocation.png)
+
+### 持仓
+
+按账户列出每只证券的股数、成本、市值、未实现盈亏和收盘贡献，以及累计已实现收益和分红。
+
+![持仓](docs/screenshots/zh-CN/holdings.png)
+
+### 导入与对账
+
+一键同步券商或导入结单文件，预览变更后再确认入账；与券商结单比较现金、持仓和净值差额；也可以手工补录买卖或资金收支。
+
+![导入与对账](docs/screenshots/zh-CN/imports.png)
+
+## 快速开始
+
+1. 从 [Releases](https://github.com/JasonCodeMaker/Stack-Portfolio/releases) 下载 `Stock-Portfolio-Setup-<版本>-x64.exe` 并安装。
+2. 打开应用，在欢迎页选择：
+   - **示例组合**：用虚构数据先体验全部功能；
+   - **添加券商账户**：按 [IBKR](docs/onboarding/ibkr.md) 或 [Webull AU](docs/onboarding/webull-au.md) 图文教程授权；
+   - **迁入 Wealthfolio 账本**：如果你之前在用 Wealthfolio，可直接迁入历史记录。
+3. 建议在 **设置 → 账本 → 备份账本** 创建一份带密码的备份。
+
+界面支持简体中文、繁體中文和 English。
+
+![欢迎页](docs/screenshots/zh-CN/welcome.png)
+
+## 数据与隐私
+
+- 账本保存在 `%APPDATA%\Stack Portfolio\`，使用 SQLCipher 加密，密钥由当前 Windows 用户保护。
+- 券商授权凭据额外经 Windows 加密保存。
+- 行情和汇率来自 Yahoo Finance 和 FRED 的公开接口，无需 API Key，请求只包含证券代码和日期；可在设置中关闭。
+
+## 免责声明
+
+本项目仅用于个人记录与分析，不构成任何投资建议。估值和收益依赖券商数据与公开行情，请以券商结单为准。

@@ -15,15 +15,121 @@ const env = {
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
+async function verifyEnglishLayout(app, page) {
+  await page.evaluate(() => window.portfolio.setLanguage({ language: "en" }));
+  await page.reload();
+  const chart = page.locator(".overview-trend svg[role=img]");
+  const picker = page.locator(".overview-layout-picker select");
+  const errors = [];
+  for (const [width, height] of [[1024, 650], [1920, 1080], [3440, 1440]]) {
+    await resizeContent(app, page, width, height);
+    for (const layout of ["classic", "daily"]) {
+      await picker.selectOption(layout);
+      for (const mode of ["Assets & Net Inflows", "Investment Gain"]) {
+        await page.getByRole("button", { name: mode, exact: true }).click();
+        await chart.locator(".ch-end").first().waitFor();
+        const issue = await chart.evaluate((svg) => {
+          const bounds = svg.getBoundingClientRect();
+          const names = [...svg.querySelectorAll(".ch-end")];
+          const ticks = [...svg.querySelectorAll('.ch-axis:not([text-anchor])')];
+          const tickRight = Math.max(...ticks.map(tick => tick.getBoundingClientRect().right));
+          return names.filter(label => {
+            const { left, right } = label.getBoundingClientRect();
+            return right > bounds.right || left < tickRight + 2;
+          }).map(label => label.textContent).join(", ");
+        });
+        if (issue) errors.push(`${width} ${layout}: line labels overflow or overlap the scale (${issue})`);
+      }
+      const blocks = page.locator(".overview-account-list .account-block");
+      const rows = await blocks.evaluateAll(cards => cards.map(card =>
+        [card, ...[".account-name b", ".account-balance b", ".account-share", ".account-change > b"].map(s => card.querySelector(s))]
+          .map(el => el.getBoundingClientRect().top)));
+      if (layout === "daily" && width >= 1920) {
+        assert.equal(rows.length, 2);
+        assert.ok(Math.abs(rows[0][0] - rows[1][0]) < 1, "the two sample accounts are side by side");
+        if (rows[0].some((v, i) => Math.abs(v - rows[1][i]) > 1))
+          errors.push(`${width} ${layout}: account rows differ (${rows[0]} vs ${rows[1]})`);
+      }
+    }
+  }
+  assert.deepEqual(errors, []);
+  await picker.selectOption("classic");
+  await page.evaluate(() => window.portfolio.setLanguage({ language: "zh-CN" }));
+  await page.reload();
+}
+
+async function verifyLayoutChoice(app, page) {
+  const picker = page.getByRole("combobox", { name: "总览布局" });
+  const scope = page.locator(".header-tools .account-scope");
+  const date = page.getByLabel("估值日");
+  const period = page.locator(".overview > .period-row");
+  const total = page.locator(".overview-total .v");
+  const gain = page.locator(".overview-trend .seg button").nth(1);
+  assert.equal(await picker.inputValue(), "classic");
+  await scope.click();
+  await page.getByRole("checkbox", { name: "Webull Australia" }).uncheck();
+  await page.locator("dialog .primary").click();
+  await date.fill("2026-10-29");
+  await period.getByRole("button", { name: "本月", exact: true }).click();
+  await gain.click();
+  await page.waitForFunction(() => document.querySelector(".overview-total-label time")?.dateTime === "2026-10-29");
+  const prior = await total.textContent();
+
+  for (const [width, height] of [[1024, 650], [1920, 1080], [3440, 1440]]) {
+    await resizeContent(app, page, width, height);
+    for (const choice of ["daily", "classic"]) {
+      await picker.selectOption(choice);
+      assert.equal(await page.locator(".daily-assets").count(), choice === "daily" ? 1 : 0);
+      const breakdown = await page.locator(".overview-breakdown").boundingBox();
+      const fx = await page.locator(".overview-fx").boundingBox();
+      const gap = fx.y - (breakdown.y + breakdown.height);
+      assert.ok(Math.abs(fx.x - breakdown.x) < 1 && gap >= 0 && gap <= 26,
+        `FX follows the breakdown in the same column at ${width}×${height} (${choice})`);
+      assert.equal(await total.textContent(), prior);
+      assert.equal(await date.inputValue(), "2026-10-29");
+      assert.equal(await scope.innerText(), "IBKR");
+      assert.equal(await gain.getAttribute("aria-pressed"), "true");
+      assert.equal(await period.getByRole("button", { name: "本月", exact: true }).getAttribute("aria-pressed"), "true");
+      assert.equal(await page.getByText("先看资产与走势", { exact: true }).count(), 0);
+      assert.ok(await page.locator(".overview").evaluate(root => {
+        const row = root.firstElementChild;
+        return row.classList.contains("period-row") &&
+          Math.abs(row.firstElementChild.getBoundingClientRect().left - root.getBoundingClientRect().left) < 1;
+      }));
+    }
+  }
+
+  await picker.selectOption("daily");
+  await page.getByRole("navigation", { name: "页面" }).getByRole("button", { name: "持仓", exact: true }).click();
+  assert.equal(await picker.count(), 0);
+  await page.reload();
+  await page.locator(".daily-assets").waitFor();
+  assert.equal(await picker.inputValue(), "daily");
+  await picker.selectOption("classic");
+  await scope.click();
+  await page.getByRole("dialog").getByRole("button", { name: "全部账户" }).click();
+  await page.locator("dialog .primary").click();
+  await period.getByRole("button", { name: "今年以来", exact: true }).click();
+  await page.reload();
+  await page.locator(".overview-main > .kpis").waitFor();
+  assert.equal(await picker.inputValue(), "classic");
+  await resizeContent(app, page, 1024, 650);
+}
+
 (async () => {
   let app;
   try {
     const packaged = process.argv[2];
     app = await electron.launch({ executablePath: packaged || require("electron"), args: packaged ? [] : [path.join(__dirname, "..")], env });
+    assert.equal(await app.evaluate(({ app }) => app.getPath("userData")), directory);
     const page = await app.firstWindow();
     page.setDefaultTimeout(5000);
     await resizeContent(app, page, 1024, 650);
+    const home = await page.evaluate(() => window.portfolio.home());
+    if (!home.mode && !home.hasReal && !home.onboardingSeen) await page.getByRole("button", { name: "暂时跳过" }).click();
     await page.getByRole("button", { name: "打开示例账本" }).click();
+    await page.locator(".overview").waitFor();
+    await verifyLayoutChoice(app, page);
     const chart = page.getByRole("img", { name: "总资产与净投入" });
     await chart.waitFor();
     assert.equal(await page.getByRole("main").getAttribute("data-cols"), "1");
@@ -66,18 +172,15 @@ delete env.ELECTRON_RUN_AS_NODE;
           rail: [...root.querySelectorAll(".overview-rail h2")].map((heading) => heading.textContent),
           singleScreen: root.closest(".pane").scrollHeight <= root.closest(".pane").clientHeight + 1,
           centeredBars: root.querySelectorAll(".pnl-track").length === root.querySelectorAll("[data-row]").length,
-          accountToFx: root.querySelector(".overview-fx").getBoundingClientRect().top -
-            root.querySelector(".overview-accounts").getBoundingClientRect().bottom,
           chartToBreakdown: root.querySelector(".overview-breakdown").getBoundingClientRect().top -
             root.querySelector(".overview-trend").getBoundingClientRect().bottom,
         }));
         assert.ok(layout.fits && layout.centeredBars, theme + " " + w);
-        assert.ok(layout.accountToFx > 0 && layout.accountToFx <= 16, "FX follows Accounts with a card gutter, got " + layout.accountToFx);
         if (state.aspect === "21:9") {
-          assert.deepEqual(layout.rail, ["账户", "汇率影响", "盈亏构成"]);
+          assert.deepEqual(layout.rail, ["账户", "盈亏构成", "汇率影响"]);
           assert.ok(layout.singleScreen, "the sample Overview fits on one ultrawide screen");
         } else {
-          assert.deepEqual(layout.rail, ["账户", "汇率影响"]);
+          assert.deepEqual(layout.rail, ["账户"]);
           assert.ok(layout.chartToBreakdown > 0 && layout.chartToBreakdown <= 16, "the breakdown follows the chart");
         }
         if (process.env.STACK_PORTFOLIO_SCREENSHOTS) {
@@ -153,6 +256,7 @@ delete env.ELECTRON_RUN_AS_NODE;
     await australia.getByText("澳股 11/24 15:11").waitFor();
     assert.match(await australia.innerText(), /\+A\$55\.50.*\+1\.57%.*股价.*纯澳元 · 无汇兑/s);
     assert.match(await america.innerText(), /美股 11\/24 07:00.*\+A\$84\.80.*股价.*\+60\.00.*汇率.*\+24\.80/s);
+    await verifyEnglishLayout(app, page);
     assert.match(await america.locator(".close-badge").getAttribute("title"), /布里斯班时间 · 按当前持仓和现金计算/);
     assert.match(await fx.innerText(), /最近收盘汇率变动.*\+A\$24\.80.*\+1\.33%.*US\$ 1,240\.00.*±A\$18\.85/s);
     await fx.getByRole("button", { name: /分账户明细/ }).click();

@@ -9,7 +9,10 @@ import { FxCard, FxPanel, RecentCloseDates } from "./MarketQuotes";
 import { isCustom, periodLabel } from "./filters.js";
 import { periodPresets } from "../periods.js";
 import { useI18n } from "./i18n.jsx";
+import { Icon } from "./icons";
+import { ClassicOverviewLayout, DailyOverviewLayout } from "./OverviewLayouts";
 import "./overview.css";
+import "./overview-daily.css";
 
 const amount = (n) => fmt(n, 2);
 const closeRate = (value, change) =>
@@ -28,10 +31,11 @@ function Metric({ label, value, caption }) {
   );
 }
 
-function AssetTrend({ points, view, onViewChange }) {
+function AssetTrend({ points, view, onViewChange, daily }) {
   const { t } = useI18n();
   const { aspect } = useShell();
-  const [fit, height] = useMainChartHeight(aspect === "21:9" ? { min: 220, max: 235 } : { max: 360 });
+  const wideHeight = daily ? { min: 235, max: 360, below: 370 } : { min: 220, max: 235 };
+  const [fit, height] = useMainChartHeight(aspect === "21:9" ? wideHeight : { max: 360 });
   const gain = view === "gain";
   const series = gain
     ? [{ name: t("overview.series.gain"), values: points.map((p) => p.gain), color: "var(--l1)", width: 2, area: "sign" }]
@@ -50,7 +54,7 @@ function AssetTrend({ points, view, onViewChange }) {
   return (
     <section className="card overview-trend" aria-label={t("overview.trendTitle")}>
       <div className="row">
-        <h2>{t("overview.trendTitle")}</h2>
+        <h2 className="overview-icon-heading"><Icon name="performance" />{t("overview.trendTitle")}</h2>
         <div className="seg" role="group" aria-label={t("overview.trendViewAria")}>
           {[["value", t("overview.trendValueLabel")], ["gain", t("overview.trendGainLabel")]].map(([key, label]) => (
             <button
@@ -136,7 +140,7 @@ function TopHoldings({ top, total, unpriced, canStack, live, selected, openHoldi
             <span>{t("overview.restAndCashShare", { pct: pct(Math.max(0, 1 - share)) })}</span></div>
           <div className="concentration-track">{top.map((s, i) =>
             <i key={s.key} title={s.ticker + " " + pct(s.value / total)}
-              style={{ width: Math.max(0, s.value / total) * 100 + "%", background: "var(--s" + (i + 1) + ")" }} />
+              style={{ width: Math.max(0, s.value / total) * 100 + "%", "--holding-color": "var(--s" + (i + 1) + ")" }} />
           )}</div>
         </div>}
         <table aria-label={t("overview.top5TableAria")} className="holding-list"><tbody>
@@ -148,7 +152,7 @@ function TopHoldings({ top, total, unpriced, canStack, live, selected, openHoldi
             return (
               <tr key={s.key} data-row={s.key} className={selected === s.key ? "click sel" : "click"} onClick={() => openHolding(s.key)}>
                 <td className="holding-id">
-                  <i className="holding-dot" style={{ background: "var(--s" + (i + 1) + ")" }} />
+                  <i className="holding-dot" style={{ "--holding-color": "var(--s" + (i + 1) + ")" }} />
                   <button type="button" className="ticker">{s.ticker}</button>
                   <span className="holding-name cap" title={s.name}>{s.name}</span>
                   <span className="cap">{pct(total > 0 ? s.value / total : null)}</span>
@@ -162,7 +166,7 @@ function TopHoldings({ top, total, unpriced, canStack, live, selected, openHoldi
                       rate={live ? s.quoteChange?.change : s.today?.priceChange?.change} /></span>
                   <span className="pnl-track" aria-hidden="true"><i style={{
                     left: (gain < 0 ? 50 - half : 50) + "%", width: half + "%",
-                    background: gain < 0 ? "var(--down)" : "var(--up)",
+                    "--movement-color": gain < 0 ? "var(--down)" : "var(--up)",
                   }} /></span>
                   <b title={t("overview.cumulativeGainTitle")}>
                     {gain == null ? t("common.pending") : <Delta amount={gain} rate={s.cost > 0 ? gain / s.cost : null} />}</b>
@@ -181,7 +185,7 @@ function Accounts({ accounts, total, live }) {
   const { aspect } = useShell();
   return (
     <section className="card overview-accounts" aria-label={t("overview.accountsTitle")}>
-      <div className="row"><h2>{t("overview.accountsTitle")}</h2><span className="cap">{live ? t("overview.recentCloseChange") : t("overview.closeChange")}</span></div>
+      <div className="row"><h2 className="overview-icon-heading"><Icon name="wallet" />{t("overview.accountsTitle")}</h2><span className="cap">{live ? t("overview.recentCloseChange") : t("overview.closeChange")}</span></div>
       {!accounts.length && <Empty>{t("overview.accountsEmpty")}</Empty>}
       {!!accounts.length && (
         <div className="overview-account-list" role="group" aria-label={t("overview.accountListAria")}
@@ -214,7 +218,7 @@ function Accounts({ accounts, total, live }) {
   );
 }
 
-export function Overview({ d, onPage, filters, onFilters, run }) {
+export function Overview({ d, onPage, filters, onFilters, run, layout = "classic" }) {
   const { t } = useI18n();
   const [detail, setDetail] = useState(null);
   const [repair, setRepair] = useState(null);
@@ -251,6 +255,13 @@ export function Overview({ d, onPage, filters, onFilters, run }) {
     </section>
   );
   const { total } = d.valuation;
+  const daily = layout === "daily";
+  const incomplete = daily ? total == null : market?.incomplete;
+  const balance = aud(incomplete ? d.known : total, 2);
+  const asOf = daily ? d.date : !market && d.today?.date;
+  const missingQuotes = daily && incomplete ? [...new Set(d.rows
+    .filter(row => row.type !== "cash" && row.price == null)
+    .map(row => row.ticker || row.symbol).filter(Boolean))] : [];
   const top = d.holdings.securities.filter((s) => s.value != null).slice(0, 5);
   const group = d.holdings.securities.find((s) => s.key === detail?.key);
   // The listing is shared across accounts. Use its largest position for account-specific repairs.
@@ -280,6 +291,77 @@ export function Overview({ d, onPage, filters, onFilters, run }) {
     onPage("holdings", first && { assetId: first.assetId, symbol: top[0].ticker });
   }
 
+  const openAssets = () => {
+    lastHolding.current = null;
+    setDetail({ kind: "assets" });
+  };
+  const panels = {
+    breakdown,
+    total: (
+      <button
+        type="button"
+        className="card kpi hero overview-total"
+        aria-label={t("overview.totalAssetsAria", { label: valueLabel, value: incomplete ? t("overview.incompleteSubtotal") + " " + balance : balance })}
+        aria-describedby={asOf ? dailyId + " " + dailyId + "-date" : dailyId}
+        onClick={openAssets}
+      >
+        <span className="k overview-total-label">
+          <span>{valueLabel}</span>
+          {asOf && <time dateTime={asOf} id={dailyId + "-date"}>{daily ? t("overview.daily.asOf", { date: asOf }) : asOf}</time>}
+        </span>
+        <span className="v">{balance}</span>
+        <span className="d" id={dailyId}>
+          {incomplete ? <span>{t("overview.incompleteSubtotal")}{missingQuotes.length > 0 && " · " + t("overview.daily.missingQuotes", { symbols: missingQuotes.join(", ") })}</span> : market ?
+            <><Delta amount={market.recentCloseChange.total} rate={closeRate(total, market.recentCloseChange.total)} /> <span className="cap">{t("overview.recentCloseChange")}</span></> :
+            <><Delta amount={d.today?.change} rate={d.today?.twr} currency={false} /> <span className="cap">{t("overview.closeChange")}</span></>}
+        </span>
+      </button>
+    ),
+    holdingsGain: (
+      <Metric label={t("overview.holdingsGain")}
+        value={d.holdings.openGain == null ? t("common.pending") : <Delta amount={d.holdings.openGain} />}
+        caption={d.holdings.cost == null ? t("overview.costPending") : t("overview.returnRateCaption", {
+          rate: signedPct(d.holdings.cost > 0 && d.holdings.openGain != null ? d.holdings.openGain / d.holdings.cost : null),
+          cost: aud(d.holdings.cost, 2),
+        })}
+      />
+    ),
+    periodGain: (
+      <Metric
+        label={t("overview.periodGain", { period: span })}
+        value={<Delta amount={period?.gain} currency={false} />}
+        caption={t("overview.openingCaption", { value: amount(period?.startValue) })}
+      />
+    ),
+    returnRate: (
+      <Metric label={t("overview.twr")} value={<Delta rate={period?.twr} />}
+        caption={period?.annualised != null && t("overview.annualisedCaption", { rate: signedPct(period.annualised) })} />
+    ),
+    netFlow: (
+      <Metric
+        label={t("overview.periodNetFlow", { period: span })}
+        value={amount(period?.netFlow)}
+        caption={t("overview.cumulativeCaption", { value: amount(period?.cumulativeNetFlow) })}
+      />
+    ),
+    trend: (
+      <AssetTrend daily={daily} points={points} view={view} onViewChange={setView} />
+    ),
+    holdings: (
+      <TopHoldings top={top} total={d.portfolio.totalAud} live={Boolean(market)} selected={group?.key}
+        unpriced={d.holdings.securities.some((s) => s.value == null)}
+        canStack={d.rows.every((r) => r.audValue != null && r.audValue >= 0)}
+        openHolding={openHolding} viewAll={viewAllHoldings} />
+    ),
+    accounts: (
+      <Accounts accounts={d.byAccount} total={total} live={Boolean(market)} />
+    ),
+    fx: (
+      <FxCard fx={d.fx} span={span} periodGain={periodFx}
+        open={() => { lastHolding.current = null; setDetail({ kind: "fx" }); }} />
+    ),
+  };
+
   return (
     <div className="overview" ref={root} onKeyDown={(e) => {
       if (!repair && e.target.closest("[data-row], .insp, dialog")) holdingKeys(e);
@@ -290,66 +372,9 @@ export function Overview({ d, onPage, filters, onFilters, run }) {
         valuationDate={d.date}
         onChange={onFilters}
       />
-      <div className="overview-layout">
-        <div className="overview-main">
-          <section className="kpis" aria-label={t("overview.kpisAria")}>
-            <button
-              type="button"
-              className="card kpi hero overview-total"
-              aria-label={t("overview.totalAssetsAria", { label: valueLabel, value: aud(total, 2) })}
-              aria-describedby={market ? dailyId : d.today?.date ? dailyId + " " + dailyId + "-date" : dailyId}
-              onClick={() => {
-                lastHolding.current = null;
-                setDetail({ kind: "assets" });
-              }}
-            >
-              <span className="k overview-total-label">
-                <span>{valueLabel}</span>
-                {!market && d.today?.date && <time dateTime={d.today.date} id={dailyId + "-date"}>{d.today.date}</time>}
-              </span>
-              <span className="v">{aud(market?.incomplete ? d.known : total, 2)}</span>
-              <span className="d" id={dailyId}>
-                {market?.incomplete ? <span>{t("overview.incompleteSubtotal")}</span> : market ?
-                  <><Delta amount={market.recentCloseChange.total} rate={closeRate(total, market.recentCloseChange.total)} /> <span className="cap">{t("overview.recentCloseChange")}</span></> :
-                  <><Delta amount={d.today?.change} rate={d.today?.twr} currency={false} /> <span className="cap">{t("overview.closeChange")}</span></>}
-              </span>
-            </button>
-            <Metric label={t("overview.holdingsGain")}
-              value={d.holdings.openGain == null ? t("common.pending") : <Delta amount={d.holdings.openGain} />}
-              caption={d.holdings.cost == null ? t("overview.costPending") : t("overview.returnRateCaption", {
-                rate: signedPct(d.holdings.cost > 0 && d.holdings.openGain != null ? d.holdings.openGain / d.holdings.cost : null),
-                cost: aud(d.holdings.cost, 2),
-              })}
-            />
-            <Metric
-              label={t("overview.periodGain", { period: span })}
-              value={<Delta amount={period?.gain} currency={false} />}
-              caption={t("overview.openingCaption", { value: amount(period?.startValue) })}
-            />
-            <Metric label={t("overview.twr")} value={<Delta rate={period?.twr} />}
-              caption={period?.annualised != null && t("overview.annualisedCaption", { rate: signedPct(period.annualised) })} />
-            <Metric
-              label={t("overview.periodNetFlow", { period: span })}
-              value={amount(period?.netFlow)}
-              caption={t("overview.cumulativeCaption", { value: amount(period?.cumulativeNetFlow) })}
-            />
-          </section>
-          <div className="overview-primary">
-            <AssetTrend points={points} view={view} onViewChange={setView} />
-            {aspect === "16:9" && breakdown}
-            <TopHoldings top={top} total={d.portfolio.totalAud} live={Boolean(market)} selected={group?.key}
-              unpriced={d.holdings.securities.some((s) => s.value == null)}
-              canStack={d.rows.every((r) => r.audValue != null && r.audValue >= 0)}
-              openHolding={openHolding} viewAll={viewAllHoldings} />
-          </div>
-        </div>
-        <div className="overview-rail">
-          <Accounts accounts={d.byAccount} total={total} live={Boolean(market)} />
-          <FxCard fx={d.fx} span={span} periodGain={periodFx}
-            open={() => { lastHolding.current = null; setDetail({ kind: "fx" }); }} />
-          {aspect === "21:9" && breakdown}
-        </div>
-      </div>
+      {daily
+        ? <DailyOverviewLayout d={d} wide={aspect === "21:9"} panels={panels} openAssets={openAssets} />
+        : <ClassicOverviewLayout wide={aspect === "21:9"} panels={panels} />}
       {detail?.kind === "assets" && <AssetDetails d={d} onClose={closeDetail} />}
       {detail?.kind === "fx" && <FxPanel fx={d.fx} periodGain={periodFx} close={closeDetail} />}
       {security && <SecurityDetail d={d} security={security} onClose={closeDetail} openRepair={setRepair} />}
