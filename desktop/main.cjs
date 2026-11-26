@@ -37,6 +37,8 @@ const { dashboard, storageContext, loadBook, positions, saveGroupedTargets } = r
 const { portfolioReview, reviewDay, saveReviewNote, reviewNotes } = require("./performance.js");
 const { refreshBenchmarks, refreshCloses } = require("./reviewMarket.js");
 const { marketFor, marketSession, marketTime, shiftDay } = require("./marketDays.js");
+const { createMacroMarket } = require("./macroMarket.js");
+const { macroSources } = require("./macroSources.js");
 const { initialWindow, minimumWindowSize } = require("./windowState.js");
 const { computeDisplayState, normalizeUserScale, USER_SCALE_LIMITS } = require("./adaptiveLayout.js");
 const {
@@ -134,6 +136,12 @@ function writeFileAtomic(file, data) {
     if (fs.existsSync(part)) fs.unlinkSync(part);
   }
 }
+const macroCacheFile = () => path.join(dataDir(), "macro-market.json");
+const macroMarket = createMacroMarket({
+  providers: macroSources((url, options) => net.fetch(url, options)),
+  readCache: () => fs.readFileSync(macroCacheFile(), "utf8"),
+  writeCache: (data) => writeFileAtomic(macroCacheFile(), data),
+});
 function readPreferences() {
   try {
     const value = JSON.parse(fs.readFileSync(preferenceFile(), "utf8"));
@@ -312,6 +320,8 @@ async function verifyDraft(draft) {
 }
 const nativeBackup = () => [{ name: tMain("dialog.filter.restoreBackup"), extensions: ["spbackup", "sqlite", "db"] }];
 const handlers = {
+  macroMarket: () => macroMarket.snapshot(),
+  refreshMacroMarket: () => macroMarket.refresh(),
   displayState: () => syncDisplay(),
   setUserScale,
   async home() {

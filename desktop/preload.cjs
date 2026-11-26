@@ -20,6 +20,8 @@ const actions = [
   "reviewDay",
   "saveReviewNote",
   "refreshReview",
+  "macroMarket",
+  "refreshMacroMarket",
   "marketSettings",
   "updateMarket",
   "account",
