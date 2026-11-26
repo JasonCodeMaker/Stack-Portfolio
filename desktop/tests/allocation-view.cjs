@@ -56,6 +56,21 @@ async function verifyTailExplorer(app, p, chart) {
   const spmo = button(other, /^SPMO/);
   await ivv.waitFor();
   assert.match(await ivv.innerText(), /ETF[\s\S]*尾部 240 项[\s\S]*SHARED000 · SHARED001 · SHARED002/);
+  const stock = chart.locator(".ch-tm:not(.rest):not(.cash):not(.compact) .ch-tm-card").first();
+  const cardInset = (card) => card.evaluate((element) => getComputedStyle(element).padding);
+  assert.equal(await cardInset(ivv.locator(".ch-tm-card")), await cardInset(stock));
+  const { ticker, share, pill, tile } = await ivv.evaluate((element) => {
+    const bounds = (selector) => element.querySelector(selector).getBoundingClientRect().toJSON();
+    return {
+      ticker: bounds(".ch-tm-ticker-wrap b"),
+      share: bounds(".ch-tm-pct"),
+      pill: bounds(".ch-tm-badge-dark"),
+      tile: element.getBoundingClientRect().toJSON(),
+    };
+  });
+  assert.ok(Math.abs(ticker.left - share.left) < 1);
+  assert.ok(share.left - tile.left < 16 && tile.right - pill.right < 16);
+  assert.ok(Math.abs(share.bottom - pill.bottom) < 1);
   assert.match(await ivv.getAttribute("title"), /\+1\.00%/);
   assert.match(await spmo.getAttribute("title"), /−1\.00%/);
   assert.notEqual(await ivv.evaluate((tile) => tile.style.background), await spmo.evaluate((tile) => tile.style.background));

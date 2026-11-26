@@ -168,7 +168,7 @@
   min-width: 0;
   overflow: hidden;
 }
-.ch-tmap.refined .ch-tm.compact .ch-tm-card {
+.ch-tmap.refined :is(.ch-tm, .ch-tm-sub).compact .ch-tm-card {
   padding: 6px 8px;
 }
 .ch-tmap.refined .ch-tm-card-top {
@@ -239,7 +239,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ch-tmap.refined .ch-tm.compact .ch-tm-pct {
+.ch-tmap.refined :is(.ch-tm, .ch-tm-sub).compact .ch-tm-pct {
   font-size: 11.5px;
 }
 .ch-tmap.refined .ch-tm-badge-dark {
@@ -384,12 +384,10 @@ button.ch-tm-drill-badge:hover {
 .ch-tm-sub {
   position: absolute;
   box-sizing: border-box;
-  border-radius: 7px;
-  padding: 8px 10px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 6px;
+  border-radius: 8px;
+  padding: 0;
+  display: block;
+  line-height: 1.2;
   overflow: hidden;
   text-align: left;
   font-family: inherit;
@@ -412,27 +410,6 @@ button.ch-tm-drill-badge:hover {
 .ch-tm-sub.semantic.click:hover {
   box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.72);
 }
-.ch-tm-sub-top {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.ch-tm-sub-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-}
-.ch-tm-sub-tk {
-  font-size: 13px;
-  font-weight: 700;
-  color: inherit;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .ch-tm-sub-badge {
   font-size: 10px;
   font-weight: 600;
@@ -445,46 +422,6 @@ button.ch-tm-drill-badge:hover {
 .ch-tm-sub.semantic .ch-tm-sub-badge {
   background: rgba(255, 255, 255, 0.16);
   color: var(--tm-tile-text);
-}
-.ch-tm-sub-meta,
-.ch-tm-sub-preview {
-  font-size: 11px;
-  line-height: 1.3;
-  color: var(--l2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.ch-tm-sub.semantic .ch-tm-sub-meta,
-.ch-tm-sub.semantic .ch-tm-sub-preview {
-  color: var(--tm-tile-sub);
-}
-.ch-tm-sub-bot {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.ch-tm-sub-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  min-width: 0;
-}
-.ch-tm-sub-row small {
-  font-size: 12px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: inherit;
-}
-.ch-tm-sub-in {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--l3);
-}
-.ch-tm-sub.semantic .ch-tm-sub-in {
-  color: var(--tm-tile-sub);
 }
 
 .ch-selectable {
