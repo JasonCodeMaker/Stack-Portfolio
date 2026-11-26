@@ -2,18 +2,20 @@
 // docked inspector or dialog, and the main chart height. Layout rules live in layout.js.
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Gauge } from "lucide-react";
 import { Icon } from "./icons";
 import { Modal } from "./common";
 import { arrangeGrid, mainChartHeight, shellTier, stepRow } from "./layout.js";
 import { tMain, useI18n } from "./i18n.jsx";
 
-// Six pages in two groups (analysis | maintenance), in the order the questions narrow down.
+// Keep the analysis pages above the maintenance pages in the sidebar.
 export const pageGroups = [
   [
     ["overview", "总览"],
     ["performance", "收益复盘"],
     ["allocation", "配置分析"],
     ["holdings", "持仓"],
+    ["macro", "宏观分析"],
   ],
   [
     ["imports", "导入与对账"],
@@ -23,7 +25,7 @@ export const pageGroups = [
 export const pageTitles = Object.fromEntries(pageGroups.flat());
 
 const pageIds = [
-  ["overview", "performance", "allocation", "holdings"],
+  ["overview", "performance", "allocation", "holdings", "macro"],
   ["imports", "settings"],
 ];
 
@@ -71,7 +73,7 @@ export function Shell({ aspect, page, onPage, ledger, onLedger, titleExtra, filt
         aria-current={page === id ? "page" : undefined}
         onClick={() => onPage(id)}
       >
-        <Icon name={id} />
+        {id === "macro" ? <Gauge size={18} aria-hidden="true" /> : <Icon name={id} />}
         <span>{label}</span>
       </button>
     );

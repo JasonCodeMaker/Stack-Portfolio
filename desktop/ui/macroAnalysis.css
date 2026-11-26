@@ -1,0 +1,193 @@
+.macro-page {
+  display: grid;
+  gap: var(--gap);
+}
+
+.macro-toolbar,
+.macro-refresh {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.macro-toolbar {
+  justify-content: space-between;
+}
+
+.macro-market-phase,
+.macro-cpi-event h3 {
+  font-weight: 600;
+}
+
+.macro-cpi-event h3 {
+  font-size: inherit;
+}
+
+.macro-refresh .btn {
+  min-block-size: 2.75rem;
+}
+
+.macro-refresh [role="status"]:empty {
+  display: none;
+}
+
+.macro-card {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.macro-card-head {
+  flex-wrap: wrap;
+  margin-block-end: 0;
+}
+
+.macro-value {
+  font: 600 2.25rem/1.12 var(--display);
+}
+
+.macro-value span {
+  font: 400 0.95rem/1 var(--text);
+  color: var(--l2);
+}
+
+.macro-meta,
+.macro-cpi-event time {
+  color: var(--l2);
+}
+
+.macro-stale {
+  color: var(--warn);
+}
+
+.macro-cpi-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13.5rem), 1fr));
+  gap: 0.625rem;
+}
+
+.macro-cpi-event {
+  display: grid;
+  align-content: start;
+  gap: 0.3rem;
+  background: var(--surface2);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+.macro-trend-chart {
+  min-block-size: 240px;
+  min-inline-size: 0;
+}
+
+.macro-method {
+  margin-block-start: 0.5rem;
+  padding-block-start: 0.625rem;
+  border-block-start: 1px solid var(--sep);
+}
+
+.macro-method summary {
+  cursor: pointer;
+  width: fit-content;
+}
+
+.macro-method p {
+  color: var(--l2);
+  margin-block-start: 0.5rem;
+}
+
+.macro-sentiment-body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.5rem 2.25rem;
+  padding-block: 0.5rem;
+}
+
+.macro-sentiment-figure {
+  flex: 0 1 16rem;
+  min-inline-size: 0;
+}
+
+.macro-sentiment-gauge {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 2 / 1;
+}
+
+.macro-sentiment-arc,
+.macro-sentiment-arc::after {
+  position: absolute;
+  border-radius: 50%;
+}
+
+.macro-sentiment-arc {
+  inset: 0 0 auto;
+  height: 200%;
+  background: var(--surface2);
+}
+
+.macro-sentiment-gauge[data-available="true"] .macro-sentiment-arc {
+  background: conic-gradient(
+    from 270deg, var(--down), var(--warn) 70deg, var(--sep) 90deg,
+    var(--s1) 115deg, var(--up) 180deg, transparent 180deg
+  );
+}
+
+.macro-sentiment-arc::after {
+  content: "";
+  inset: 9%;
+  background: var(--surface);
+}
+
+.macro-sentiment-needle {
+  position: absolute;
+  inset: auto auto 0 calc(50% - 1.5px);
+  width: 3px;
+  height: 84%;
+  border-radius: 2px;
+  background: var(--l1);
+  transform: rotate(var(--needle-angle));
+  transform-origin: bottom center;
+}
+
+.macro-sentiment-hub {
+  position: absolute;
+  inset: auto auto 0 calc(50% - 7px);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  translate: 0 50%;
+  background: var(--l1);
+}
+
+.macro-sentiment-scale {
+  display: flex;
+  justify-content: space-between;
+  margin-block-start: 0.4rem;
+}
+
+.macro-sentiment-scale,
+.macro-sentiment-reading time {
+  color: var(--l2);
+}
+
+.macro-sentiment-reading {
+  min-inline-size: 0;
+  display: grid;
+  gap: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+.macro-sentiment-score {
+  font: 600 2.75rem/1.1 var(--display);
+}
+
+.macro-sentiment-score span {
+  font: 400 0.95rem/1 var(--text);
+  color: var(--l2);
+}
+
+.macro-sentiment-rating {
+  font-weight: 600;
+}
