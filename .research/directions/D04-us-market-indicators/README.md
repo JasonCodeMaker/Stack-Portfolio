@@ -1,8 +1,12 @@
-# [DRAFT] [D04] U.S. Market Indicators
+# [D04] U.S. Market Indicators
 
 Date: 2026-11-26
 
-Proposal status: DRAFT
+Proposal status: CONFIRMED
+
+Research status: ACTIVE
+
+Confirmed on 2026-11-26. The Researcher replied “确认” to the exact Proposal linked in the confirmation request. [Approved Proposal version](https://github.com/JasonCodeMaker/Stack-Portfolio/blob/207a129f62d9378ee150c3927a5d8d6fccbaf482/.research/directions/D04-us-market-indicators/README.md) · [Confirmation record](https://github.com/JasonCodeMaker/Stack-Portfolio/issues/56#issuecomment-7187020555)
 
 ## Objective
 
