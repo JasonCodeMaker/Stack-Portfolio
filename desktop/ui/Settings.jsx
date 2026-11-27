@@ -108,7 +108,7 @@ function IbkrReauthorization({ binding, close, onSaved }) {
   );
 }
 
-export function Settings({ d, mode, theme = "system", onThemeChange, userScale = 1, onUserScaleChange, run, initial = {}, workspace, openHome, onPage, onSetup }) {
+export function Settings({ d, mode, appVersion, theme = "system", onThemeChange, userScale = 1, onUserScaleChange, run, initial = {}, workspace, openHome, onPage, onSetup }) {
   const { t, languagePreference, localeOptions, changeLanguage, formatDate, formatDateTime, kindLabel, marketLabel } = useI18n();
   const securityLabel = (r) =>
     [r.name || r.ticker, r.ticker, marketLabel(r.mic), r.localCurrency].join(t("common.middot"));
@@ -683,6 +683,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
   }[dialog];
   return (
     <div className="settings">
+      <p className="cap">{t("settings.appVersion", { version: appVersion })}</p>
       <div className="row">
         <div className="seg" role="group" aria-label={t("settings.tabsAria")}>
           {tabIds.map((id) => (

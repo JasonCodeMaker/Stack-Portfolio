@@ -524,6 +524,7 @@ function Application() {
             key={JSON.stringify(initial)}
             d={d}
             mode={mode}
+            appVersion={home.appVersion}
             theme={home.theme}
             onThemeChange={changeTheme}
             userScale={display.userScaleMultiplier}

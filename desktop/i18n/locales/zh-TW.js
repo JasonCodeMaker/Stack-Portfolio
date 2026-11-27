@@ -1169,6 +1169,7 @@ module.exports = {
   "settings.mig.allocation": "配置資料",
   "settings.mig.broker": "同步設定與紀錄",
   "settings.switchBook": "切換帳本 / 遷入 Wealthfolio",
+  "settings.appVersion": "應用程式版本 {version}",
   "settings.factoryReset.section": "恢復原廠設定",
   "settings.factoryReset.summary": "清除這台電腦上的應用程式資料，並以預設設定重新啟動。",
   "settings.factoryReset.open": "恢復原廠設定…",
