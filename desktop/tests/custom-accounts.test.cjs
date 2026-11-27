@@ -134,3 +134,15 @@ test("custom trade entry rejects known instruments outside stock and ETF scope",
   assert.equal(result.rows[0].field, "symbol");
   assert.equal(result.imported, 0);
 });
+
+test("existing exchange aliases work for manual trades and CSV replay", (t) => {
+  const { db, custom } = fixture(t);
+  const id = custom();
+  const assetId = resolveAsset(db, { symbol: "AAPL", exchangeMic: "NASDAQ", instrumentType: "EQUITY" }, "USD");
+  addManual(db, { account: id, assetId, reference: "trade-001", date: "2026-11-04", type: "BUY",
+    currency: "USD", mic: "NASDAQ", symbol: "AAPL", quantity: "1", price: "180", fee: "1", note: "Buy one share" });
+  const row = sample.split("\n")[3].replace("XNAS,EQUITY", ",");
+  assert.equal(importCustomCsv(db, id, [customCsvHeader, row].join("\n"), true).duplicate, 1);
+  assert.throws(() => addManual(db, { account: id, date: "2026-11-06", type: "BUY", currency: "USD",
+    mic: "NASDAQ", kind: "EQUITY", symbol: "NEW", quantity: "1", price: "180" }), { field: "mic" });
+});

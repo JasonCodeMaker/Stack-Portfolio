@@ -111,7 +111,6 @@ function recordInput(raw, opening) {
     input.mic = upper(values.mic);
     input.asset_kind = upper(values.asset_kind);
     if (!input.symbol) invalid("symbol", "symbol");
-    if (input.mic && !/^[A-Z0-9]{4}$/.test(input.mic)) invalid("mic", "mic");
     if (input.asset_kind && !assetKinds.includes(input.asset_kind)) invalid("asset_kind", "assetKind");
   }
   if (trade) {
@@ -142,7 +141,7 @@ function matchListing(db, input, planned, preferredId) {
     planned.set(key, listings);
   }
   const listings = planned.get(key);
-  const matches = listings.filter((asset) => !input.mic || input.mic === asset.mic);
+  const matches = listings.filter((asset) => !input.mic || input.mic === upper(asset.mic));
   const preferred = preferredId && preferredId !== "new" ? matches.find((asset) => asset.id === preferredId) : null;
   if (preferredId && preferredId !== "new" && !preferred) invalid("symbol", "listingMismatch");
   if (!preferred && matches.length > 1) invalid("mic", "ambiguous");
@@ -151,12 +150,13 @@ function matchListing(db, input, planned, preferredId) {
     if (tradeTypes.includes(input.type) && !assetKinds.includes(asset.kind)) invalid("symbol", "unsupportedListing");
     if (input.asset_kind && assetKinds.includes(asset.kind) && input.asset_kind !== asset.kind)
       invalid("asset_kind", "listingMismatch");
-    input.mic = asset.mic;
+    input.mic = upper(asset.mic);
     input.asset_kind = assetKinds.includes(asset.kind) ? asset.kind : "";
     return asset;
   }
   if (input.type === "DIVIDEND") invalid("symbol", "existingListing");
   if (!input.mic) invalid("mic", "newMic");
+  if (!/^[A-Z0-9]{4}$/.test(input.mic)) invalid("mic", "mic");
   if (!input.asset_kind) invalid("asset_kind", "assetKind");
   const newAsset = { symbol: input.symbol, currency: input.currency, mic: input.mic, kind: input.asset_kind };
   listings.push(newAsset);
