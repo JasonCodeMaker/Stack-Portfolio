@@ -34,6 +34,7 @@ This is my personal project for tracking and managing my investment portfolio. I
 - How does my return compare with the S&P 500 and NASDAQ-100?
 - After looking through my ETFs, which companies is my money actually in?
 - Do my local records match the broker statements?
+- What is the current U.S. macro backdrop — market sentiment, 10-year Treasury yield, and CPI inflation?
 
 > [!NOTE]
 > It currently supports **IBKR and Webull Australia only** on **Windows (x64)**, and values everything in Australian dollars (**AUD**). If you have the same setup, feel free to download and use it.
@@ -48,6 +49,7 @@ This is my personal project for tracking and managing my investment portfolio. I
 | 🏦 | **Both brokers in one view** | Holdings, cash, and activity are converted to AUD at the same date and FX rate, then combined. |
 | 🔍 | **ETF look-through** | ETFs are broken down into their underlying companies and merged with your direct holdings to show real company exposure. |
 | ✅ | **Preview before saving** | Broker sync lists every change before writing anything, and you can reconcile against monthly statements line by line. |
+| 📊 | **U.S. macro indicators** | CNN Fear & Greed sentiment, 10-year Treasury yields, and the U.S. CPI release calendar alongside your portfolio. |
 
 ---
 
@@ -67,7 +69,7 @@ Compare your return with benchmarks like the S&P 500 and NASDAQ-100. Check retur
 
 ### Allocation
 
-A treemap of your company exposure after looking through ETFs. Set target weights for ETFs, individual stocks, and cash, and see how far you have drifted.
+A treemap of your company exposure after looking through ETFs, with tail exploration for smaller holdings. Set target weights for ETFs, individual stocks, and cash, and see how far you have drifted.
 
 ![Allocation](docs/screenshots/en/allocation.png)
 
@@ -76,6 +78,12 @@ A treemap of your company exposure after looking through ETFs. Set target weight
 Shares, cost basis, market value, unrealised gain, and daily contribution for every security in each account, plus cumulative realised gains and dividends.
 
 ![Holdings](docs/screenshots/en/holdings.png)
+
+### Macro Analysis
+
+Check the U.S. equity session and Eastern Time alongside the CNN Fear & Greed sentiment gauge, the U.S. CPI release calendar (showing both the latest result and next scheduled release), and an interactive 10-year U.S. Treasury yield chart (`1M` / `3M` / `1Y`) with equity-impact context.
+
+![Macro Analysis](docs/screenshots/en/macro.png)
 
 ### Import & Sync
 
@@ -122,7 +130,7 @@ Sync a broker or import a statement file, check the changes first, then confirm.
 
 - **Local ledger**: stored in `%APPDATA%\Stack Portfolio\` and encrypted with SQLCipher. The key is protected by your Windows user account.
 - **Broker credentials**: get an extra layer of Windows encryption.
-- **Prices & FX rates**: fetched from public Yahoo Finance and FRED endpoints. No API key is needed, and requests contain only tickers and dates. You can turn automatic updates off in Settings.
+- **Prices, FX & macro data**: prices and FX rates come from public Yahoo Finance and FRED endpoints (requests contain only tickers and dates, and automatic updates can be turned off in Settings); Macro Analysis fetches public data from the Federal Reserve Board (10-year Treasury yield), U.S. Bureau of Labor Statistics (CPI & release schedule), and the free Fear & Greed Flow feed. No API key is needed, and macro readings are cached locally.
 - **Backups**: export a password-encrypted `.spbackup` file anytime.
 
 ---

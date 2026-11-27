@@ -1,7 +1,7 @@
 {
   "name": "stock-portfolio-desktop",
   "productName": "Stock Portfolio",
-  "version": "1.4.18",
+  "version": "1.4.22",
   "private": true,
   "description": "Local investment portfolio, allocation and broker reconciliation for Windows",
   "author": "Stock Portfolio",
@@ -64,9 +64,11 @@
     "playwright-core": "1.65.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "sax": "1.6.1",
     "typescript": "5.9.3",
     "vite": "7.3.8",
-    "vitest": "5.1.1"
+    "vitest": "5.1.1",
+    "yauzl": "3.4.0"
   },
   "dependencies": {
     "better-sqlite3-multiple-ciphers": "13.2.0"

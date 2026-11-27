@@ -55,6 +55,20 @@ function holidays(market, year) {
       "2025-01-09",
     ])
       days.add(d);
+  } else if (market === "FED") {
+    // Board of Governors K.8 calendar used for H.15 publication.
+    days.add(observed(date("01-01"), -1));
+    if (weekday((year + 1) + "-01-01") === 6) days.add(date("12-31"));
+    days.add(nth("01-01", 1, 3));
+    days.add(nth("02-01", 1, 3));
+    days.add(shiftDay(date("05-31"), -((weekday(date("05-31")) + 6) % 7)));
+    if (year >= 2021) days.add(observed(date("06-19"), -1));
+    days.add(observed(date("07-04"), -1));
+    days.add(nth("09-01", 1, 1));
+    days.add(nth("10-01", 1, 2));
+    days.add(observed(date("11-11"), -1));
+    days.add(nth("11-01", 4, 4));
+    days.add(observed(date("12-25"), -1));
   } else if (market === "ASX") {
     days.add(observed(date("01-01"), 2));
     days.add(observed(date("01-26"), 2));

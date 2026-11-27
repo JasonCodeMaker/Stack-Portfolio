@@ -49,13 +49,14 @@ delete env.ELECTRON_RUN_AS_NODE;
     await p.getByRole("button", { name: "打开示例账本" }).click();
     await p.getByRole("heading", { name: "总览", exact: true }).waitFor();
 
-    // Sidebar: six pages in two groups, the sample book badge stays visible.
+    // Sidebar: analysis and maintenance groups, the sample book badge stays visible.
     const nav = p.getByRole("navigation", { name: "页面" });
     assert.deepEqual(await nav.getByRole("button").evaluateAll((b) => b.map((x) => x.getAttribute("aria-label"))), [
       "总览",
       "收益复盘",
       "配置分析",
       "持仓",
+      "宏观分析",
       "导入与对账",
       "设置",
       "切换账本 · 示例账本",
@@ -89,7 +90,7 @@ delete env.ELECTRON_RUN_AS_NODE;
     const content = p.locator(".page");
     const left = (await content.boundingBox()).x;
     const right = await content.evaluate((el) => el.getBoundingClientRect().right);
-    for (const name of ["总览", "收益复盘", "配置分析", "持仓", "导入与对账", "设置"]) {
+    for (const name of ["总览", "收益复盘", "配置分析", "持仓", "宏观分析", "导入与对账", "设置"]) {
       await nav.getByRole("button", { name, exact: true }).click();
       const layout = await content.evaluate((el) => {
         const { left, right, top } = el.getBoundingClientRect();

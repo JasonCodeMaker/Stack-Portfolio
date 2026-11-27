@@ -38,6 +38,8 @@ const { dashboard, storageContext, loadBook, positions, saveGroupedTargets } = r
 const { portfolioReview, reviewDay, saveReviewNote, reviewNotes } = require("./performance.js");
 const { refreshBenchmarks, refreshCloses } = require("./reviewMarket.js");
 const { marketFor, marketSession, marketTime, shiftDay } = require("./marketDays.js");
+const { createMacroMarket } = require("./macroMarket.js");
+const { macroSources } = require("./macroSources.js");
 const { initialWindow, minimumWindowSize } = require("./windowState.js");
 const { computeDisplayState, normalizeUserScale, USER_SCALE_LIMITS } = require("./adaptiveLayout.js");
 const {
@@ -136,6 +138,12 @@ function writeFileAtomic(file, data) {
     if (fs.existsSync(part)) fs.unlinkSync(part);
   }
 }
+const macroCacheFile = () => path.join(dataDir(), "macro-market.json");
+const macroMarket = createMacroMarket({
+  providers: macroSources((url, options) => net.fetch(url, options)),
+  readCache: () => fs.readFileSync(macroCacheFile(), "utf8"),
+  writeCache: (data) => writeFileAtomic(macroCacheFile(), data),
+});
 function readPreferences() {
   try {
     const value = JSON.parse(fs.readFileSync(preferenceFile(), "utf8"));
@@ -335,6 +343,8 @@ const handlers = {
     putPref(book, BROKER, "webull.funds." + local.id, target);
     return status;
   },
+  macroMarket: () => macroMarket.snapshot(),
+  refreshMacroMarket: () => macroMarket.refresh(),
   displayState: () => syncDisplay(),
   setUserScale,
   async home() {
@@ -896,8 +906,8 @@ for (const [name, fn] of Object.entries(handlers))
   ipcMain.handle("portfolio:" + name, (event, args) => {
     if (event.sender !== win?.webContents || event.senderFrame !== win.webContents.mainFrame ||
         event.senderFrame?.url !== page) throw Error(tMain("err.invalidRequestOrigin"));
-    // Display actions are synchronous and independent of ledger operations.
-    if (name === "displayState" || name === "setUserScale") return fn(args ?? {});
+    // Display and Macro Analysis actions use workspace state independently of the ledger.
+    if (["displayState", "setUserScale", "macroMarket", "refreshMacroMarket"].includes(name)) return fn(args ?? {});
     if (!switchingBooks && ["dashboard", "history", "connections", "preview", "connectWebullFunds"].includes(name)) {
       const read = Promise.resolve().then(() => fn(args || {}));
       readers.add(read);

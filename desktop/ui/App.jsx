@@ -11,6 +11,7 @@ import { Mark, Shell } from "./Shell";
 import { Holdings } from "./Cockpit";
 import { Overview } from "./Overview";
 import { Performance } from "./Performance";
+import { MacroAnalysis } from "./MacroAnalysis";
 import { Imports } from "./Imports";
 import { Allocation } from "./Allocation";
 import { Settings } from "./Settings";
@@ -470,6 +471,7 @@ function Application() {
         {page === "holdings" && (
           <Holdings key={JSON.stringify(initial)} run={run} d={d} initial={initial} />
         )}
+        {page === "macro" && <MacroAnalysis />}
         {page === "allocation" && (
           <Allocation d={d} run={run} onPage={onPage} />
         )}
