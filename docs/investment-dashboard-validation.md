@@ -43,7 +43,7 @@ node tests/holdings.cjs
 node tests/windows-smoke.cjs --screenshots .testing/spec21/app
 ```
 
-每个页面在 1024×640、1280×720、1920×1080 和 3440×1440 的 CSS 视口下各保存浅色、深色截图，共 56 张。文件按视口和主题存放。可在命令中传入已打包应用的 exe 路径，例如 `node tests/windows-smoke.cjs 'C:/path/Stock Portfolio.exe' --screenshots .testing/spec21/app`。
+每个页面在 1024×640、1280×720、1920×1080 和 3440×1440 的 CSS 视口下各保存浅色、深色截图，共 64 张。文件按视口和主题存放。可在命令中传入已打包应用的 exe 路径，例如 `node tests/windows-smoke.cjs 'C:/path/Stock Portfolio.exe' --screenshots .testing/spec21/app`。
 
 对照原型版本 480f8be。总览 A、收益复盘 A、配置分析 D、持仓 A、维护 A（导入与对账、设置、欢迎）。原型用 frame=1、demo=demo、book=none，并选择对应页面与主题。应用使用随附示例账本，配置分析保存示例目标，导入页打开两家券商的预览，欢迎页使用首次启动状态。
 

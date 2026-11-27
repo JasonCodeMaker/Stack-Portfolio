@@ -19,6 +19,7 @@ const pages = [
   ["performance", "收益复盘"],
   ["allocation", "配置分析"],
   ["holdings", "持仓"],
+  ["macro", "宏观分析"],
   ["imports", "导入与对账"],
   ["settings", "设置"],
 ];
@@ -522,7 +523,7 @@ async function captureMatrix(app, p, output) {
       await capture(key);
     }
   });
-  console.log("Captured 56 app screenshots in " + output);
+  console.log(`Captured ${(pages.length + 1) * sizes.length * 2} app screenshots in ${output}`);
 }
 
 async function main() {
@@ -582,7 +583,7 @@ async function main() {
       const output = path.resolve(values.screenshots);
       await withDesktop(path.join(directory, "screenshots"), (app, p) => captureMatrix(app, p, output));
     }
-    console.log("Windows smoke passed: welcome, six pages, minimum window, periods, holdings, import and retry, reconciliation, review notes, backup and restore.");
+  console.log("Windows smoke passed: welcome, page navigation, minimum window, periods, holdings, import and retry, reconciliation, review notes, backup and restore.");
   } finally {
     const resolved = fs.realpathSync(directory);
     assert.equal(path.dirname(resolved), fs.realpathSync(os.tmpdir()));
