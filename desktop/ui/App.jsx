@@ -336,7 +336,7 @@ function Application() {
     await api.leaveAccountSetup();
     await workspace();
     setWizard(null);
-    if (account) onPage("imports", { broker: account.broker, account: account.id, sync: true });
+    if (account) onPage("imports", account.custom ? { account: account.id } : { broker: account.broker, account: account.id, sync: true });
   }
   const shown = useRef(page);
   shown.current = page;

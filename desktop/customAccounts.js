@@ -143,9 +143,10 @@ function matchListing(db, input, planned, preferredId) {
   }
   const listings = planned.get(key);
   const matches = listings.filter((asset) => !input.mic || input.mic === asset.mic);
-  if (matches.length > 1) invalid("mic", "ambiguous");
-  const asset = matches[0];
-  if (preferredId && preferredId !== "new" && asset?.id !== preferredId) invalid("symbol", "listingMismatch");
+  const preferred = preferredId && preferredId !== "new" ? matches.find((asset) => asset.id === preferredId) : null;
+  if (preferredId && preferredId !== "new" && !preferred) invalid("symbol", "listingMismatch");
+  if (!preferred && matches.length > 1) invalid("mic", "ambiguous");
+  const asset = preferred ?? matches[0];
   if (asset) {
     if (input.asset_kind && assetKinds.includes(asset.kind) && input.asset_kind !== asset.kind)
       invalid("asset_kind", "listingMismatch");
@@ -277,6 +278,8 @@ export function importCustomCsv(db, id, text, commit = false) {
         if (error) throw error;
         const asset = matchListing(db, input, planned);
         preview.status = checkReference(db, accountId, input, seen) ? "duplicate" : "new";
+        const { symbol, mic, currency, quantity, unit_price, amount, fee, to_currency, to_amount } = input;
+        preview.values = { symbol, mic, currency, quantity, unit_price, amount, fee, to_currency, to_amount };
         if (preview.status === "new") {
           const group = input.transfer_group;
           if (group) {

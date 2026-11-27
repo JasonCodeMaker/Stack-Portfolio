@@ -129,7 +129,7 @@ describe("settings page", () => {
     const out = text(page({ mode: "real", initial: { tab: "book" } }));
     expect(out).toMatch(/当前账本 .*正式账本.*切换账本 \/ 迁入 Wealthfolio 备份账本 恢复账本备份 加密旧备份/);
     expect(out).toMatch(/账户 名称 基础币种 状态 IBKR AUD 启用 CommSec AUD 归档/);
-    expect(out).toContain("创建账户");
+    expect(out).toContain("添加账户");
   });
 
   it("names each security by full name, market and currency on the 数据 tab", () => {

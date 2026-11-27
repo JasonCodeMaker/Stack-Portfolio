@@ -396,6 +396,11 @@ export function deleteActivity(db, args) {
 
     const related = current.group && current.activityType.startsWith("TRANSFER_");
     if (related && args.deleteGroup !== true) throw Error(tMain("svc.activityGroupConfirmation"));
+    if (related && Array.isArray(args.groupMembers)) {
+      const currentMembers = transferMembers(db, current.group).map((event) => event.id).sort();
+      if (JSON.stringify(currentMembers) !== JSON.stringify(args.groupMembers.slice().sort()))
+        throw Error(tMain("svc.amendChangedReload"));
+    }
     const rows = related
       ? db.prepare(`SELECT data FROM sp_events
         WHERE json_extract(data,'$.group')=? AND json_extract(data,'$.activityType') IN ('TRANSFER_IN','TRANSFER_OUT')`)

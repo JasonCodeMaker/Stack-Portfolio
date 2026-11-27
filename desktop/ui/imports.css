@@ -318,3 +318,17 @@
 .imp .history-search {
   width: 260px;
 }
+
+.imp .custom-import {
+  display: grid;
+  gap: 12px;
+}
+.imp .custom-import h2, .imp .custom-import h3, .imp .custom-import p {
+  margin: 0;
+}
+.imp .custom-import .acts {
+  flex-wrap: wrap;
+}
+.imp .custom-import details p {
+  margin-top: 8px;
+}

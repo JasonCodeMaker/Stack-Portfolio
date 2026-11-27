@@ -111,6 +111,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
   const securityLabel = (r) =>
     [r.name || r.ticker, r.ticker, marketLabel(r.mic), r.localCurrency].join(t("common.middot"));
   const demo = mode === "demo";
+  const hasCustom = d.accounts.some((account) => account.custom && account.active);
   const { cols } = useShell();
   const [tab, setTab] = useState(initial.tab || "connections"),
     [name, setName] = useState(""),
@@ -413,26 +414,30 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
       </Panel>
     ),
     accounts: (
-      <Panel title={t("settings.accountsTitle")}>
+      <Panel title={t("settings.accountsTitle")} action={!demo && <button type="button" className="btn pri" onClick={onSetup}>{t("ob.btn.addAccount")}</button>}>
         <table>
           <thead>
             <tr>
               <th className="l">{t("settings.col.name")}</th>
               <th className="l">{t("settings.col.currency")}</th>
               <th className="l">{t("settings.col.status")}</th>
+              {hasCustom && <th />}
             </tr>
           </thead>
           <tbody>
             {d.accounts.map((a) => (
               <tr key={a.id}>
-                <td className="l account-name">{a.name}</td>
+                <td className="l account-name">{a.name}{a.custom && <small className="muted"> · {a.brokerName || t("custom.name")}</small>}</td>
                 <td className="l">{a.currency}</td>
                 <td className="l">{a.active ? t("settings.status.active") : t("settings.status.archived")}</td>
+                {hasCustom && <td>
+                  {a.custom && a.active && <button type="button" className="lnk" onClick={() => onPage("imports", { account: a.id })}>{t("custom.openLedger")}</button>}
+                </td>}
               </tr>
             ))}
           </tbody>
         </table>
-        <form
+        {demo && <form
           className="fg end"
           onSubmit={(e) => {
             e.preventDefault();
@@ -452,7 +457,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
             </select>
           </F>
           <button className="btn pri">{t("settings.createAccount")}</button>
-        </form>
+        </form>}
       </Panel>
     ),
     price: (

@@ -142,6 +142,7 @@ const KNOWN_TYPES = new Set([
   "TRANSFER_OUT",
   "FX",
   "FX_IN",
+  "FX_CONVERSION",
   "FX_OUT",
 ]);
 

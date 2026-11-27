@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { randomBytes } = require("node:crypto");
-const { createBook, putPref, savePrice, createAccount } = require("../out/ledger.cjs");
+const { createBook, putPref, createAccount } = require("../out/ledger.cjs");
 const { loadBook, positions, externalFlows } = require("../out/flows.cjs");
 const {
   addManual, amendEvent, createCustomAccount, customCsvHeader, deleteActivity, importCustomCsv,
@@ -106,5 +106,4 @@ test("paired custom and existing account transfers cancel only in their shared s
   assert.equal(externalFlows(book, [from], "2026-11-04", "2026-11-06"), -500);
   assert.equal(externalFlows(book, [to], "2026-11-04", "2026-11-06"), 500);
   assert.equal(externalFlows(book, [from, to], "2026-11-04", "2026-11-06"), 0);
-  savePrice(db, "FX:USD/AUD", "2026-11-05", "1.5", "test");
 });

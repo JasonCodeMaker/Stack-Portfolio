@@ -552,8 +552,9 @@ const handlers = {
     const row = book.prepare("SELECT data FROM sp_events WHERE id=? AND account=?").get(eventId, id);
     if (!row) throw Error(tMain("svc.amendNotFound"));
     const { group } = json(row.data, {});
-    const ids = new Set([id, ...transferMembers(book, group).map((event) => event.accountId)]);
-    return [...ids].map((accountId) => account(book, accountId).name);
+    const related = transferMembers(book, group);
+    const ids = new Set([id, ...related.map((event) => event.accountId)]);
+    return { names: [...ids].map((accountId) => account(book, accountId).name), members: related.map((event) => event.id) };
   },
   history({ account: id, limit = 200, offset = 0, text = "", accountIds, assetIds, through }) {
     const book = requireBook();
