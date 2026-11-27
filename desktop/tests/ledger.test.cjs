@@ -18,6 +18,8 @@ const {
   deleteActivity,
   parseWebullCsv,
   detailedIbkr,
+  refreshFund,
+  network,
 } = require("../out/services.cjs");
 function fixture(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "stack-book-")),
@@ -100,6 +102,60 @@ test("historical allocation keeps a fund pending until the date of its cached co
 
   const dated = await dashboard(db, { ids, date: "2026-10-30" });
   assert.equal(dated.exposure.rows.find((row) => row.ticker === "AAPL").viaEtfsAud.toFixed(2), "3255.00");
+});
+
+test("Webull ASX IVV and NDQ with only ticker metadata automatically look through to companies", async (t) => {
+  const { db } = fixture(t);
+  const { createAccount, savePrice } = require("../out/ledger.cjs");
+  const account = createAccount(db, "Webull", "AUD");
+  const report = parseWebullCsv([
+    "Trade ID,Symbol,Side,Quantity,Price,Date,Market",
+    "1,IVV,BUY,2,100,2026-11-23,ASX",
+    "2,NDQ,BUY,3,100,2026-11-23,ASX",
+  ].join("\n"));
+  await batch(db, account, "webull", report, "Webull", true);
+  const listings = db.prepare("SELECT id, symbol, kind FROM sp_assets ORDER BY symbol").all();
+  assert.deepEqual(listings.map((row) => [row.symbol, row.kind]), [["IVV", "EQUITY"], ["NDQ", "EQUITY"]]);
+  for (const row of listings) savePrice(db, row.id, "2026-11-24", "100", "Fixture");
+
+  const urls = {
+    ivv: "https://www.blackrock.com/au/products/275304/fund/1478358644060.ajax?dataType=fund&fileName=IVV_holdings&fileType=csv",
+    ndq: "https://www.betashares.com.au/files/csv/NDQ_Portfolio_Holdings.csv",
+  };
+  const received = t.mock.method(network, "request", async ({ url }) => {
+    if (url === urls.ivv) return { status: 200, body: [
+      '\uFEFFFund Holdings as of,"26-Nov-2026"',
+      "Ticker,Name,Sector,Asset Class,Weight (%),Exchange,Currency,Market Currency",
+      "IVV,ISHARES CORE S&P ETF TRUST,Financials,Equity,100,NYSE Arca,AUD,USD",
+      'Fund Holdings as of,"25-Nov-2026"',
+      "Ticker,Name,Sector,Asset Class,Weight (%),Exchange,Currency,Market Currency",
+      "AAPL,APPLE,Information Technology,Equity,100,NASDAQ,AUD,USD",
+    ].join("\n") };
+    if (url === urls.ndq) return { status: 200, body: [
+      "Betashares Portfolio Holdings,",
+      "Fund ASX Code,NDQ",
+      "Date,2026-11-25",
+      "Ticker,Name,Asset Class,Sector,Country,Currency,Weight (%)",
+      "AAPL UW,APPLE INC,Equities,Information Technology,United States,USD,100",
+    ].join("\n") };
+    throw Error("Unexpected ETF URL: " + url);
+  });
+
+  const before = await dashboard(db, { date: "2026-11-25" });
+  assert.deepEqual(before.etfData.map(({ asset }) => [asset.symbol, asset.mic]).sort(), [
+    ["IVV", "XASX"], ["NDQ", "XASX"],
+  ]);
+  for (const { asset } of before.etfData) await refreshFund(db, asset);
+  assert.deepEqual(received.mock.calls.map(({ arguments: [request] }) => request.url).sort(), Object.values(urls).sort());
+
+  const after = await dashboard(db, { date: "2026-11-25" });
+  assert.deepEqual(after.etfData.map(({ asset, snapshot }) => [asset.symbol, snapshot.asOfDate]).sort(), [
+    ["IVV", "2026-11-25"], ["NDQ", "2026-11-25"],
+  ]);
+  const apple = after.exposure.rows.find((row) => row.ticker === "AAPL");
+  assert.equal(apple.viaEtfsAud, 500);
+  assert.deepEqual(apple.sources.map((source) => source.etfSymbol).sort(), ["IVV", "NDQ"]);
+  assert.equal(after.exposure.rows.some((row) => row.ticker === "IVV"), false);
 });
 
 test("holdings, allocation and gains use the latest eligible quote, including in pre-fix books", async (t) => {

@@ -48,6 +48,7 @@ const networkHosts = new Set([
   "query1.finance.yahoo.com",
   "fred.stlouisfed.org",
   "www.ishares.com",
+  "www.blackrock.com",
   "dng-api.invesco.com",
   "www.betashares.com.au",
 ]);
