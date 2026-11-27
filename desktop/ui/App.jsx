@@ -16,6 +16,7 @@ import { Imports } from "./Imports";
 import { Allocation } from "./Allocation";
 import { Settings } from "./Settings";
 import { BookBackups } from "./BookBackups";
+import { FactoryResetButton } from "./FactoryReset";
 import { AccountScope, AsOf, OverviewLayoutPicker, ValuationDate } from "./FilterControls";
 import { dashboardQuery, defaultFilters, rememberedFilters, restoreFilters } from "./filters.js";
 import "./design.css";
@@ -118,6 +119,7 @@ function Welcome({ home, run, enter, onClose, onSetup }) {
             </button>
           )}
           <BookBackups welcome run={run} restored={(m) => enter(m === "demo" ? "openDemo" : "openReal")} />
+          {home.storageError && <FactoryResetButton />}
           {onClose && (
             <button className="lnk" onClick={onClose}>
               {t("welcome.backToCurrent")}

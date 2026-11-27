@@ -291,3 +291,10 @@
     grid-template-columns: 1fr;
   }
 }
+.btn.factory-reset-action {
+  color: var(--down);
+  border-color: color-mix(in srgb, var(--down) 40%, var(--sep));
+}
+.btn.factory-reset-action:hover:enabled {
+  background: color-mix(in srgb, var(--down) 9%, var(--surface));
+}

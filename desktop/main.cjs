@@ -6,6 +6,7 @@ const path = require("node:path"),
   fs = require("node:fs"),
   { pathToFileURL } = require("node:url");
 const { randomUUID } = require("node:crypto");
+const { requestFactoryReset, finishFactoryReset } = require("./factoryReset.cjs");
 const {
   localKeyName, localKey, backupKey, isPlainDatabase, openDatabase, checkIntegrity,
   encryptedCopy, publishFile, lockForReplacement, assertNoJournal,
@@ -88,6 +89,7 @@ let db,
   previewRequests = new Map(),
   lastCloseCheck = 0,
   lastMarketCheck = 0;
+let factoryResetRequested = false;
 const reviewChecks = new Map();
 const fundChecks = new Map();
 const closeChecks = new Map();
@@ -347,6 +349,32 @@ const handlers = {
   refreshMacroMarket: () => macroMarket.refresh(),
   displayState: () => syncDisplay(),
   setUserScale,
+  factoryReset() {
+    try {
+      requestFactoryReset(dataDir());
+    } catch (error) {
+      console.error("Unable to request factory reset:", error.message);
+      throw Error(tMain("err.factoryResetRequest"));
+    }
+    factoryResetRequested = true;
+    let relaunchFailed;
+    try {
+      relaunchFailed = app.relaunch() === false;
+    } catch (error) {
+      relaunchFailed = true;
+      console.error("Unable to relaunch after requesting factory reset:", error.message);
+    }
+    setImmediate(() => {
+      // An embedded broker page can veto a normal close via beforeunload.
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (window !== win) window.destroy();
+      }
+      if (relaunchFailed) {
+        dialog.showErrorBox(tMain("settings.factoryReset.section"), tMain("settings.factoryReset.reopen"));
+      }
+      app.quit();
+    });
+  },
   async home() {
     let storageError;
     try {
@@ -906,20 +934,27 @@ for (const [name, fn] of Object.entries(handlers))
   ipcMain.handle("portfolio:" + name, (event, args) => {
     if (event.sender !== win?.webContents || event.senderFrame !== win.webContents.mainFrame ||
         event.senderFrame?.url !== page) throw Error(tMain("err.invalidRequestOrigin"));
+    if (factoryResetRequested) throw Error(tMain("err.factoryResetPending"));
+    if (name === "factoryReset") return fn();
     // Display and Macro Analysis actions use workspace state independently of the ledger.
     if (["displayState", "setUserScale", "macroMarket", "refreshMacroMarket"].includes(name)) return fn(args ?? {});
     if (!switchingBooks && ["dashboard", "history", "connections", "preview", "connectWebullFunds"].includes(name)) {
-      const read = Promise.resolve().then(() => fn(args || {}));
+      const read = Promise.resolve().then(() => {
+        if (factoryResetRequested) throw Error(tMain("err.factoryResetPending"));
+        return fn(args || {});
+      });
       readers.add(read);
       return read.finally(() => readers.delete(read));
     }
     const run = queue.then(async () => {
+      if (factoryResetRequested) throw Error(tMain("err.factoryResetPending"));
       const switchBook = ["openDemo", "openReal", "newBook", "migrationCommit", "restore"].includes(name) ||
         (name === "home" && !mode);
       if (!switchBook) return fn(args || {});
       switchingBooks = true;
       try {
         await Promise.allSettled(readers);
+        if (factoryResetRequested) throw Error(tMain("err.factoryResetPending"));
         return await fn(args || {});
       } finally {
         switchingBooks = false;
@@ -987,6 +1022,7 @@ function createWindow() {
   });
   contents.on("did-finish-load", () => syncDisplay());
   contents.on("before-input-event", (event, input) => {
+    if (factoryResetRequested) return;
     if (input.type !== "keyDown" || !(input.control || input.meta) || input.alt) return;
     const key = input.key;
     if (key !== "0" && key !== "=" && key !== "+" && key !== "-") return;
@@ -1012,6 +1048,7 @@ function createWindow() {
   });
   if (!headless)
     win.on("close", () => {
+      if (factoryResetRequested) return;
       try {
         writePreferences({ window: { bounds: win.getNormalBounds(), maximized: win.isMaximized() } });
       } catch {}
@@ -1021,6 +1058,20 @@ function createWindow() {
 }
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
+  let profileReady = false;
+  try {
+    // The previous process and its database/session handles are gone. Keep the
+    // single-instance lock while clearing the profile before Electron is ready.
+    finishFactoryReset(dataDir());
+    profileReady = true;
+  } catch (error) {
+    console.error("Unable to finish factory reset:", error.message);
+    if (!process.env.STACK_PORTFOLIO_HEADLESS) {
+      syncLanguage("system");
+      dialog.showErrorBox(tMain("settings.factoryReset.incomplete"), tMain("settings.factoryReset.retry"));
+    }
+    app.exit(1);
+  }
   app.on("second-instance", () => {
     if (win) {
       win.show();
@@ -1030,7 +1081,7 @@ else {
   nativeTheme.on("updated", () => {
     if (win && !win.isDestroyed()) win.setBackgroundColor(windowBackground());
   });
-  app.whenReady().then(() => {
+  if (profileReady) app.whenReady().then(() => {
     const { theme } = readPreferences();
     nativeTheme.themeSource = themes.includes(theme) ? theme : "system";
     syncLanguage();
