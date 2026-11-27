@@ -298,3 +298,14 @@
 .btn.factory-reset-action:hover:enabled {
   background: color-mix(in srgb, var(--down) 9%, var(--surface));
 }
+
+.diagnostics-preview {
+  display: block;
+  width: 100%;
+  min-height: 9rem;
+  height: 32vh;
+  padding: 0.75rem;
+  resize: vertical;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.8rem;
+}

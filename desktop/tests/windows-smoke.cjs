@@ -531,6 +531,65 @@ async function main() {
   const prefix = "stack-portfolio-smoke-";
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   try {
+    const diagnosticProfile = path.join(directory, "private-profile-fixture");
+    const diagnosticExport = path.join(directory, "diagnostics.jsonl");
+    await withDesktop(diagnosticProfile, async (app, p) => {
+      await openSample(p);
+      await open(p, "设置");
+      const preferences = path.join(diagnosticProfile, "workspace.json");
+      const originalPreferences = fs.readFileSync(preferences);
+      fs.unlinkSync(preferences);
+      fs.mkdirSync(preferences);
+      try {
+        await p.getByLabel("主题", { exact: true }).selectOption("dark");
+        const notice = p.getByRole("dialog", { name: "操作提示" });
+        await notice.getByText(/private-profile-fixture/).waitFor();
+        await notice.getByRole("button", { name: "关闭" }).click();
+        await assert.rejects(() => p.evaluate(() => window.portfolio.setTheme({ theme: "dark" })), /private-profile-fixture/);
+      } finally {
+        fs.rmdirSync(preferences);
+        fs.writeFileSync(preferences, originalPreferences);
+      }
+
+      const guide = Object.values(require("../ui/onboarding/guide-sources.json"))[0];
+      await app.evaluate(({ shell, dialog }, file) => {
+        shell.openExternal = async () => { throw Error("PRIVATE_BROKER_TOKEN\nPRIVATE_ACCOUNT_ID PRIVATE_HOLDING"); };
+        dialog.showSaveDialog = async () => ({ canceled: false, filePath: file });
+      }, diagnosticExport);
+      await p.evaluate((url) => { window.open(url); }, guide);
+      await p.waitForFunction(async () => {
+        const preview = await window.portfolio.diagnosticsPreview({ range: "day" });
+        return preview.text.includes('"operation":"openGuide"');
+      });
+      await button(p, "诊断日志").click();
+      const diagnosticDialog = p.getByRole("dialog", { name: "诊断日志" });
+      await diagnosticDialog.getByLabel("时间范围").selectOption("day");
+      await diagnosticDialog.getByLabel("导出预览").waitFor();
+      const preview = await diagnosticDialog.getByLabel("导出预览").inputValue();
+      await button(diagnosticDialog, "保存日志文件…").click();
+      await diagnosticDialog.getByText("诊断日志已保存。").waitFor();
+      const exported = fs.readFileSync(diagnosticExport, "utf8");
+      assert.equal(exported, preview);
+      const records = exported.trim().split("\n").map(JSON.parse);
+      const theme = records.filter((record) => record.operation === "setTheme");
+      assert.equal(theme.length, 1);
+      assert.equal(theme[0].stage, "preferences");
+      assert.equal(theme[0].reason, "unexpected_error");
+      assert.equal(theme[0].process, "main");
+      assert.equal(theme[0].outcome, "failed");
+      assert.match(theme[0].build, /^\d+\.\d+\.\d+$/);
+      assert.ok(!records.some((record) => record.operation === "settings" && record.process === "renderer"));
+      assert.ok(records.some((record) => record.operation === "openGuide" &&
+        record.stage === "execute" && record.reason === "unexpected_error"));
+      const persisted = fs.readdirSync(path.join(diagnosticProfile, "diagnostics"))
+        .map((file) => fs.readFileSync(path.join(diagnosticProfile, "diagnostics", file), "utf8"));
+      for (const text of [exported, ...persisted]) {
+        assert.doesNotMatch(text, /PRIVATE_BROKER_TOKEN|PRIVATE_ACCOUNT_ID|PRIVATE_HOLDING|private-profile-fixture|workspace\.json/);
+      }
+      await diagnosticDialog.getByRole("button", { name: "关闭" }).click();
+      assert.equal(await p.evaluate(() => window.portfolio.setTheme({ theme: "dark" })), "dark");
+    });
+    console.log("Diagnostics smoke passed: setTheme/preferences and openGuide/execute, repeated failure deduplicated, private fixtures excluded, and export matches preview.");
     const displayProfile = path.join(directory, "display");
     await withDesktop(displayProfile, (app, p) => verifyAdaptiveDisplay(app, p, displayProfile));
     await withDesktop(displayProfile, async (_app, p) => {

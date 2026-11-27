@@ -2,6 +2,12 @@ const { contextBridge, ipcRenderer } = require("electron");
 const actions = [
   "home",
   "factoryReset",
+  "diagnosticsPreview",
+  "diagnosticsSave",
+  "diagnosticsPause",
+  "diagnosticsClear",
+  "diagnosticsReport",
+  "diagnosticsRenderer",
   "setTheme",
   "setLanguage",
   "beginAccountSetup",

@@ -1,7 +1,15 @@
 import React, { useLayoutEffect, useRef } from "react";
 import { X, Inbox } from "lucide-react";
 import { tMain, useI18n } from "./i18n.jsx";
-export const api = window.portfolio;
+const ipcFailures = new WeakSet();
+export const isIpcFailure = (error) => ipcFailures.has(error);
+export const api = window.portfolio && Object.fromEntries(Object.entries(window.portfolio).map(([name, invoke]) => [
+  name,
+  name === "onDisplayState" ? invoke : (...args) => invoke(...args).catch((error) => {
+    if (error && typeof error === "object") ipcFailures.add(error);
+    throw error;
+  }),
+]));
 export const fmt = (n, digits = 0) =>
   n == null || !Number.isFinite(Number(n))
     ? "—"

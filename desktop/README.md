@@ -1,6 +1,6 @@
 # Stock Portfolio for Windows
 
-运行 `Stock-Portfolio-Setup-1.4.23-x64.exe` 后，从 Windows 开始菜单打开 **Stock Portfolio**。旧版 1.0.x 无法打开升级后的加密账本。[已发布的 Windows 安装程序](https://github.com/JasonCodeMaker/Stock-Portfolio/releases)
+运行 Windows x64 安装程序后，从 Windows 开始菜单打开 **Stock Portfolio**。旧版 1.0.x 无法打开升级后的加密账本。[已发布的 Windows 安装程序](https://github.com/JasonCodeMaker/Stock-Portfolio/releases)
 
 窗口按可用空间自动缩放，并在 16:9 和 21:9 布局之间切换。在 **设置 → 界面缩放** 可以设为 85% 至 130%，每次调整 5%。也可以用 `Ctrl+=` 或 `Ctrl++` 放大，`Ctrl+-` 缩小，`Ctrl+0` 恢复 100%。缩放偏好随应用保存，切换账本后也会保留。
 
@@ -56,6 +56,18 @@
 
 所有宏观数据均自动缓存；数据源临时不可用时，页面会保留并标明上次有效读数与日期。
 
+## 导出诊断日志
+
+遇到问题时，从 **设置 → 诊断日志** 打开导出预览。欢迎页和操作提示也有同一入口。默认显示最近一次问题，可切换到过去 24 小时或全部保留事件。如果结果异常但界面没有报错，可以先点 **标记此刻的问题**。确认预览后保存为 `.jsonl` 文件，由你决定是否分享。
+
+诊断记录留在本机，只包含应用版本、操作、阶段、结果等排障信息。凭证、持仓、交易和原始异常文本不写入日志。最多保留 7 天、总计 5 MiB。可暂停或清除记录。应用无法打开时，可在 `%APPDATA%\Stack Portfolio\diagnostics` 找到已保留的日志。
+
 ## 本地构建
 
 从本目录执行 `npm ci --ignore-scripts`，使用 SQLite 依赖随包提供的预编译二进制，再执行 `npm start`。开发环境需要 Node.js 22.15 或更高版本。运行 `npm run typecheck` 检查类型，运行 `npm test` 构建并验证账本及业务逻辑。构建后运行 `node tests/windows-smoke.cjs` 检查 Windows 界面流程。可加 `--screenshots .testing/spec21/app` 输出截图。运行 `npm run dist` 会在 `../release/desktop/` 生成 Windows x64 安装包。安装后的软件自带运行环境。[验收场景与截图说明](../docs/investment-dashboard-validation.md)
+
+### 诊断日志覆盖范围
+
+- [主进程](main.cjs)统一记录已注册 IPC 操作的异常。启动、窗口事件及 IPC 之外的异步任务共用记录器。新增执行入口时检查是否接入这一层。
+- [界面入口](ui/App.jsx)捕获渲染异常、未处理的异步异常和事件异常。主进程已记录的 IPC 异常由界面去重。
+- [记录器](diagnostics.cjs)在落盘和导出前按字段白名单重建记录。添加指定阶段或结果时，只传固定代码。对正常返回的部分失败或缓存回退，在知道结果的地方记录。
