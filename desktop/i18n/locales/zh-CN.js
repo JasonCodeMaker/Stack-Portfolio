@@ -8,6 +8,7 @@ module.exports = {
   "diagnostics.mark": "标记此刻的问题",
   "diagnostics.marked": "已标记问题时间。",
   "diagnostics.count": "{count} 条诊断事件",
+  "diagnostics.empty": "所选时间范围内没有诊断事件。",
   "diagnostics.paused": "诊断日志已暂停。",
   "diagnostics.incomplete": "可能有部分诊断事件缺失。",
   "diagnostics.preview": "导出预览",

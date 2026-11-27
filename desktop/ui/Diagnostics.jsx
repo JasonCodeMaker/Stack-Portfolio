@@ -32,11 +32,12 @@ function DiagnosticsDialog({ screen, close }) {
   }, [perform, range]);
 
   const load = async () => setPreview(await api.diagnosticsPreview({ range }));
+  const canSave = !busy && Boolean(preview?.count);
   return (
-    <Modal title={t("diagnostics.title")} close={() => { if (!busy) close(); }} wide>
+    <Modal title={t("diagnostics.title")} close={() => { if (!busy) close(); }}>
       <p>{t("diagnostics.description")}</p>
-      <div className="row">
-        <label className="row">
+      <div className="row m0">
+        <label className="row m0">
           <span>{t("diagnostics.range")}</span>
           <select className="btn" value={range} disabled={busy} onChange={(event) => {
             setPreview(null);
@@ -55,7 +56,9 @@ function DiagnosticsDialog({ screen, close }) {
       </div>
       {preview && (
         <>
-          <p className="muted">{t("diagnostics.count", { count: preview.count })}</p>
+          <p className="muted" role="status">
+            {preview.count ? t("diagnostics.count", { count: preview.count }) : t("diagnostics.empty")}
+          </p>
           {preview.paused && <p role="status">{t("diagnostics.paused")}</p>}
           {preview.incomplete && <p role="status">{t("diagnostics.incomplete")}</p>}
           {preview.count > 0 && (
@@ -67,7 +70,7 @@ function DiagnosticsDialog({ screen, close }) {
         </>
       )}
       {status && <p role={status === "diagnostics.failed" ? "alert" : "status"}>{t(status)}</p>}
-      <div className="acts">
+      <div className="row m0">
         <button className="btn" disabled={busy || !preview} onClick={() => perform(async () => {
           await api.diagnosticsPause({ paused: !preview.paused });
           await load();
@@ -75,7 +78,7 @@ function DiagnosticsDialog({ screen, close }) {
         <button className="btn" disabled={busy || !preview} onClick={() => setConfirmClear(true)}>
           {t("diagnostics.clear")}
         </button>
-        <button className="btn pri" disabled={busy || !preview?.count} onClick={() => perform(async () => {
+        <button className={canSave ? "btn pri" : "btn"} disabled={!canSave} onClick={() => perform(async () => {
           if (await api.diagnosticsSave({ id: preview.id })) setStatus("diagnostics.saved");
         })}>{t("diagnostics.save")}</button>
       </div>
