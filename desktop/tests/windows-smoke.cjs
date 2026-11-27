@@ -538,6 +538,20 @@ async function main() {
     await withDesktop(diagnosticProfile, async (app, p) => {
       await openSample(p);
       await open(p, "设置");
+      await p.evaluate(() => window.portfolio.diagnosticsClear());
+      await button(p, "诊断日志").click();
+      const diagnosticDialog = p.getByRole("dialog", { name: "诊断日志" });
+      const rangeControl = diagnosticDialog.getByLabel("时间范围");
+      const markProblem = button(diagnosticDialog, "标记此刻的问题");
+      await markProblem.waitFor();
+      const [rangeBounds, markBounds] = await Promise.all([rangeControl.boundingBox(), markProblem.boundingBox()]);
+      assert.ok(Math.abs(rangeBounds.y - markBounds.y) < 1, "diagnostic range and problem marker must align");
+      await diagnosticDialog.getByText("所选时间范围内没有诊断事件。").waitFor();
+      const saveLog = button(diagnosticDialog, "保存日志文件…");
+      assert.equal(await saveLog.isDisabled(), true);
+      assert.equal(await saveLog.evaluate((element) => element.classList.contains("pri")), false);
+      await p.keyboard.press("Escape");
+      await diagnosticDialog.waitFor({ state: "hidden" });
       const preferences = path.join(diagnosticProfile, "workspace.json");
       const originalPreferences = fs.readFileSync(preferences);
       fs.unlinkSync(preferences);
@@ -564,7 +578,6 @@ async function main() {
         return preview.text.includes('"operation":"openGuide"');
       });
       await button(p, "诊断日志").click();
-      const diagnosticDialog = p.getByRole("dialog", { name: "诊断日志" });
       await diagnosticDialog.getByLabel("时间范围").selectOption("day");
       await diagnosticDialog.getByLabel("导出预览").waitFor();
       const preview = await diagnosticDialog.getByLabel("导出预览").inputValue();

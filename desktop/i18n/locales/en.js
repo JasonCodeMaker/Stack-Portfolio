@@ -78,6 +78,7 @@ module.exports = {
   "diagnostics.mark": "Mark a problem now",
   "diagnostics.marked": "Problem time marked.",
   "diagnostics.count": "{count} diagnostic events",
+  "diagnostics.empty": "No diagnostic events in the selected time range.",
   "diagnostics.paused": "Recording is paused.",
   "diagnostics.incomplete": "Some diagnostic events may be missing.",
   "diagnostics.preview": "Export preview",
