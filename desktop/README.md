@@ -1,6 +1,6 @@
 # Stock Portfolio for Windows
 
-运行 `Stock-Portfolio-Setup-1.4.22-x64.exe` 后，从 Windows 开始菜单打开 **Stock Portfolio**。旧版 1.0.x 无法打开升级后的加密账本。[已发布的 Windows 安装程序](https://github.com/JasonCodeMaker/Stock-Portfolio/releases)
+运行 `Stock-Portfolio-Setup-1.4.23-x64.exe` 后，从 Windows 开始菜单打开 **Stock Portfolio**。旧版 1.0.x 无法打开升级后的加密账本。[已发布的 Windows 安装程序](https://github.com/JasonCodeMaker/Stock-Portfolio/releases)
 
 窗口按可用空间自动缩放，并在 16:9 和 21:9 布局之间切换。在 **设置 → 界面缩放** 可以设为 85% 至 130%，每次调整 5%。也可以用 `Ctrl+=` 或 `Ctrl++` 放大，`Ctrl+-` 缩小，`Ctrl+0` 恢复 100%。缩放偏好随应用保存，切换账本后也会保留。
 
