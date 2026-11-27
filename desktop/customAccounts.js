@@ -40,6 +40,23 @@ export function customAccount(db, id) {
   return row;
 }
 
+export function deleteCustomAccount(db, id) {
+  return transaction(db, () => {
+    const { id: accountId } = account(db, id);
+    if (preference(db, CUSTOM_ACCOUNT, accountId) === null) invalid("account", "deleteAccountType");
+    db.prepare("DELETE FROM sp_corrections WHERE event IN (SELECT id FROM sp_events WHERE account=?)").run(accountId);
+    for (const table of [
+      "sp_events", "sp_anchors", "sp_holding_evidence", "sp_broker_prices", "sp_archive",
+      "sp_statements", "sp_broker_values", "sp_checks", "sp_batches",
+    ]) db.prepare("DELETE FROM " + table + " WHERE account=?").run(accountId);
+    db.prepare(`DELETE FROM sp_prefs
+      WHERE (scope IN (?, 'opening-date') AND key=?)
+        OR (scope='listing-choice' AND CASE WHEN json_valid(key) THEN json_extract(key, '$[0]') END=?)`)
+      .run(CUSTOM_ACCOUNT, accountId, accountId);
+    db.prepare("DELETE FROM sp_accounts WHERE id=?").run(accountId);
+  });
+}
+
 function csvRows(text) {
   const rows = [];
   let cells = [], value = "", state = "plain", line = 1, start = 1;

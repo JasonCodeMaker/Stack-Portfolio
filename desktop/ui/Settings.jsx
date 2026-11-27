@@ -113,7 +113,7 @@ export function Settings({ d, mode, appVersion, theme = "system", onThemeChange,
   const securityLabel = (r) =>
     [r.name || r.ticker, r.ticker, marketLabel(r.mic), r.localCurrency].join(t("common.middot"));
   const demo = mode === "demo";
-  const hasCustom = d.accounts.some((account) => account.custom && account.active);
+  const hasCustom = d.accounts.some((account) => account.custom);
   const { cols } = useShell();
   const [tab, setTab] = useState(initial.tab || "connections"),
     [name, setName] = useState(""),
@@ -124,6 +124,8 @@ export function Settings({ d, mode, appVersion, theme = "system", onThemeChange,
     [market, setMarket] = useState(null),
     [dialog, setDialog] = useState("");
   const [disconnect, setDisconnect] = useState(null);
+  const [deleteAccount, setDeleteAccount] = useState(null);
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [reauthorize, setReauthorize] = useState(null);
   const [asset, setAsset] = useState("fx"),
     [price, setPrice] = useState(""),
@@ -439,7 +441,12 @@ export function Settings({ d, mode, appVersion, theme = "system", onThemeChange,
                 <td className="l">{a.currency}</td>
                 <td className="l">{a.active ? t("settings.status.active") : t("settings.status.archived")}</td>
                 {hasCustom && <td>
-                  {a.custom && a.active && <button type="button" className="lnk" onClick={() => onPage("imports", { account: a.id })}>{t("custom.openLedger")}</button>}
+                  {a.custom && <div className="account-row-actions">
+                    {a.active && <button type="button" className="lnk" onClick={() => onPage("imports", { account: a.id })}>{t("custom.openLedger")}</button>}
+                    <button type="button" className="lnk custom-delete-action"
+                      aria-label={t("custom.deleteAria", { name: a.name })}
+                      onClick={() => setDeleteAccount(a)}>{t("custom.delete")}</button>
+                  </div>}
                 </td>}
               </tr>
             ))}
@@ -788,6 +795,29 @@ export function Settings({ d, mode, appVersion, theme = "system", onThemeChange,
         <div className="stack">{keys.map((k) => <React.Fragment key={k}>{cards[k]}</React.Fragment>)}</div>
       ) : (
         <Grid layout={cardColumns(keys)} panels={cards} />
+      )}
+      {deleteAccount && (
+        <Modal title={t("custom.deleteTitle", { name: deleteAccount.name })}
+          close={() => { if (!deletingAccount) setDeleteAccount(null); }}>
+          <p>{t("custom.deleteDescription")}</p>
+          <p className="muted">{t("custom.deleteTransfers")}</p>
+          <div className="acts">
+            <button type="button" className="btn" disabled={deletingAccount}
+              onClick={() => setDeleteAccount(null)}>{t("app.cancel")}</button>
+            <button type="button" className="btn custom-delete-action" disabled={deletingAccount}
+              onClick={async () => {
+                setDeletingAccount(true);
+                try {
+                  await run(async () => {
+                    await api.deleteCustomAccount({ account: deleteAccount.id });
+                    setDeleteAccount(null);
+                  }, t("custom.deleted"));
+                } finally {
+                  setDeletingAccount(false);
+                }
+              }}>{t("custom.confirmDelete")}</button>
+          </div>
+        </Modal>
       )}
       {confirm && (
         <Modal title={confirm[0]} close={() => setDialog("")}>

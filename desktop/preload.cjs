@@ -34,6 +34,7 @@ const actions = [
   "updateMarket",
   "account",
   "createCustomAccount",
+  "deleteCustomAccount",
   "previewCustomCsv",
   "commitCustomCsv",
   "downloadCustomCsv",
