@@ -46,7 +46,7 @@ function validRecord(key, record) {
     data.every((event) => isMonth(event?.referenceMonth) && isTimestamp(event.scheduledAt));
 }
 
-export function createMacroMarket({ providers, readCache, writeCache, now = Date.now }) {
+export function createMacroMarket({ providers, readCache, writeCache, onDegraded = () => {}, now = Date.now }) {
   const attempts = {};
   let records;
   let pending;
@@ -184,6 +184,7 @@ export function createMacroMarket({ providers, readCache, writeCache, now = Date
       records[key] = record;
       return true;
     } catch {
+      onDegraded(old ? "stale_cache" : "source_unavailable");
       if (!old || old.failed) return false;
       records[key] = { ...old, failed: true };
       return true;
@@ -194,6 +195,7 @@ export function createMacroMarket({ providers, readCache, writeCache, now = Date
     try {
       writeCache(JSON.stringify({ version: 1, records, lastCpiAttemptAt: attempts.cpi }));
     } catch {
+      onDegraded("cache_unavailable");
       // Keep the successful public readings usable for this session.
     }
   }

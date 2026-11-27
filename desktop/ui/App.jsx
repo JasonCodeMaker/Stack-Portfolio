@@ -6,7 +6,7 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import { api, Modal } from "./common";
+import { api, isIpcFailure, Modal } from "./common";
 import { Mark, Shell } from "./Shell";
 import { Holdings } from "./Cockpit";
 import { Overview } from "./Overview";
@@ -17,6 +17,7 @@ import { Allocation } from "./Allocation";
 import { Settings } from "./Settings";
 import { BookBackups } from "./BookBackups";
 import { FactoryResetButton } from "./FactoryReset";
+import { DiagnosticsButton } from "./Diagnostics";
 import { AccountScope, AsOf, OverviewLayoutPicker, ValuationDate } from "./FilterControls";
 import { dashboardQuery, defaultFilters, rememberedFilters, restoreFilters } from "./filters.js";
 import "./design.css";
@@ -25,6 +26,28 @@ import "./settings.css";
 import { AccountWizard } from "./onboarding/AccountWizard";
 import { I18nProvider, useI18n } from "./i18n.jsx";
 import { createTranslator } from "../i18n/index.js";
+
+let diagnosticScreen = "startup";
+function recordRendererFailure(stage, error) {
+  if (!isIpcFailure(error)) void api?.diagnosticsRenderer({ screen: diagnosticScreen, stage }).catch(() => {});
+}
+
+class AppErrorBoundary extends React.Component {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error) {
+    recordRendererFailure("render", error);
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return <div className="boot"><Mark /><DiagnosticsButton screen={diagnosticScreen} /></div>;
+  }
+}
 
 function Welcome({ home, run, enter, onClose, onSetup }) {
   const { t, languagePreference, localeOptions, changeLanguage } = useI18n();
@@ -119,6 +142,7 @@ function Welcome({ home, run, enter, onClose, onSetup }) {
             </button>
           )}
           <BookBackups welcome run={run} restored={(m) => enter(m === "demo" ? "openDemo" : "openReal")} />
+          <DiagnosticsButton screen="welcome" />
           {home.storageError && <FactoryResetButton />}
           {onClose && (
             <button className="lnk" onClick={onClose}>
@@ -236,6 +260,9 @@ function Application() {
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState(""),
     [fatal, setFatal] = useState("");
+  useLayoutEffect(() => {
+    diagnosticScreen = !home ? "startup" : wizard ? "onboarding" : welcome || !d ? "welcome" : page;
+  }, [home, wizard, welcome, d, page]);
   const opts = useRef(filters),
     seq = useRef(0),
     busyDepth = useRef(0);
@@ -256,7 +283,10 @@ function Application() {
     } else setWelcome(true);
   }, [refresh]);
   useEffect(() => {
-    workspace().catch((e) => setFatal(e.message));
+    workspace().catch((e) => {
+      recordRendererFailure("async", e);
+      setFatal(e.message);
+    });
   }, [workspace]);
   useEffect(() => {
     if (!message) return;
@@ -274,6 +304,7 @@ function Application() {
         else if (typeof success === "string") setMessage(success);
         return result;
       } catch (e) {
+        recordRendererFailure("event", e);
         setFatal(String(e.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ""));
       } finally {
         busyDepth.current--;
@@ -415,9 +446,10 @@ function Application() {
       {fatal && (
         <Modal title={t("app.noticeTitle")} close={() => setFatal("")}>
           <p className="error-text">{fatal}</p>
-          <button className="primary" onClick={() => setFatal("")}>
-            {t("app.ok")}
-          </button>
+          <div className="acts">
+            <DiagnosticsButton screen={diagnosticScreen} />
+            <button className="primary" onClick={() => setFatal("")}>{t("app.ok")}</button>
+          </div>
         </Modal>
       )}
     </>
@@ -509,4 +541,6 @@ function Application() {
     </>,
   );
 }
-createRoot(document.getElementById("root")).render(<Application />);
+window.addEventListener("error", (event) => recordRendererFailure("event", event.error));
+window.addEventListener("unhandledrejection", (event) => recordRendererFailure("async", event.reason));
+createRoot(document.getElementById("root")).render(<AppErrorBoundary><Application /></AppErrorBoundary>);
