@@ -1,0 +1,46 @@
+name: Verify Windows 1.4.22 to 1.4.23 upgrade
+
+on:
+  push:
+    branches: [codex/verify-upgrade-v1.4.23]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Install the UI test harness
+        shell: pwsh
+        run: npm install --prefix "$env:RUNNER_TEMP/sp-upgrade-tools" --no-save --ignore-scripts --no-package-lock playwright-core@1.55.0
+      - name: Check the real installers and the original ledger
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'Requires a disposable Windows runner.' }
+          $env:SP_UPGRADE_EXE = Join-Path $env:LOCALAPPDATA 'Programs/Stock Portfolio/Stock Portfolio.exe'
+          function Install-Release($version, $expectedHash) {
+            $name = "Stock-Portfolio-Setup-$version-x64.exe"
+            $installer = Join-Path $env:RUNNER_TEMP $name
+            Invoke-WebRequest -Uri "https://github.com/JasonCodeMaker/Stock-Portfolio/releases/download/v$version/$name" -OutFile $installer
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash -ine $expectedHash) { throw "Installer hash mismatch for $version." }
+            $process = Start-Process -FilePath $installer -ArgumentList @('/S','/currentuser') -PassThru -Wait -WindowStyle Hidden
+            if ($process.ExitCode -ne 0) { throw "Installer $version exited with $($process.ExitCode)." }
+            $binary = Get-Item -LiteralPath $env:SP_UPGRADE_EXE
+            if ($binary.VersionInfo.ProductVersion -notin @($version, "$version.0")) { throw "Wrong installed version: $($binary.VersionInfo.ProductVersion)." }
+            Write-Host "Installed $version. Installer SHA-256 verified."
+          }
+          Install-Release '1.4.22' '894cdf14677b8a863888ee7785f3f9fb7db46310f0477efdeb1218b4779086d8'
+          node .github/verification/upgrade-windows.cjs seed
+          if ($LASTEXITCODE -ne 0) { throw '1.4.22 fixture setup failed.' }
+          Install-Release '1.4.23' '4e2de5f9c18a6a3a0c0c96f903d8d85540d2a447238e300e9b549d3b558c717c'
+          node .github/verification/upgrade-windows.cjs verify
+          if ($LASTEXITCODE -ne 0) { throw '1.4.23 upgrade verification failed.' }
