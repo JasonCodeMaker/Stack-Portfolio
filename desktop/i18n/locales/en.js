@@ -1239,6 +1239,7 @@ module.exports = {
   "settings.mig.allocation": "Allocation",
   "settings.mig.broker": "Sync records",
   "settings.switchBook": "Switch ledger / Migrate Wealthfolio",
+  "settings.appVersion": "App version {version}",
   "settings.factoryReset.section": "Factory reset",
   "settings.factoryReset.summary": "Clear this app’s local data and restart with default settings.",
   "settings.factoryReset.open": "Factory reset…",

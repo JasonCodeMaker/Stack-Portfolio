@@ -434,6 +434,7 @@ const handlers = {
     }
     return {
       storageError,
+      appVersion: app.getVersion(),
       mode: mode || null,
       theme: nativeTheme.themeSource,
       ...syncLanguage(),
