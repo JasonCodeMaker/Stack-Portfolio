@@ -1,7 +1,7 @@
 {
   "name": "stock-portfolio-desktop",
   "productName": "Stock Portfolio",
-  "version": "1.4.22",
+  "version": "1.4.26",
   "private": true,
   "description": "Local investment portfolio, allocation and broker reconciliation for Windows",
   "author": "Stock Portfolio",

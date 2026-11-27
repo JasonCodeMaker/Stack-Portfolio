@@ -5,6 +5,8 @@ import { api, Modal, kind } from "./common";
 import { Grid, useShell } from "./Shell";
 import { scopedAliasKey } from "../allocation/domain/identifiers";
 import { BookBackups } from "./BookBackups";
+import { FactoryResetButton } from "./FactoryReset";
+import { DiagnosticsButton } from "./Diagnostics";
 import { USER_SCALE_LIMITS } from "../adaptiveLayout.js";
 import { aliasRows, brokerState, cardColumns } from "./settingsModel.js";
 import { useI18n } from "./i18n.jsx";
@@ -413,6 +415,12 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
         </div>
       </Panel>
     ),
+    factoryReset: (
+      <Panel title={t("settings.factoryReset.section")}>
+        <p className="muted">{t("settings.factoryReset.summary")}</p>
+        <div className="acts"><FactoryResetButton /></div>
+      </Panel>
+    ),
     accounts: (
       <Panel title={t("settings.accountsTitle")} action={!demo && <button type="button" className="btn pri" onClick={onSetup}>{t("ob.btn.addAccount")}</button>}>
         <table>
@@ -670,7 +678,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
   };
   const keys = {
     connections: ["ibkr", "webull", "market", "reset"],
-    book: ["book", "accounts"],
+    book: ["book", "accounts", "factoryReset"],
     data: ["price", "fund", "classes"],
   }[tab];
   const confirm = {
@@ -694,9 +702,10 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
             </button>
           ))}
         </div>
+        <DiagnosticsButton screen="settings" />
         <label className="row m0">
           <span className="cap">{t("settings.themeLabel")}</span>
-          <select className="btn" value={theme} onChange={(e) => onThemeChange(e.target.value)}>
+          <select className="btn" aria-label={t("settings.themeLabel")} value={theme} onChange={(e) => onThemeChange(e.target.value)}>
             <option value="system">{t("settings.theme.system")}</option>
             <option value="light">{t("settings.theme.light")}</option>
             <option value="dark">{t("settings.theme.dark")}</option>
