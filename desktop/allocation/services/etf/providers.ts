@@ -1,5 +1,6 @@
 import type { NetworkContext } from "../../context";
 import { parseCsvRows, validateSnapshot } from "../../domain/etf";
+import { knownEtfListing } from "../../domain/etfListings";
 import type { EtfAsset, EtfHoldingsSnapshot, UnderlyingHolding } from "../../domain/types";
 
 export interface EtfHoldingsProvider {
@@ -9,7 +10,9 @@ export interface EtfHoldingsProvider {
 }
 
 function normalizePercentageWeight(value: unknown): number | null {
-  const numeric = Number(String(value ?? "").trim().replace(/%$/, ""));
+  const text = String(value ?? "").trim().replace(/%$/, "");
+  if (!text) return null;
+  const numeric = Number(text);
   if (!Number.isFinite(numeric) || numeric < 0) return null;
   return numeric / 100;
 }
@@ -92,15 +95,29 @@ class PublicCsvIssuerProvider implements EtfHoldingsProvider {
   ) {}
 
   public async canHandle(etf: EtfAsset): Promise<boolean> {
-    if (this.id === "ishares") return Boolean(resolveIsharesProductId(etf));
-    return Boolean(etf.providerSymbol && /^[A-Za-z0-9]+$/.test(etf.providerSymbol));
+    return Boolean(this.identifier(etf));
+  }
+
+  private identifier(etf: EtfAsset): string | undefined {
+    const known = knownEtfListing(etf);
+    const configured = etf.providerSymbol?.trim();
+    if (this.id === "ishares" && configured && /^\d+$/.test(configured)) return configured;
+    if (this.id === "betashares" && configured && /^[A-Za-z0-9]+$/.test(configured)) return configured;
+    if (known?.provider === this.id) return known.identifier;
+    if (this.id === "ishares" && /\bishares\b/i.test(etf.name)) return ISHARES_US_PRODUCT_IDS[etf.symbol.toUpperCase()];
   }
 
   public async fetchHoldings(etf: EtfAsset): Promise<EtfHoldingsSnapshot> {
-    const providerSymbol = this.id === "ishares" ? resolveIsharesProductId(etf) : etf.providerSymbol;
+    const providerSymbol = this.identifier(etf);
     if (!providerSymbol) throw new Error(`${this.id} public identifier is missing`);
+    const known = knownEtfListing(etf);
+    const ticker = encodeURIComponent(etf.symbol.trim().toUpperCase());
+    if (this.id === "ishares" && known?.provider === "ishares" && providerSymbol === known.identifier) {
+      const url = `https://www.blackrock.com/au/products/${providerSymbol}/fund/1478358644060.ajax?dataType=fund&fileName=${ticker}_holdings&fileType=csv`;
+      return parseIssuerCsv(await fetchText(this.ctx, url), etf, this.id, true);
+    }
     const url = this.id === "ishares"
-      ? `${this.hostPrefix}${encodeURIComponent(providerSymbol)}/${encodeURIComponent(etf.symbol.toUpperCase())}/latest-holdings.csv`
+      ? `${this.hostPrefix}${encodeURIComponent(providerSymbol)}/${ticker}/latest-holdings.csv`
       : `${this.hostPrefix}${encodeURIComponent(providerSymbol.toUpperCase())}_Portfolio_Holdings.csv`;
     const csv = await fetchText(this.ctx, url);
     return parseIssuerCsv(csv, etf, this.id);
@@ -111,13 +128,6 @@ class PublicCsvIssuerProvider implements EtfHoldingsProvider {
 const ISHARES_US_PRODUCT_IDS: Readonly<Record<string, string>> = {
   IVV: "239726",
 };
-
-function resolveIsharesProductId(etf: EtfAsset): string | null {
-  if (etf.providerSymbol && /^\d+$/.test(etf.providerSymbol)) return etf.providerSymbol;
-  const looksLikeIshares = /\bishares\b/i.test(etf.name);
-  if (!looksLikeIshares) return null;
-  return ISHARES_US_PRODUCT_IDS[etf.symbol.toUpperCase()] ?? null;
-}
 
 // Invesco's API uses the share-class CUSIP. These verified IDs cover common funds.
 const INVESCO_US_CUSIPS: Readonly<Record<string, string>> = {
@@ -198,8 +208,19 @@ export class InvescoProvider implements EtfHoldingsProvider {
   }
 }
 
-function parseIssuerCsv(csv: string, etf: EtfAsset, provider: "ishares" | "betashares"): EtfHoldingsSnapshot {
-  const allRows = parseCsvRows(csv);
+function parseIssuerCsv(
+  csv: string,
+  etf: EtfAsset,
+  provider: "ishares" | "betashares",
+  australianIshares = false,
+): EtfHoldingsSnapshot {
+  let allRows = parseCsvRows(csv);
+  if (australianIshares) {
+    // The Australian CSV lists the wrapper's holdings before the underlying companies.
+    const [, start, end] = allRows.flatMap(([label], index) => /^fund holdings as of$/i.test(label) ? [index] : []);
+    if (start === undefined) throw new Error("iShares Australia holdings CSV is missing its underlying holdings");
+    allRows = allRows.slice(start, end);
+  }
   // iShares US renamed "Weight (%)" to "Market Weight" (alongside "Notional
   // Weight") in late 2026; Betashares still uses "Weight (%)".
   const weightHeaders = new Set(["weight(%)", "marketweight"]);
@@ -214,7 +235,14 @@ function parseIssuerCsv(csv: string, etf: EtfAsset, provider: "ishares" | "betas
       const index = indexOf(name);
       return index >= 0 ? values[index]?.trim() ?? "" : "";
     };
-    const symbol = issuerSymbol(provider, get("ticker"));
+    const country = get("location") || get("country") || undefined;
+    const assetClass = get("assetclass");
+    const underlyingType = mapUnderlyingType(assetClass);
+    let symbol = issuerSymbol(provider, get("ticker"));
+    if (provider === "betashares" && underlyingType === "stock" && country === "United States") {
+      // Betashares includes a Bloomberg exchange suffix in its US stock tickers.
+      symbol = symbol?.replace(/ UW$/, "");
+    }
     const name = get("name") || symbol || "";
     // Issuer weight columns are percentages. Values such as 0.97 therefore
     // mean 0.97%, not a fractional weight of 97%.
@@ -225,21 +253,26 @@ function parseIssuerCsv(csv: string, etf: EtfAsset, provider: "ishares" | "betas
       name,
       mic: exchangeMic(get("exchange")),
       weight,
-      country: get("location") || get("country") || undefined,
-      currency: get("currency") || undefined,
+      country,
+      currency: (australianIshares && get("marketcurrency")) || get("currency") || undefined,
       sector: get("sector") || undefined,
-      assetClass: get("assetclass") || undefined,
-      underlyingType: mapUnderlyingType(get("assetclass")),
+      assetClass: assetClass || undefined,
+      underlyingType,
     });
   }
-  const asOfDate = parseIssuerAsOfDate(allRows);
+  const asOfDate = parseIssuerAsOfDate(allRows, provider);
   return buildSnapshot(etf, provider, rows, asOfDate);
 }
 
-function parseIssuerAsOfDate(rows: string[][]): string | undefined {
-  const metadataRow = rows.find((row) => /holdings as of/i.test(row[0] ?? ""));
-  const value = metadataRow?.[1]?.trim() ?? "";
-  const match = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),\s*(\d{4})$/i.exec(value);
+function parseIssuerAsOfDate(rows: string[][], provider: "ishares" | "betashares"): string | undefined {
+  if (provider === "betashares") {
+    const date = rows.find(([label]) => /^date$/i.test(label))?.[1];
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
+  }
+  const metadataRow = rows.find(([label]) => /holdings as of/i.test(label));
+  const value = metadataRow?.[1] ?? "";
+  const date = value.replace(/^(\d{1,2})-([a-z]{3})-(\d{4})$/i, "$2 $1, $3");
+  const match = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),\s*(\d{4})$/i.exec(date);
   if (!match) return undefined;
   const month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(match[1].toLowerCase()) + 1;
   return `${match[3]}-${String(month).padStart(2, "0")}-${String(Number(match[2])).padStart(2, "0")}`;

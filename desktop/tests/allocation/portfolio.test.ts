@@ -44,6 +44,13 @@ describe("holding normalization", () => {
     expect(normalizeHolding(holding(), account, { ...profile, name: "iShares Core S&P 500 ETF" }, fx).type).toBe("etf");
   });
 
+  it("matches a known ETF by listing and honors a manual classification", () => {
+    const ivv = { ...profile, symbol: "IVV", name: "IVV", mic: "XASX", currency: "AUD" };
+    expect(normalizeHolding(holding(), account, ivv, fx).type).toBe("etf");
+    expect(normalizeHolding(holding(), account, { ...ivv, mic: "ARCX" }, fx).type).toBe("stock");
+    expect(normalizeHolding(holding(), account, ivv, fx, "stock").type).toBe("stock");
+  });
+
   it("reads and normalizes direct-stock sector and country metadata", () => {
     const metadataProfile: AssetProfile = {
       ...profile,

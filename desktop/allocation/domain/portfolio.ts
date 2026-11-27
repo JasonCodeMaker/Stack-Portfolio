@@ -1,5 +1,6 @@
 import { canonicalEtfKey, canonicalIdentity } from "./identifiers";
 import { convertToAud, normalizeCurrency } from "./currency";
+import { knownEtfListing } from "./etfListings";
 import type {
   AllocationRow,
   AssetProfile,
@@ -69,6 +70,7 @@ export function securityType(profile: AssetProfile | null): AssetType {
   if (instrumentType.includes("ETF") || instrumentType.includes("MUTUAL") || metadataType.includes("ETF") || metadataType.includes("FUND") || /\bETF\b|EXCHANGE[- ]TRADED FUND/.test(profileName)) return "etf";
   if (instrumentType.includes("BOND") || instrumentType.includes("FIXED")) return "fixed-income";
   if (instrumentType.includes("OPTION") || instrumentType.includes("DERIVATIVE")) return "derivative";
+  if (profile && knownEtfListing(profile)) return "etf";
   if (instrumentType.includes("EQUITY") || instrumentType.includes("STOCK")) return "stock";
 
   const kind = profile?.kind?.toUpperCase() ?? "";
@@ -259,6 +261,7 @@ export function buildPortfolioModel(
           profileId: holding.profileId,
           symbol: holding.ticker,
           name: holding.name,
+          mic: holding.mic,
           currency: holding.localCurrency,
         }]),
     ).values()],
