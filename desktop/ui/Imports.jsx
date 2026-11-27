@@ -1060,6 +1060,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     ? [["quantity", t("imports.amend.qty"), "number"]]
                     : [["amount", t("imports.amend.amount"), "number"]]),
                 ...(amend.metadata?.customRecord?.type === "FX_CONVERSION" ? [
+                  ["currency", t("custom.fromCurrency"), "text"],
                   ["toCurrency", t("custom.toCurrency"), "text"],
                   ["toAmount", t("custom.toAmount"), "number"],
                   ["fee", t("imports.field.fee"), "number"],

@@ -1,4 +1,8 @@
 module.exports = {
+  "custom.csvCash": "現金明細類型可用 DEPOSIT、WITHDRAWAL、DIVIDEND、INTEREST、FEE 或 TAX。金額填正數，小數點用英文句點。關聯股息時填寫證券代碼，必要時填寫市場代碼。",
+  "custom.unlinkDividend": "取消關聯證券",
+  "custom.error.securityName": "證券名稱不可超過 120 字。",
+  "custom.error.unsupportedListing": "請選擇股票或 ETF 的掛牌標的。",
   "custom.opening": "期初餘額",
   "custom.name": "自訂帳戶",
   "custom.choiceHelp": "匯入 CSV 或手動輸入帳本",

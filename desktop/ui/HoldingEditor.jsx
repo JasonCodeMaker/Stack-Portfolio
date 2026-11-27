@@ -15,7 +15,8 @@ export const listingLabel = (a, marketLabel, pending = "上市地待补") =>
 export function SecurityFields({ d, form, setForm, stockAndEtfOnly = false, existingOnly = false, error }) {
   const { t, marketLabel } = useI18n();
   const symbol = (form.symbol || "").trim().toUpperCase();
-  const candidates = d.listings.filter((a) => a.symbol.toUpperCase() === symbol);
+  const available = stockAndEtfOnly && !existingOnly ? d.listings.filter((asset) => ["EQUITY", "ETF"].includes(asset.kind)) : d.listings;
+  const candidates = available.filter((a) => a.symbol.toUpperCase() === symbol);
   const selected = candidates.find((a) => a.id === form.assetId);
   const errorFor = (field) => error?.field === field && (
     <small className="error-text" role="alert">{error.message}</small>
@@ -25,10 +26,11 @@ export function SecurityFields({ d, form, setForm, stockAndEtfOnly = false, exis
       <Field label={t("editor.symbol")}>
         <input
           required
+          aria-label={t("editor.symbol")}
           value={form.symbol}
           onChange={(e) => {
             const symbol = e.target.value.toUpperCase();
-            const found = d.listings.filter((a) => a.symbol.toUpperCase() === symbol.trim());
+            const found = available.filter((a) => a.symbol.toUpperCase() === symbol.trim());
             const only = found.length === 1 ? found[0] : null;
             setForm({
               ...form,
@@ -101,7 +103,9 @@ export function SecurityFields({ d, form, setForm, stockAndEtfOnly = false, exis
             {errorFor("mic")}
           </Field>
           <Field label={t("editor.securityNameOpt")}>
-            <input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <input aria-label={t("editor.securityNameOpt")} maxLength={stockAndEtfOnly ? 120 : undefined}
+              value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            {errorFor("name")}
           </Field>
           <Field label={t("editor.securityType")}>
             <select

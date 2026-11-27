@@ -37,10 +37,15 @@ export function CustomCsvImport({ account, run, onManual, onOpening, onHistory }
       <p className="muted">{t("custom.importHelp")}</p>
       <div className="acts">
         <button className="btn pri" type="button" disabled={busy} onClick={() => act(async () => {
-          const result = await api.previewCustomCsv({ account: account.id });
-          if (result) {
-            setLimit(previewPage);
-            setPreview(result);
+          try {
+            const result = await api.previewCustomCsv({ account: account.id });
+            if (result) {
+              setLimit(previewPage);
+              setPreview(result);
+            }
+          } catch (error) {
+            setPreview(null);
+            throw error;
           }
         })}><FileUp size={16} aria-hidden="true" /> {t("custom.import")}</button>
         <button className="btn" type="button" disabled={busy} onClick={() => act(async () => {
@@ -53,6 +58,7 @@ export function CustomCsvImport({ account, run, onManual, onOpening, onHistory }
         <summary>{t("custom.csvFormat")}</summary>
         <p className="muted">{t("custom.csvHelp")}</p>
         <p className="muted">{t("custom.csvFields")}</p>
+        <p className="muted">{t("custom.csvCash")}</p>
         <p className="muted">{t("custom.csvFx")}</p>
       </details>
       {preview && (

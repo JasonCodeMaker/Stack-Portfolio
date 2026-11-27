@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { randomBytes } = require("node:crypto");
-const { createBook, putPref, createAccount } = require("../out/ledger.cjs");
+const { createBook, putPref, createAccount, resolveAsset } = require("../out/ledger.cjs");
 const { loadBook, positions, externalFlows } = require("../out/flows.cjs");
 const {
   addManual, amendEvent, createCustomAccount, customCsvHeader, deleteActivity, importCustomCsv,
@@ -106,4 +106,31 @@ test("paired custom and existing account transfers cancel only in their shared s
   assert.equal(externalFlows(book, [from], "2026-11-04", "2026-11-06"), -500);
   assert.equal(externalFlows(book, [to], "2026-11-04", "2026-11-06"), 500);
   assert.equal(externalFlows(book, [from, to], "2026-11-04", "2026-11-06"), 0);
+});
+
+test("booked CSV references keep their original listing when the symbol later becomes ambiguous", (t) => {
+  const { db, custom } = fixture(t);
+  const id = custom();
+  assert.equal(importCustomCsv(db, id, sample, true).imported, 3);
+  const row = sample.split("\n")[3].replace("trade-001", "trade-002").replace("XNAS,EQUITY", ",");
+  const withoutListing = [customCsvHeader, row].join("\n");
+  assert.equal(importCustomCsv(db, id, withoutListing, true).imported, 1);
+  addManual(db, { account: id, reference: "other-listing", date: "2026-11-05", type: "BUY",
+    currency: "USD", mic: "XNYS", kind: "EQUITY", symbol: "AAPL", name: "Alternate listing", quantity: "1", price: "150" });
+  assert.equal(db.prepare("SELECT name FROM sp_assets WHERE symbol='AAPL' AND mic='XNYS'").get().name, "Alternate listing");
+  assert.equal(importCustomCsv(db, id, withoutListing, true).duplicate, 1);
+  const conflicting = [customCsvHeader, row.replace(",,,1,", ",XNYS,EQUITY,1,")].join("\n");
+  assert.equal(importCustomCsv(db, id, conflicting, true).rows[0].field, "record_id");
+});
+
+test("custom trade entry rejects known instruments outside stock and ETF scope", (t) => {
+  const { db, custom } = fixture(t);
+  const id = custom();
+  const assetId = resolveAsset(db, { symbol: "BOND1", exchangeMic: "XNAS", instrumentType: "BOND" }, "USD");
+  assert.throws(() => addManual(db, { account: id, date: "2026-11-05", type: "BUY",
+    currency: "USD", mic: "XNAS", symbol: "BOND1", assetId, quantity: "1", price: "150" }), { field: "symbol" });
+  const row = sample.split("\n")[3].replace("AAPL,XNAS,EQUITY", "BOND1,XNAS,");
+  const result = importCustomCsv(db, id, [customCsvHeader, row].join("\n"), true);
+  assert.equal(result.rows[0].field, "symbol");
+  assert.equal(result.imported, 0);
 });

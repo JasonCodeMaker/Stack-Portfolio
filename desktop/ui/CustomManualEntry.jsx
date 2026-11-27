@@ -62,7 +62,8 @@ export function CustomManualEntry({ d, account, type, close, run, onSaved }) {
         generated.current ??= crypto.randomUUID();
         const result = await api.manual({
           account: account.id, type, date, currency, note, reference: reference?.trim() || generated.current,
-          ...(listing ? { assetId: form.assetId, symbol: form.symbol, mic: form.mic, kind: trade && (!form.assetId || form.assetId === "new") ? form.kind : undefined } : {}),
+          ...(listing ? { assetId: form.assetId, symbol: form.symbol, mic: form.mic } : {}),
+          ...(trade && (!form.assetId || form.assetId === "new") ? { kind: form.kind, name: form.name } : {}),
           ...(trade ? { quantity: form.quantity, price: form.price, fee: form.fee } : { amount: form.amount }),
           ...(type.startsWith("TRANSFER_") ? { group: form.group } : {}),
           ...(fx ? { toCurrency: form.toCurrency, toAmount: form.toAmount, fee: form.fee } : {}),
@@ -106,11 +107,16 @@ export function CustomManualEntry({ d, account, type, close, run, onSaved }) {
               {[...Object.keys(types), "FX_CONVERSION"].map((key) => <option key={key} value={key}>{typeLabel(key)}</option>)}
             </select>
           </Field>
-          {dividend && !listing && (
-            <button type="button" className="lnk" onClick={() => setForm({ ...form, linkDividend: true })}>{t("imports.linkDividend")}</button>
+          {dividend && (
+            <button type="button" className="lnk" onClick={() => {
+              setError(null);
+              setForm({ ...form, linkDividend: !listing, symbol: "", mic: "", assetId: "", currency: account.currency });
+            }}>{t(listing ? "custom.unlinkDividend" : "imports.linkDividend")}</button>
           )}
-          {listing && <SecurityFields d={d} form={form} setForm={setForm} stockAndEtfOnly
-            existingOnly={dividend} error={error} />}
+          {listing && <SecurityFields d={d} form={form} setForm={(next) => {
+            setError(null);
+            setForm(next);
+          }} stockAndEtfOnly existingOnly={dividend} error={error} />}
           {fields.map(([key, label, inputType, optional]) => {
             const message = error?.field === (columnName[key] || key) ? error.message : "";
             return (

@@ -148,6 +148,7 @@ function matchListing(db, input, planned, preferredId) {
   if (!preferred && matches.length > 1) invalid("mic", "ambiguous");
   const asset = preferred ?? matches[0];
   if (asset) {
+    if (tradeTypes.includes(input.type) && !assetKinds.includes(asset.kind)) invalid("symbol", "unsupportedListing");
     if (input.asset_kind && assetKinds.includes(asset.kind) && input.asset_kind !== asset.kind)
       invalid("asset_kind", "listingMismatch");
     input.mic = asset.mic;
@@ -227,7 +228,7 @@ function markStatements(db, accountId, from, key) {
 function post(db, accountId, input, source, asset) {
   if (asset && !asset.id) {
     asset.id = resolveAsset(db, {
-      symbol: asset.symbol, exchangeMic: asset.mic, instrumentType: asset.kind, requireMarketMatch: true,
+      symbol: asset.symbol, name: asset.name, exchangeMic: asset.mic, instrumentType: asset.kind, requireMarketMatch: true,
     }, asset.currency);
   }
   const events = makeEvents(accountId, input, source, asset);
@@ -236,15 +237,17 @@ function post(db, accountId, input, source, asset) {
   return events[0].id;
 }
 
-function checkReference(db, accountId, input, seen) {
-  const signature = JSON.stringify(input);
+function originalReference(db, accountId, input, seen) {
   const stored = db.prepare("SELECT original FROM sp_events WHERE id=? AND account=?")
     .get(primaryId(accountId, input.record_id), accountId);
-  const original = stored ? JSON.stringify(json(stored.original, {})?.metadata?.customRecord) : seen.get(input.record_id);
-  if (original === signature) return true;
-  if (stored || original !== undefined) invalid("record_id", "conflict", { reference: input.record_id });
-  seen.set(input.record_id, signature);
-  return false;
+  const original = stored ? json(stored.original, {}).metadata?.customRecord : seen?.get(input.record_id);
+  if (!stored && !original) return null;
+  // Missing listing fields refer to the original match, even if the catalog changes later.
+  const compared = input.symbol && original?.symbol ? {
+    ...input, mic: input.mic || original.mic, asset_kind: input.asset_kind || original.asset_kind,
+  } : input;
+  if (JSON.stringify(compared) === JSON.stringify(original)) return original;
+  invalid("record_id", "conflict", { reference: input.record_id });
 }
 
 export function importCustomCsv(db, id, text, commit = false) {
@@ -276,9 +279,10 @@ export function importCustomCsv(db, id, text, commit = false) {
       const preview = { line, reference: input?.record_id ?? reference, date: input?.date, type: input?.type };
       try {
         if (error) throw error;
-        const asset = matchListing(db, input, planned);
-        preview.status = checkReference(db, accountId, input, seen) ? "duplicate" : "new";
-        const { symbol, mic, currency, quantity, unit_price, amount, fee, to_currency, to_amount } = input;
+        const original = originalReference(db, accountId, input, seen);
+        const asset = original ? null : matchListing(db, input, planned);
+        preview.status = original ? "duplicate" : "new";
+        const { symbol, mic, currency, quantity, unit_price, amount, fee, to_currency, to_amount } = original ?? input;
         preview.values = { symbol, mic, currency, quantity, unit_price, amount, fee, to_currency, to_amount };
         if (preview.status === "new") {
           const group = input.transfer_group;
@@ -288,6 +292,7 @@ export function importCustomCsv(db, id, text, commit = false) {
             validateTransferPair(event, members);
             stagedGroups.set(group, [...members, event]);
           }
+          seen.set(input.record_id, input);
           ready.push({ input, asset });
         }
       } catch (problem) {
@@ -315,8 +320,13 @@ export function addCustomManual(db, args) {
       quantity: args.quantity, unit_price: args.price, amount: args.amount, fee: args.fee,
       transfer_group: args.group, to_currency: args.toCurrency, to_amount: args.toAmount, note: args.note,
     }, preference(db, "opening-date", id));
+    if (originalReference(db, id, input)) invalid("record_id", "duplicate");
     const asset = matchListing(db, input, new Map(), args.assetId);
-    if (checkReference(db, id, input, new Map())) invalid("record_id", "duplicate");
+    if (asset && !asset.id) {
+      const name = String(args.name ?? "").trim();
+      if (name.length > 120) invalid("name", "securityName");
+      asset.name = name;
+    }
     if (input.transfer_group)
       validateTransferPair(makeEvents(id, input, "MANUAL", asset)[0], transferMembers(db, input.transfer_group));
     return post(db, id, input, "MANUAL", asset);
@@ -337,8 +347,12 @@ export function amendCustomActivity(db, args) {
     const changed = { ...saved, date: args.date, note: args.note };
     if (tradeTypes.includes(saved.type)) Object.assign(changed, { quantity: args.quantity, unit_price: args.price, fee: args.fee });
     else changed.amount = args.amount;
-    if (saved.type === "FX_CONVERSION")
-      Object.assign(changed, { to_currency: args.toCurrency, to_amount: args.toAmount, fee: args.fee });
+    if (saved.type === "FX_CONVERSION") {
+      Object.assign(changed, {
+        currency: args.currency ?? saved.currency, to_currency: args.toCurrency,
+        to_amount: args.toAmount, fee: args.fee,
+      });
+    }
     const input = recordInput(changed, preference(db, "opening-date", accountId));
     const asset = before.assetId ? { id: before.assetId } : null;
     const events = makeEvents(accountId, input, before.sourceSystem, asset);

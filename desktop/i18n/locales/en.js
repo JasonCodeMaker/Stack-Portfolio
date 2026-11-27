@@ -1,4 +1,8 @@
 module.exports = {
+  "custom.csvCash": "Use DEPOSIT, WITHDRAWAL, DIVIDEND, INTEREST, FEE or TAX for cash entries. Enter positive amounts with a decimal dot. For a linked dividend, fill in the symbol and the market if needed.",
+  "custom.unlinkDividend": "Remove security link",
+  "custom.error.securityName": "Enter a security name of up to 120 characters.",
+  "custom.error.unsupportedListing": "Choose a stock or ETF listing.",
   "custom.opening": "Opening balance",
   "custom.name": "Custom",
   "custom.choiceHelp": "Use a CSV or enter records yourself",

@@ -519,6 +519,7 @@ const handlers = {
     customAccount(book, id);
     const file = await pick([{ name: tMain("custom.csv"), extensions: ["csv"] }]);
     if (!file) return null;
+    customPreviews.clear();
     if (fs.statSync(file).size > 48 * 1024 * 1024) throw Error(tMain("err.fileTooLarge"));
     const data = fs.readFileSync(file);
     if (data.length > 48 * 1024 * 1024) throw Error(tMain("err.fileTooLarge"));
@@ -530,7 +531,6 @@ const handlers = {
     }
     const result = importCustomCsv(book, id, text);
     const token = randomUUID();
-    customPreviews.clear();
     customPreviews.set(token, { account: id, text });
     return { ...result, token, name: path.basename(file) };
   },
@@ -982,7 +982,7 @@ for (const [name, fn] of Object.entries(handlers))
     }
     const run = queue.then(async () => {
       const switchBook = ["openDemo", "openReal", "newBook", "migrationCommit", "restore"].includes(name) ||
-        (name === "home" && !mode);
+        (["home", "createCustomAccount"].includes(name) && !mode);
       if (!switchBook) return fn(args || {});
       switchingBooks = true;
       try {

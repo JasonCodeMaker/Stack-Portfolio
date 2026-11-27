@@ -1,4 +1,8 @@
 module.exports = {
+  "custom.csvCash": "现金流水类型可用 DEPOSIT、WITHDRAWAL、DIVIDEND、INTEREST、FEE 或 TAX。金额填正数，小数点用英文句点。关联股息时填写证券代码，必要时填写市场代码。",
+  "custom.unlinkDividend": "取消关联证券",
+  "custom.error.securityName": "证券名称不能超过 120 字。",
+  "custom.error.unsupportedListing": "请选择股票或 ETF 的上市标的。",
   "custom.opening": "期初余额",
   "custom.name": "自定义账户",
   "custom.choiceHelp": "导入 CSV 或手动录入账本",
