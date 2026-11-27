@@ -12,20 +12,25 @@ export const marketNames = {
 export const listingLabel = (a, marketLabel, pending = "上市地待补") =>
   [a.name || a.symbol, (marketLabel ? marketLabel(a.mic) : marketNames[a.mic] || a.mic || pending), a.currency].join(" · ");
 
-export function SecurityFields({ d, form, setForm }) {
+export function SecurityFields({ d, form, setForm, stockAndEtfOnly = false, existingOnly = false, error }) {
   const { t, marketLabel } = useI18n();
   const symbol = (form.symbol || "").trim().toUpperCase();
-  const candidates = d.listings.filter((a) => a.symbol.toUpperCase() === symbol);
+  const available = stockAndEtfOnly && !existingOnly ? d.listings.filter((asset) => ["EQUITY", "ETF"].includes(asset.kind)) : d.listings;
+  const candidates = available.filter((a) => a.symbol.toUpperCase() === symbol);
   const selected = candidates.find((a) => a.id === form.assetId);
+  const errorFor = (field) => error?.field === field && (
+    <small className="error-text" role="alert">{error.message}</small>
+  );
   return (
     <>
       <Field label={t("editor.symbol")}>
         <input
           required
+          aria-label={t("editor.symbol")}
           value={form.symbol}
           onChange={(e) => {
             const symbol = e.target.value.toUpperCase();
-            const found = d.listings.filter((a) => a.symbol.toUpperCase() === symbol.trim());
+            const found = available.filter((a) => a.symbol.toUpperCase() === symbol.trim());
             const only = found.length === 1 ? found[0] : null;
             setForm({
               ...form,
@@ -34,14 +39,17 @@ export function SecurityFields({ d, form, setForm }) {
               mic: only?.mic || "",
               currency: only?.currency || form.currency,
               name: only?.name || "",
+              ...(stockAndEtfOnly ? { kind: only?.kind || "EQUITY" } : {}),
             });
           }}
         />
+        {errorFor("symbol")}
       </Field>
       {candidates.length > 0 && (
         <Field label={t("editor.listing")}>
           <select
             required
+            aria-label={t("editor.listing")}
             value={form.assetId || ""}
             onChange={(e) => {
               const a = candidates.find((v) => v.id === e.target.value);
@@ -51,6 +59,7 @@ export function SecurityFields({ d, form, setForm }) {
                 mic: a?.mic || "",
                 name: a?.name || "",
                 currency: a?.currency || form.currency,
+                ...(stockAndEtfOnly ? { kind: a?.kind || "EQUITY" } : {}),
               });
             }}
           >
@@ -60,11 +69,12 @@ export function SecurityFields({ d, form, setForm }) {
                 {listingLabel(a, marketLabel)}
               </option>
             ))}
-            <option value="new">{t("editor.addListing")}</option>
+            {!existingOnly && <option value="new">{t("editor.addListing")}</option>}
           </select>
         </Field>
       )}
-      {!selected && (
+      {selected && errorFor("asset_kind")}
+      {!selected && (!existingOnly || !stockAndEtfOnly) && (
         <>
           <Field label={t("editor.tradeCurrency")}>
             <input
@@ -73,13 +83,14 @@ export function SecurityFields({ d, form, setForm }) {
               value={form.currency}
               onChange={(e) => setForm({ ...form, currency: e.target.value.toUpperCase() })}
             />
+            {errorFor("currency")}
           </Field>
           <Field label={t("editor.exchangeMarket")}>
             <input
               list="holding-markets"
               placeholder={t("editor.exchangePlaceholder")}
               value={form.mic}
-              required={form.assetId === "new"}
+              required={stockAndEtfOnly || form.assetId === "new"}
               onChange={(e) => setForm({ ...form, mic: e.target.value.toUpperCase() })}
             />
             <datalist id="holding-markets">
@@ -89,20 +100,27 @@ export function SecurityFields({ d, form, setForm }) {
                 </option>
               ))}
             </datalist>
+            {errorFor("mic")}
           </Field>
           <Field label={t("editor.securityNameOpt")}>
-            <input value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            <input aria-label={t("editor.securityNameOpt")} maxLength={stockAndEtfOnly ? 120 : undefined}
+              value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+            {errorFor("name")}
           </Field>
           <Field label={t("editor.securityType")}>
             <select
+              aria-label={t("editor.securityType")}
               value={form.kind || "EQUITY"}
               onChange={(e) => setForm({ ...form, kind: e.target.value })}
             >
               <option value="EQUITY">{t("editor.type.EQUITY")}</option>
               <option value="ETF">{t("editor.type.ETF")}</option>
-              <option value="BOND">{t("editor.type.BOND")}</option>
-              <option value="UNKNOWN">{t("editor.type.UNKNOWN")}</option>
+              {!stockAndEtfOnly && <>
+                <option value="BOND">{t("editor.type.BOND")}</option>
+                <option value="UNKNOWN">{t("editor.type.UNKNOWN")}</option>
+              </>}
             </select>
+            {errorFor("asset_kind")}
           </Field>
         </>
       )}

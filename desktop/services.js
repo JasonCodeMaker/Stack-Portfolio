@@ -14,6 +14,7 @@ import {
 import {
   ALLOCATION,
   BROKER,
+  CUSTOM_ACCOUNT,
   account,
   currency,
   day,
@@ -34,6 +35,8 @@ import { ibkrReportPrices } from "./ibkrPrices.js";
 import { tMain } from "./i18n/index.js";
 import { saveBrokerValue } from "./ledger.js";
 import { activityEdits, valuationEdits } from "./importChanges.js";
+import { addCustomManual, amendCustomActivity, customTransferGroup, transferMembers, validateTransferPair } from "./customAccounts.js";
+export { createCustomAccount, customAccount, customCsvHeader, importCustomCsv, transferMembers } from "./customAccounts.js";
 import { EtfCache } from "./allocation/storage/etfCache";
 import { loadAllocationSettings } from "./allocation/storage/settings";
 import { createProviders, resolveEtfHoldings } from "./allocation/services/etf/providers";
@@ -393,6 +396,11 @@ export function deleteActivity(db, args) {
 
     const related = current.group && current.activityType.startsWith("TRANSFER_");
     if (related && args.deleteGroup !== true) throw Error(tMain("svc.activityGroupConfirmation"));
+    if (related && Array.isArray(args.groupMembers)) {
+      const currentMembers = transferMembers(db, current.group).map((event) => event.id).sort();
+      if (JSON.stringify(currentMembers) !== JSON.stringify(args.groupMembers.slice().sort()))
+        throw Error(tMain("svc.amendChangedReload"));
+    }
     const rows = related
       ? db.prepare(`SELECT data FROM sp_events
         WHERE json_extract(data,'$.group')=? AND json_extract(data,'$.activityType') IN ('TRANSFER_IN','TRANSFER_OUT')`)
@@ -420,6 +428,7 @@ export function amendEvent(db, args) {
     reason = String(args.reason || "").trim();
   if (!reason) throw Error(tMain("svc.amendNeedReason"));
   if (args.prior !== row.data) throw Error(tMain("svc.amendChangedReload"));
+  if (before.metadata?.customRecord) return amendCustomActivity(db, args);
   if (before.metadata?.deletedByUser) throw Error(tMain("svc.activityAlreadyInactive"));
   if (
     ![
@@ -454,6 +463,10 @@ export function amendEvent(db, args) {
     if (D(after.amount).lte(0)) throw Error(tMain("svc.amendAmountPositive"));
   }
   return transaction(db, () => {
+    if (after.group && ["TRANSFER_IN", "TRANSFER_OUT"].includes(after.activityType)) {
+      const others = transferMembers(db, after.group).filter((event) => event.id !== after.id);
+      if (others.some((event) => event.metadata?.customRecord)) validateTransferPair(after, others);
+    }
     saveEvent(db, after);
     db.prepare("INSERT INTO sp_corrections VALUES(?,?,?,?,?,?)").run(
       randomUUID(),
@@ -852,6 +865,7 @@ export function recordHolding(db, args) {
   });
 }
 export function addManual(db, args) {
+  if (preference(db, CUSTOM_ACCOUNT, args.account) !== null) return addCustomManual(db, args);
   const a = account(db, args.account),
     date = day(args.date),
     type = String(args.type),
@@ -904,7 +918,11 @@ export function addManual(db, args) {
       e.amount = money(args.amount, true);
       if (D(e.amount).lte(0)) throw Error(tMain("svc.manual.positiveAmount"));
     }
-    if (type.startsWith("TRANSFER_")) e.group = String(args.group || "").trim() || null;
+    if (type.startsWith("TRANSFER_")) {
+      e.group = customTransferGroup(args.group) || null;
+      const others = transferMembers(db, e.group);
+      if (others.some((event) => event.metadata?.customRecord)) validateTransferPair(e, others);
+    }
     saveEvent(db, e);
     db.prepare(
       "INSERT OR REPLACE INTO sp_checks(account,day,reason) SELECT account,day,? FROM sp_statements WHERE account=? AND day>=?",

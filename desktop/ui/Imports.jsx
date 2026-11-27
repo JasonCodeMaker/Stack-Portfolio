@@ -2,6 +2,8 @@ import React, { useEffect, useState, useRef } from "react";
 import { FileUp, CloudDownload, FileText } from "lucide-react";
 import { HoldingEditor, SecurityFields, listingLabel, marketNames } from "./HoldingEditor";
 import { BrokerResult } from "./ImportPreview";
+import { CustomCsvImport } from "./CustomCsvImport";
+import { CustomManualEntry } from "./CustomManualEntry";
 import { Detail, Grid, useRowKeys, useShell } from "./Shell";
 import { checkLayout, quantityGaps, syncLayout } from "./importsLayout.js";
 import { api, num, fmt, types, Empty, Modal } from "./common";
@@ -64,13 +66,13 @@ function Panel({ title, action, children, className = "" }) {
     </section>
   );
 }
-function AccountOptions({ d, value, set, className }) {
+function AccountOptions({ d, value, set, className, brokerOnly = false }) {
   const { t } = useI18n();
   return (
     <select className={className} aria-label={t("app.accountSelectAria")} value={value || ""} onChange={(e) => set(e.target.value)}>
       {!value && <option value="">{t("app.selectAccount")}</option>}
       {d.accounts
-        .filter((a) => a.active)
+        .filter((a) => a.active && (!brokerOnly || !a.custom))
         .map((a) => (
           <option key={a.id} value={a.id}>
             {a.name}
@@ -137,6 +139,7 @@ function StatementLines({ cash, setCash, positions, setPositions, listings = [],
             {listings.some((a) => a.symbol === v.symbol) && (
               <F label={t("imports.existingListing")}>
                 <select
+                  aria-label={t("imports.existingListing")}
                   value={v.assetId || ""}
                   onChange={(e) => {
                     const match = listings.find((a) => a.id === e.target.value);
@@ -304,12 +307,20 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     [revisions, setRevisions] = useState([]),
     [voided, setVoided] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [affectedAccounts, setAffectedAccounts] = useState(null);
+  const [manualType, setManualType] = useState("DEPOSIT");
+  const destination = d.accounts.find((a) => a.id === account);
+  const custom = Boolean(destination?.custom);
+  const hasCustom = d.accounts.some((a) => a.custom && a.active);
   const deletesGroup = Boolean(deleteTarget?.group && deleteTarget.activityType.startsWith("TRANSFER_"));
   const demo = mode === "demo",
     webullSample = demo && account === "demo-webull";
   function selectAccount(next, keepImport = false) {
     if (next === account) return;
     setAccount(next);
+    setLedger([]);
+    setOpenCash([]);
+    setOpenPos([]);
     if (!keepImport) {
       setReports({});
     }
@@ -410,6 +421,11 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     };
   }
   function openManual(sample = false, type = "DEPOSIT") {
+    if (custom) {
+      setManualType(type);
+      setModal("manual");
+      return;
+    }
     setForm(
       sample
         ? {
@@ -425,7 +441,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     );
     setModal("manual");
   }
-  const accountName = d.accounts.find((a) => a.id === account)?.name;
+  const accountName = destination?.name;
+  const activityLabel = (event) => typeLabel(event.metadata?.customRecord?.type || event.activityType);
   const accountReports = d.quantityReports
     .filter((r) => r.account === account)
     .sort((a, b) => b.day.localeCompare(a.day));
@@ -440,6 +457,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       quantity: String(v.quantity ?? ""),
       price: String(v.unitPrice ?? ""),
       fee: String(v.fee ?? 0),
+      toCurrency: v.metadata?.customRecord?.to_currency || "",
+      toAmount: v.metadata?.customRecord?.to_amount || "",
       note: v.comment || "",
       reason: "",
     });
@@ -452,7 +471,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   // A booked record replaced by its broker original stays in the book but out of the default list.
   const superseded = (v) => v.metadata?.supersededBy || String(v.status).toUpperCase() === "VOID";
   const entries = ledger.filter((v) => voided || !superseded(v));
-  const sources = { MANUAL: t("source.manual"), WEBULL: "Webull", IBKR: "IBKR" };
+  const sources = { MANUAL: t("source.manual"), CUSTOM_CSV: t("custom.csv"), WEBULL: "Webull", IBKR: "IBKR" };
   const rowKeys = useRowKeys(
     entries.map((v) => v.id),
     amend?.id,
@@ -519,7 +538,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               >
                 <option value="">{t("app.selectAccount")}</option>
                 {d.accounts
-                  .filter((a) => a.active && a.mode === "TRANSACTIONS")
+                  .filter((a) => a.active && a.mode === "TRANSACTIONS" && !a.custom)
                   .map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}
@@ -821,7 +840,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     <Panel
       title={t("imports.historyTitle")}
       action={
-        <button type="button" className="btn pri" onClick={() => openManual(false)}>
+        <button type="button" className="btn pri" disabled={!account} onClick={() => openManual(false)}>
           {t("imports.addEntryBtn")}
         </button>
       }
@@ -872,9 +891,9 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   >
                     <td>{String(v.date).slice(0, 10)}</td>
                     <td className="l">
-                      {v.metadata?.fx
+                      {v.metadata?.fx && !v.metadata?.customRecord
                         ? (v.activityType === "TRANSFER_OUT" ? t("imports.fxSell") : t("imports.fxBuy"))
-                        : typeLabel(v.activityType)}
+                        : activityLabel(v)}
                       {superseded(v) && <small>{t(v.metadata?.deletedByUser ? "imports.deletedTag" : "imports.voidedTag")}</small>}
                       {fx?.sourceCurrency && fx.destinationCurrency && (
                         <small>
@@ -891,7 +910,9 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                           ? "1 " + fx.sourceCurrency + " = " + num(fx.impliedRate) + " " + fx.destinationCurrency
                           : "—"}
                     </td>
-                    <td>{amount == null ? "—" : v.currency + " " + fmt(amount, 2)}</td>
+                    <td>{amount == null ? "—" : v.currency + " " + fmt(amount, 2)}
+                      {fx && v.metadata?.customRecord && <small>→ {fx.destinationCurrency} {fmt(fx.destinationAmount, 2)}</small>}
+                    </td>
                     <td className="hide-n">{Number(v.fee) ? v.currency + " " + num(v.fee) : "—"}</td>
                     <td className="l hide-n">
                       {sources[v.sourceSystem] || sourceLabel(v.sourceSystem || "旧账本")}
@@ -902,7 +923,10 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                         <button type="button" className="lnk">{t("imports.amendBtn")}</button>
                         <button type="button" className="lnk" onClick={(event) => {
                           event.stopPropagation();
-                          setDeleteTarget(v);
+                          run(async () => {
+                            setAffectedAccounts(v.group ? await api.activityAccounts({ account: v.accountId, event: v.id }) : null);
+                            setDeleteTarget(v);
+                          }, false);
                         }}>{t("imports.deleteBtn")}</button>
                       </>}
                     </td>
@@ -972,11 +996,15 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   return (
     <div className="imp imp-page">
       <div className="row m0">
-        <Seg items={tabIds.map((id) => [id, t(`imports.tab.${id}`)])} value={tab} onChange={chooseTab} />
+        <Seg items={tabIds.map((id) => [id, t(custom && id === "opening" ? "custom.opening" : `imports.tab.${id}`)])} value={tab} onChange={chooseTab} />
         <span className="sp" />
-        {tab !== "file" && <AccountOptions className="btn" d={d} value={account} set={selectAccount} />}
+        {(tab !== "file" || hasCustom) && <AccountOptions className="btn" d={d} value={account} set={selectAccount} />}
       </div>
-      {tab === "file" && (
+      {tab === "file" && custom && (
+        <CustomCsvImport key={account} account={destination} run={run}
+          onManual={() => openManual(false)} onOpening={() => chooseTab("opening")} onHistory={() => chooseTab("history")} />
+      )}
+      {tab === "file" && !custom && (
         <Grid
           layout={syncLayout(previews, { batches: !!batchCard })}
           panels={{
@@ -1000,7 +1028,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             <div className="dl">
               <div>
                 <span className="cap">
-                  {String(amend.date).slice(0, 10)} · {typeLabel(amend.activityType)}
+                  {String(amend.date).slice(0, 10)} · {activityLabel(amend)}
                 </span>
                 <b>{amend.assetSymbol || amend.currency}</b>
               </div>
@@ -1031,6 +1059,12 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                   : amend.assetId && Number(amend.quantity) > 0
                     ? [["quantity", t("imports.amend.qty"), "number"]]
                     : [["amount", t("imports.amend.amount"), "number"]]),
+                ...(amend.metadata?.customRecord?.type === "FX_CONVERSION" ? [
+                  ["currency", t("custom.fromCurrency"), "text"],
+                  ["toCurrency", t("custom.toCurrency"), "text"],
+                  ["toAmount", t("custom.toAmount"), "number"],
+                  ["fee", t("imports.field.fee"), "number"],
+                ] : []),
                 ["note", t("imports.field.note"), "text"],
                 ["reason", t("imports.amend.reason"), "text"],
               ].map(([k, l, kindType]) => (
@@ -1074,9 +1108,10 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         <Modal title={t("imports.deleteTitle")} close={() => setDeleteTarget(null)}>
           <p>{t("imports.deleteDescription", {
             date: String(deleteTarget.date).slice(0, 10),
-            type: typeLabel(deleteTarget.activityType),
+            type: activityLabel(deleteTarget),
           })}</p>
           {deletesGroup && <p>{t("imports.deleteGroup")}</p>}
+          {deletesGroup && affectedAccounts && <p>{t("custom.affected", { names: affectedAccounts.names.join(t("common.comma")) })}</p>}
           <div className="acts">
             <button type="button" className="btn" onClick={() => setDeleteTarget(null)}>{t("app.cancel")}</button>
             <button type="button" className="btn pri" onClick={() => run(async () => {
@@ -1085,6 +1120,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                 account: deleteTarget.accountId,
                 prior: JSON.stringify(deleteTarget),
                 deleteGroup: deletesGroup,
+                groupMembers: affectedAccounts?.members,
               });
               requests.current = {};
               setReports({});
@@ -1101,7 +1137,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             {["ibkr", "webull"].map((b) => (
               <div className="fg" key={b} style={{ alignItems: "end" }}>
                 <F label={t("imports.targetAccountLabel", { broker: b.toUpperCase() })}>
-                  <AccountOptions d={d} value={mapping[b]} set={(id) => setMapping({ ...mapping, [b]: id })} />
+                  <AccountOptions d={d} brokerOnly value={mapping[b]} set={(id) => setMapping({ ...mapping, [b]: id })} />
                 </F>
                 <button
                   type="button"
@@ -1189,7 +1225,17 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           </div>
         </Modal>
       )}
-      {modal === "manual" && (
+      {modal === "manual" && custom && (
+        <CustomManualEntry d={d} account={destination} type={manualType} run={run}
+          close={() => setModal(null)} onSaved={() => {
+            setModal(null);
+            setCompare(null);
+            setOffset(0);
+            setSearch("");
+            chooseTab("history");
+          }} />
+      )}
+      {modal === "manual" && !custom && (
         <Modal title={t("imports.manualModalTitle")} close={() => setModal(null)}>
           <form
             className="imp"

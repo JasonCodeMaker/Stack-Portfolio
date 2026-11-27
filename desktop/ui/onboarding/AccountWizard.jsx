@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, ChevronRight, Layers3, WalletCards } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ChevronRight, Layers3, WalletCards, BookOpen } from "lucide-react";
 import { api, Field } from "../common";
 import { Mark } from "../Shell";
 import { brokerNames, buildBrokerGuides } from "./brokerGuide";
@@ -16,7 +16,7 @@ const errorText = (e) =>
 
 function AccountProgress({ page, broker, step, guides }) {
   const { t } = useI18n();
-  if (page === "welcome" || page === "bound") return null;
+  if (["welcome", "bound", "custom"].includes(page)) return null;
   const guide = guides[broker];
   const visual = guide[step].visual;
   const current = page === "broker" ? 1 : step + (page === "account" ? 3 : 2);
@@ -66,6 +66,7 @@ export function AccountWizard({
   const [localId, setLocalId] = useState(""),
     [name, setName] = useState(""),
     [currency, setCurrency] = useState("AUD"),
+    [brokerName, setBrokerName] = useState(""),
     [added, setAdded] = useState([]);
   const [error, setError] = useState(""),
     [busy, setBusy] = useState(false);
@@ -81,7 +82,7 @@ export function AccountWizard({
     if (last) backLabel = t("ob.backToBound");
     else backLabel = initialPage === "broker" ? t("ob.cancelSetup") : t("ob.backWelcome");
   }
-  const known = [...existing.filter((b) => !added.some((a) => a.id === b.id)), ...added];
+  const known = [...existing, ...accounts.filter((a) => a.custom)].filter((b) => !added.some((a) => a.id === b.id)).concat(added);
   const previewPhone = page === "guide" && broker === "webull" && isKeys;
   const illustrated = page === "guide" && (phone || chapter.images?.length > 0);
   const showAccounts = known.length > 0 && (page === "broker" || page === "bound");
@@ -148,11 +149,19 @@ export function AccountWizard({
     setTicket("");
     await onBound();
   }
+  async function addCustom() {
+    const id = await api.createCustomAccount({ name, currency, brokerName });
+    setAdded((prev) => [...prev, { id, name: name.trim(), custom: true, brokerName: brokerName.trim() }]);
+    setPage("bound");
+    await onBound();
+  }
   function back() {
     setError("");
     if (page === "broker") {
       if (!last && initialPage === "broker") return onLeave();
       setPage(last ? "bound" : "welcome");
+    } else if (page === "custom") {
+      setPage("broker");
     } else if (page === "account") {
       setPage("guide");
       if (!phone) setTicket("");
@@ -235,7 +244,39 @@ export function AccountWizard({
                     <ChevronRight size={16} />
                   </button>
                 ))}
+                <button type="button" onClick={() => {
+                  setName("");
+                  setBrokerName("");
+                  setCurrency("AUD");
+                  setError("");
+                  setPage("custom");
+                }}>
+                  <BookOpen aria-hidden="true" />
+                  <span><strong>{t("custom.name")}</strong><small>{t("custom.choiceHelp")}</small></span>
+                  <ChevronRight size={16} aria-hidden="true" />
+                </button>
               </div>
+            )}
+            {page === "custom" && (
+              <form className="ob-form" onSubmit={(event) => {
+                event.preventDefault();
+                act(addCustom);
+              }}>
+                <Field label={t("ob.localName")}>
+                  <input required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} />
+                </Field>
+                <Field label={t("custom.brokerName")}>
+                  <input maxLength={120} value={brokerName} onChange={(e) => setBrokerName(e.target.value)} />
+                </Field>
+                <Field label={t("custom.defaultCurrency")}>
+                  <select aria-label={t("custom.defaultCurrency")} value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                    <option>AUD</option><option>USD</option>
+                  </select>
+                </Field>
+                <button type="submit" className="ob-primary" disabled={busy || !name.trim()}>
+                  {t("settings.createAccount")}
+                </button>
+              </form>
             )}
             {page === "guide" && (
               <>
@@ -320,7 +361,7 @@ export function AccountWizard({
                         .filter(
                           (a) =>
                             a.active &&
-                            a.mode === "TRANSACTIONS" &&
+                            a.mode === "TRANSACTIONS" && !a.custom &&
                             !known.some(
                               (k) => k.id === a.id && (k.broker !== broker || k.remoteId !== remoteId),
                             ),
@@ -383,7 +424,7 @@ export function AccountWizard({
                   {t("ob.addAnotherAccount")}
                 </button>
                 <button disabled={busy} onClick={click(() => onImport(last))}>
-                  {t("ob.previewFirstImport")}
+                  {t(last?.custom ? "custom.openLedger" : "ob.previewFirstImport")}
                 </button>
                 <button disabled={busy} onClick={leave}>
                   {t("ob.finishSetup")}
@@ -395,7 +436,7 @@ export function AccountWizard({
                 {error}
               </p>
             )}
-            {["guide", "broker", "account"].includes(page) && (
+            {["guide", "broker", "account", "custom"].includes(page) && (
               <div className="ob-help">
                 <button disabled={busy} onClick={click(back)}>
                   <ArrowLeft size={15} /> {backLabel}
@@ -423,8 +464,8 @@ export function AccountWizard({
                     <p key={a.id}>
                       <strong>{a.name}</strong>
                       <small>
-                        {brokerNames[a.broker]} ···· {a.suffix}
-                        {!a.authorized && t("ob.needsReauth")}
+                        {a.custom ? a.brokerName || t("custom.name") : brokerNames[a.broker] + " ···· " + a.suffix}
+                        {!a.custom && !a.authorized && t("ob.needsReauth")}
                       </small>
                     </p>
                   ))}

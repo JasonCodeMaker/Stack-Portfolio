@@ -1,4 +1,4 @@
-import { account, createAccount, preference, putPref, transaction, BROKER } from "./ledger";
+import { account, createAccount, preference, putPref, transaction, BROKER, CUSTOM_ACCOUNT } from "./ledger";
 import { tMain } from "./i18n/index.js";
 
 const records = "broker-account";
@@ -55,6 +55,7 @@ export function saveBinding(db, storage, draft, { remoteId, localId, name, curre
     const id = localId || createAccount(db, name, currency);
     const local = account(db, id),
       prior = bindingFor(db, id);
+    if (preference(db, CUSTOM_ACCOUNT, id) !== null) throw Error(tMain("custom.error.brokerBinding"));
     if (!local.active || local.mode !== "TRANSACTIONS") throw Error(tMain("err.selectActiveTxAccount"));
     if (prior && (prior.remoteId !== remoteId || prior.broker !== draft.broker))
       throw Error(tMain("err.localAlreadyBound"));

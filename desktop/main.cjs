@@ -23,6 +23,7 @@ const {
   createAccount,
   ALLOCATION,
   BROKER,
+  CUSTOM_ACCOUNT,
   preference,
   putPref,
   savePrice,
@@ -49,6 +50,11 @@ const {
   parseWebullCsv,
   detailedIbkr,
   compareStatement,
+  createCustomAccount,
+  customAccount,
+  customCsvHeader,
+  importCustomCsv,
+  transferMembers,
   recordAccountValue,
   addManual,
   recordHolding,
@@ -88,6 +94,7 @@ let db,
   bookKey,
   previews = new Map(),
   previewRequests = new Map(),
+  customPreviews = new Map(),
   lastCloseCheck = 0,
   lastMarketCheck = 0;
 let factoryResetRequested = false;
@@ -205,6 +212,7 @@ async function activate(m) {
   db = next;
   mode = m;
   setupDraft=null;
+  customPreviews.clear();
   previews.clear();
   previewRequests.clear();
   displayedReview = null;
@@ -575,13 +583,63 @@ const handlers = {
     };
   },
   account: (args) => createAccount(requireBook(), args.name, args.currency),
+  async createCustomAccount(args) {
+    allowSetup();
+    if (!db) await activate("real");
+    const id = createCustomAccount(requireBook(), args);
+    writePreferences({ onboardingSeen: true });
+    return id;
+  },
+  async previewCustomCsv({ account: id }) {
+    const book = requireBook();
+    customAccount(book, id);
+    const file = await pick([{ name: tMain("custom.csv"), extensions: ["csv"] }]);
+    if (!file || factoryResetRequested) return null;
+    customPreviews.clear();
+    if (fs.statSync(file).size > 48 * 1024 * 1024) throw Error(tMain("err.fileTooLarge"));
+    const data = fs.readFileSync(file);
+    if (data.length > 48 * 1024 * 1024) throw Error(tMain("err.fileTooLarge"));
+    let text;
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(data);
+    } catch {
+      throw Error(tMain("custom.error.encoding"));
+    }
+    const result = importCustomCsv(book, id, text);
+    const token = randomUUID();
+    customPreviews.set(token, { account: id, text });
+    return { ...result, token, name: path.basename(file) };
+  },
+  commitCustomCsv({ account: id, token }) {
+    const preview = customPreviews.get(token);
+    if (!preview || preview.account !== id) throw Error(tMain("err.previewExpired"));
+    const result = importCustomCsv(requireBook(), id, preview.text, true);
+    customPreviews.delete(token);
+    return { ...result, done: result.invalid === 0 };
+  },
+  async downloadCustomCsv({ account: id }) {
+    customAccount(requireBook(), id);
+    const file = await pick([{ name: tMain("custom.csv"), extensions: ["csv"] }], true, "stock-portfolio-template.csv");
+    if (factoryResetRequested) return false;
+    if (file) fs.writeFileSync(file, customCsvHeader + "\r\n", "utf8");
+    return Boolean(file);
+  },
+  activityAccounts({ account: id, event: eventId }) {
+    const book = requireBook();
+    const row = book.prepare("SELECT data FROM sp_events WHERE id=? AND account=?").get(eventId, id);
+    if (!row) throw Error(tMain("svc.amendNotFound"));
+    const { group } = json(row.data, {});
+    const related = transferMembers(book, group);
+    const ids = new Set([id, ...related.map((event) => event.accountId)]);
+    return { names: [...ids].map((accountId) => account(book, accountId).name), members: related.map((event) => event.id) };
+  },
   history({ account: id, limit = 200, offset = 0, text = "", accountIds, assetIds, through }) {
     const book = requireBook();
     const pageSize = Math.min(500, Math.max(1, Math.trunc(Number(limit)) || 200));
     if (assetIds) return securityHistory(book, { accountIds, assetIds, through, limit: pageSize });
     const rows = book
       .prepare(
-        "SELECT data FROM sp_events WHERE (?='' OR account=?) AND (?='' OR instr(lower(data),lower(?))>0) ORDER BY day DESC,id LIMIT ? OFFSET ?",
+        "SELECT data FROM sp_events WHERE (?='' OR account=?) AND (?='' OR instr(lower(data),lower(?))>0) AND json_extract(data,'$.metadata.customFxIncoming') IS NULL ORDER BY day DESC,id LIMIT ? OFFSET ?",
       )
       .all(
         id || "",
@@ -593,7 +651,16 @@ const handlers = {
       );
     return rows.map((r) => json(r.data, {}));
   },
-  manual: (args) => addManual(requireBook(), args),
+  manual(args) {
+    const book = requireBook();
+    if (preference(book, CUSTOM_ACCOUNT, args.account) === null) return addManual(book, args);
+    try {
+      return { id: addManual(book, args) };
+    } catch (error) {
+      if (!error.field) throw error;
+      return { field: error.field, message: error.message };
+    }
+  },
   recordHolding: (args) => recordHolding(requireBook(), args),
   rememberListing: (args) => rememberListing(requireBook(), args),
   amend: (args) => amendEvent(requireBook(), args),
@@ -639,6 +706,7 @@ const handlers = {
     const request = randomUUID();
     previewRequests.set(requestKey, request);
     let report, source;
+    if (preference(book, CUSTOM_ACCOUNT, a.id) !== null) throw Error(tMain("custom.error.brokerBinding"));
     const binding=bindingFor(book,a.id);
     if(binding && binding.broker!==broker) throw Error(tMain("err.accountBrokerMismatch"));
     if (args.source === "live") {
@@ -1027,7 +1095,7 @@ function dispatchAction(name, fn, args) {
   const run = queue.then(async () => {
     if (factoryResetRequested) throw Error(tMain("err.factoryResetPending"));
     const switchBook = ["openDemo", "openReal", "newBook", "migrationCommit", "restore"].includes(name) ||
-      (name === "home" && !mode);
+      (["home", "createCustomAccount"].includes(name) && !mode);
     if (!switchBook) return invoke();
     switchingBooks = true;
     try {

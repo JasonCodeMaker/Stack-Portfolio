@@ -13,6 +13,7 @@ import { tMain } from "./i18n/index.js";
 // Existing ledgers and Wealthfolio migrations use these preference scopes.
 export const ALLOCATION = "portfolio-xray";
 export const BROKER = "broker-sync";
+export const CUSTOM_ACCOUNT = "custom-account";
 export { day, dayOf } from "./periods.js";
 export function money(value, nonnegative = false) {
   if (value === "" || value == null) throw Error(tMain("ledger.missingAmountOrQty"));
