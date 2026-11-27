@@ -1,4 +1,12 @@
 module.exports = {
+  "custom.delete": "Delete account",
+  "custom.deleteTitle": "Delete {name}?",
+  "custom.deleteAria": "Delete account {name}",
+  "custom.deleteDescription": "This permanently removes the account's activity, opening balance, and reconciliation records from this ledger.",
+  "custom.deleteTransfers": "For paired transfers, the entries in the other accounts are kept and count as external flows.",
+  "custom.confirmDelete": "Permanently delete",
+  "custom.deleted": "Custom account deleted.",
+  "custom.error.deleteAccountType": "Only custom accounts can be deleted.",
   "custom.csvCash": "Use DEPOSIT, WITHDRAWAL, DIVIDEND, INTEREST, FEE or TAX for cash entries. Enter positive amounts with a decimal dot. For a linked dividend, fill in the symbol and the market if needed.",
   "custom.unlinkDividend": "Remove security link",
   "custom.error.securityName": "Enter a security name of up to 120 characters.",

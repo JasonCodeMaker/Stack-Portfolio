@@ -1,4 +1,12 @@
 module.exports = {
+  "custom.delete": "刪除帳戶",
+  "custom.deleteTitle": "刪除「{name}」？",
+  "custom.deleteAria": "刪除帳戶 {name}",
+  "custom.deleteDescription": "此操作會永久刪除此帳戶在本帳本中的明細、期初餘額及對帳記錄。",
+  "custom.deleteTransfers": "如果有配對轉帳，其他帳戶的對應明細會保留，並按外部資金流計算。",
+  "custom.confirmDelete": "永久刪除",
+  "custom.deleted": "自訂帳戶已刪除。",
+  "custom.error.deleteAccountType": "只有自訂帳戶可以刪除。",
   "custom.csvCash": "現金明細類型可用 DEPOSIT、WITHDRAWAL、DIVIDEND、INTEREST、FEE 或 TAX。金額填正數，小數點用英文句點。關聯股息時填寫證券代碼，必要時填寫市場代碼。",
   "custom.unlinkDividend": "取消關聯證券",
   "custom.error.securityName": "證券名稱不可超過 120 字。",

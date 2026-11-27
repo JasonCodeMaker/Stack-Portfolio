@@ -1,4 +1,12 @@
 module.exports = {
+  "custom.delete": "删除账户",
+  "custom.deleteTitle": "删除「{name}」？",
+  "custom.deleteAria": "删除账户 {name}",
+  "custom.deleteDescription": "此操作会永久删除该账户在本账本中的流水、期初余额和对账记录。",
+  "custom.deleteTransfers": "如果有配对转账，其他账户的对应流水会保留，并按外部资金流计算。",
+  "custom.confirmDelete": "永久删除",
+  "custom.deleted": "自定义账户已删除。",
+  "custom.error.deleteAccountType": "只有自定义账户可以删除。",
   "custom.csvCash": "现金流水类型可用 DEPOSIT、WITHDRAWAL、DIVIDEND、INTEREST、FEE 或 TAX。金额填正数，小数点用英文句点。关联股息时填写证券代码，必要时填写市场代码。",
   "custom.unlinkDividend": "取消关联证券",
   "custom.error.securityName": "证券名称不能超过 120 字。",

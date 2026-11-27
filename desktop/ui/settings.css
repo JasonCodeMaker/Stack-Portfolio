@@ -291,11 +291,22 @@
     grid-template-columns: 1fr;
   }
 }
-.btn.factory-reset-action {
+.account-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.lnk.custom-delete-action {
+  color: var(--down);
+}
+.btn.factory-reset-action,
+.btn.custom-delete-action {
   color: var(--down);
   border-color: color-mix(in srgb, var(--down) 40%, var(--sep));
 }
-.btn.factory-reset-action:hover:enabled {
+.btn.factory-reset-action:hover:enabled,
+.btn.custom-delete-action:hover:enabled {
   background: color-mix(in srgb, var(--down) 9%, var(--surface));
 }
 

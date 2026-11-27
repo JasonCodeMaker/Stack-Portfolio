@@ -51,6 +51,7 @@ const {
   detailedIbkr,
   compareStatement,
   createCustomAccount,
+  deleteCustomAccount,
   customAccount,
   customCsvHeader,
   importCustomCsv,
@@ -589,6 +590,13 @@ const handlers = {
     const id = createCustomAccount(requireBook(), args);
     writePreferences({ onboardingSeen: true });
     return id;
+  },
+  deleteCustomAccount({ account: id }) {
+    deleteCustomAccount(requireBook(), id);
+    for (const [token, preview] of customPreviews) {
+      if (preview.account === id) customPreviews.delete(token);
+    }
+    displayedReview = null;
   },
   async previewCustomCsv({ account: id }) {
     const book = requireBook();

@@ -7,7 +7,7 @@ const { randomBytes } = require("node:crypto");
 const { createBook, putPref, createAccount, resolveAsset } = require("../out/ledger.cjs");
 const { loadBook, positions, externalFlows } = require("../out/flows.cjs");
 const {
-  addManual, amendEvent, createCustomAccount, customCsvHeader, deleteActivity, importCustomCsv,
+  addManual, amendEvent, createCustomAccount, customCsvHeader, deleteActivity, deleteCustomAccount, importCustomCsv,
 } = require("../out/services.cjs");
 
 const sample = `
@@ -145,4 +145,52 @@ test("existing exchange aliases work for manual trades and CSV replay", (t) => {
   assert.equal(importCustomCsv(db, id, [customCsvHeader, row].join("\n"), true).duplicate, 1);
   assert.throws(() => addManual(db, { account: id, date: "2026-11-06", type: "BUY", currency: "USD",
     mic: "NASDAQ", kind: "EQUITY", symbol: "NEW", quantity: "1", price: "180" }), { field: "mic" });
+});
+
+test("deleting a custom account removes its ledger history and preserves the other transfer entry", (t) => {
+  const { db, custom } = fixture(t);
+  const removed = custom("To delete"), kept = createAccount(db, "Existing account");
+  const asset = resolveAsset(db, { symbol: "AAPL", exchangeMic: "XNAS", instrumentType: "EQUITY" }, "USD");
+  const date = "2026-11-05";
+  putPref(db, "opening-date", removed, "2026-11-01");
+  db.prepare("INSERT INTO sp_anchors VALUES (?,?,?,?)").run(removed, "2026-11-01", "{}", '{"AUD":"500"}');
+  db.prepare("INSERT INTO sp_holding_evidence(account,asset,day,quantity,reported,reference) VALUES (?,?,?,?,?,?)")
+    .run(removed, asset, date, "1", 1, "statement");
+  db.prepare("INSERT INTO sp_statements VALUES (?,?,?,?,?)").run("statement", removed, date, "manual", "{}");
+  db.prepare("INSERT INTO sp_checks VALUES (?,?,?)").run(removed, date, "review");
+  const choice = JSON.stringify([removed, "manual", "record", "AAPL", "USD", "XNAS"]);
+  putPref(db, "listing-choice", choice, asset);
+  const deposit = addManual(db, { account: removed, date, type: "DEPOSIT", amount: "100", currency: "AUD" });
+  const prior = db.prepare("SELECT data FROM sp_events WHERE id=?").get(deposit).data;
+  amendEvent(db, { id: deposit, account: removed, prior, reason: "Document update", date, amount: "120" });
+  addManual(db, { account: removed, date, currency: "AUD", type: "TRANSFER_OUT", group: "linked", amount: "40" });
+  const transfer = addManual(db, { account: kept, date, currency: "AUD", type: "TRANSFER_IN",
+    group: "linked", amount: "40", reference: "peer" });
+  assert.equal(externalFlows(loadBook(db), [removed, kept], "2026-11-02", "2026-11-06"), 120);
+
+  deleteCustomAccount(db, removed);
+  const book = loadBook(db);
+  assert.deepEqual(book.accounts.map((account) => account.id), [kept]);
+  assert.equal(book.assets.get(asset).symbol, "AAPL");
+  const surviving = db.prepare("SELECT id FROM sp_events").all().map((row) => row.id);
+  assert.deepEqual(surviving, [transfer]);
+  assert.equal(externalFlows(book, [kept], "2026-11-02", "2026-11-06"), 40);
+  for (const table of ["sp_anchors", "sp_holding_evidence", "sp_statements", "sp_checks", "sp_corrections"])
+    assert.equal(db.prepare("SELECT count(*) AS n FROM " + table).get().n, 0);
+  assert.equal(db.prepare("SELECT count(*) AS n FROM sp_prefs WHERE key IN (?,?)").get(removed, choice).n, 0);
+  assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+});
+
+test("account deletion rejects built-in accounts and rolls back an interrupted custom deletion", (t) => {
+  const { db, custom } = fixture(t);
+  const kept = createAccount(db, "Existing account");
+  const id = custom();
+  const entry = addManual(db, { account: id, date: "2026-11-05", type: "DEPOSIT", amount: "100", currency: "AUD" });
+  assert.throws(() => deleteCustomAccount(db, kept), { field: "account" });
+  db.exec("CREATE TRIGGER block_account_delete BEFORE DELETE ON sp_accounts BEGIN SELECT RAISE(ABORT, 'blocked'); END");
+  assert.throws(() => deleteCustomAccount(db, id), /blocked/);
+  const book = loadBook(db);
+  assert.deepEqual(book.accounts.map((account) => account.id), [kept, id]);
+  assert.equal(book.accounts[1].custom, true);
+  assert.equal(db.prepare("SELECT id FROM sp_events WHERE id=?").get(entry).id, entry);
 });
