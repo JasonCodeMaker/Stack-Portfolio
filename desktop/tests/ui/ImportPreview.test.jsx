@@ -51,6 +51,13 @@ describe("broker result card", () => {
     expect(html).not.toContain("确认");
   });
 
+  it("does not report no changes before the required Webull account verification", () => {
+    const html = render({ broker: "webull", account: "demo-webull", rows: [], amountEdits: [],
+      priceEdits: [], webullFundsStatus: "verification" });
+    expect(html).toContain("入金尚未核对");
+    expect(html).not.toContain("没有新变化");
+  });
+
   it("says the broker records are being read while the preview loads", () => {
     expect(render({ broker: "ibkr", loading: true })).toContain("正在读取券商记录…");
   });

@@ -72,7 +72,24 @@ function calloutAlignment(outside, width) {
   return center > 2 / 3 ? "flex-end" : "center";
 }
 
-function OtherNestedTile({ item, text, w, h }) {
+function subTileAppearance(subItem) {
+  if (subItem.colorMode === "sources" && subItem.isEtf) {
+    return {
+      semantic: true,
+      style: { background: "var(--tm-how-etf)", color: "var(--tm-tile-text)", borderColor: "rgba(255,255,255,0.22)" },
+    };
+  }
+  if (subItem.colorMode !== "sources" && subItem.change != null) {
+    const tone = refinedTileColor(subItem.change * 100);
+    return {
+      semantic: true,
+      style: { ...tone, borderColor: "rgba(255,255,255,0.18)" },
+    };
+  }
+  return { semantic: false, style: { borderLeftColor: subItem.accent } };
+}
+
+function OtherNestedTile({ item, text, w, h, onSelectSubItem }) {
   const { t } = useI18n();
   const showNested = Boolean(item.subItems?.length && w >= 120 && h >= 130);
   if (!showNested) {
@@ -85,52 +102,68 @@ function OtherNestedTile({ item, text, w, h }) {
   }
   const headH = 38;
   const subBoxes = subTreemapLayout(item.subItems, Math.max(16, w - 16), Math.max(16, h - headH - 8));
+  const interactive = typeof onSelectSubItem === "function";
+  const HeaderAction = interactive ? "button" : "small";
+  const mergeSubItems = item.mergeSubItems ?? (item.subItems.length > 1);
+  const headerActionTarget = mergeSubItems ? "ALL" : item.subItems[0]?.id;
   return (
     <div className="ch-tm-other-nest">
       <div className="ch-tm-other-head">
         <span>
           <b><span>{item.label}</span></b> <em className="ch-tm-other-pct">{item.detail?.[0]}</em>
         </span>
-        {w > 135 && <small className="ch-tm-drill-badge">{t("tm.drillIntoEtf")}</small>}
+        {w > 135 && (
+          <HeaderAction
+            type={interactive ? "button" : undefined}
+            className="ch-tm-drill-badge"
+            onClick={interactive && headerActionTarget ? () => onSelectSubItem(headerActionTarget) : undefined}
+          >
+            {interactive && mergeSubItems
+              ? t("alloc.tail.mergedBtn")
+              : item.subItems[0]?.isEtf
+                ? t("tm.drillIntoEtf")
+                : t("alloc.tail.openBucket")}
+          </HeaderAction>
+        )}
       </div>
       {subBoxes.map((sb) => {
         const sw = Math.max(0, sb.w - 4);
         const sh = Math.max(0, sb.h - 4);
         if (sw < 16 || sh < 16) return null;
+        const appearance = subTileAppearance(sb.item);
+        const SubTag = interactive ? "button" : "div";
+        const compact = sw < 110 || sh < 82;
         return (
-          <div
+          <SubTag
             key={sb.item.id}
-            className="ch-tm-sub"
+            type={interactive ? "button" : undefined}
+            className={["ch-tm-sub", appearance.semantic && "semantic", interactive && "click", compact && "compact"].filter(Boolean).join(" ")}
+            title={sb.item.title}
+            onClick={interactive ? () => onSelectSubItem(sb.item.id) : undefined}
             style={{
               left: 8 + sb.x + 2,
               top: headH + sb.y + 2,
               width: sw,
               height: sh,
-              borderLeftColor: sb.item.accent,
+              ...appearance.style,
             }}
           >
-            <strong className="ch-tm-sub-tk">{sb.item.label}</strong>
-            {sh > 36 && sw > 44 && (
-              <div className="ch-tm-sub-row">
-                <small>{sb.item.share}</small>
-                {sw > 96 && sb.item.inside && <small className="ch-tm-sub-in">{sb.item.inside}{t("tm.shareSuffix")}</small>}
-              </div>
-            )}
-          </div>
+            <RefinedTileBody item={sb.item} w={sw} h={sh} nested />
+          </SubTag>
         );
       })}
     </div>
   );
 }
 
-function RefinedTileBody({ item, w, h, text }) {
+function RefinedTileBody({ item, w, h, text, nested = false }) {
   const { t } = useI18n();
   const primary = item.primaryTicker ?? item.label;
   const shareText = item.share ?? item.detail?.[0] ?? "";
   const isCompact = w < 110 || h < 82;
   const isTiny = h < 54 || w < 64;
   const tickerFont = isTiny
-    ? Math.min(text.font, 13)
+    ? Math.min(text?.font ?? 13, 13)
     : isCompact
       ? Math.min(Math.max(13, Math.round(Math.min(w, h) * 0.17)), 16)
       : Math.min(Math.max(15, Math.round(Math.min(w * 0.14, h * 0.18))), 22);
@@ -202,8 +235,10 @@ function RefinedTileBody({ item, w, h, text }) {
   const showSecondary = Boolean(item.secondaryTicker && w >= 128);
   const showFullName = Boolean(item.name && item.name !== primary && w >= 124 && h >= 88);
   const showChangePill = item.colorMode !== "sources" && item.change != null && w >= 116 && h >= 72;
-  const showUnquotedPill = item.colorMode !== "sources" && item.change == null && w >= 102 && h >= 72;
+  const showUnquotedPill = (!nested || item.isEtf) && item.colorMode !== "sources" && item.change == null && w >= 102 && h >= 72;
   const showHowSub = item.colorMode === "sources" && item.sources && w >= 150 && h >= 76;
+  const inside = nested && w > 96 && h > 88 && item.inside;
+  const share = <span className="ch-tm-pct">{shareText}</span>;
 
   return (
     <div className="ch-tm-card">
@@ -213,11 +248,19 @@ function RefinedTileBody({ item, w, h, text }) {
             <b style={{ fontSize: tickerFont }}>{primary}</b>
             {showSecondary && <span className="ch-tm-sec">/ {item.secondaryTicker}</span>}
           </div>
+          {nested && item.isEtf && w > 84 && <span className="ch-tm-sub-badge">{t("alloc.tail.etfBadge")}</span>}
         </div>
         {showFullName && <span className="ch-tm-fullname">{item.name}</span>}
+        {nested && item.tailCountLabel && w > 78 && h > 78 && <span className="ch-tm-fullname">{item.tailCountLabel}</span>}
+        {nested && item.preview && w > 95 && h > 130 && <span className="ch-tm-fullname">{item.preview}</span>}
       </div>
       <div className="ch-tm-card-bot">
-        <span className="ch-tm-pct">{shareText}</span>
+        {inside ? (
+          <div className="ch-tm-pct-stack">
+            <span className="ch-tm-fullname">{inside}{t("tm.shareSuffix")}</span>
+            {share}
+          </div>
+        ) : share}
         {showChangePill && (
           <span className="ch-tm-badge-dark">
             {item.change >= 0 ? "▲" : "▼"} {Math.abs(item.change * 100).toFixed(2)}%
@@ -232,7 +275,7 @@ function RefinedTileBody({ item, w, h, text }) {
   );
 }
 
-export function Treemap({ items, height, width: fixedWidth, color, selected, onSelect, layoutOptions, refined = false }) {
+export function Treemap({ items, height, width: fixedWidth, color, selected, onSelect, onSelectSubItem, layoutOptions, refined = false }) {
   const [ref, measured] = useWidth();
   const ready = measured > 0;
   const width = fixedWidth ?? measured;
@@ -253,11 +296,12 @@ export function Treemap({ items, height, width: fixedWidth, color, selected, onS
     <div className="ch-tmap-with-labels">
       <div ref={ref} className={`ch-tmap ${refined ? "refined" : ""}`} style={{ height }}>
         {tiles.map(({ item, x, y, w, h, text }) => {
-          const clickable = canSelect(item);
-          const interactive = text && clickable;
+          const hasSub = Boolean(refined && item.rest && item.subItems?.length && text && w >= 120 && h >= 130);
+          const subInteractive = hasSub && typeof onSelectSubItem === "function";
+          const clickable = !subInteractive && canSelect(item);
+          const interactive = Boolean(text && clickable);
           const Tile = interactive ? "button" : "div";
           const active = item.id === selected || item.id === linked;
-          const hasSub = Boolean(refined && item.rest && item.subItems?.length && text && w >= 120 && h >= 130);
           const isCompact = refined && !item.rest && (w < 110 || h < 82);
           const className = [
             "ch-tm",
@@ -289,14 +333,14 @@ export function Treemap({ items, height, width: fixedWidth, color, selected, onS
               aria-hidden={text ? undefined : true}
               className={className}
               style={tileStyle}
-              title={describe(item)}
+              title={subInteractive ? undefined : describe(item)}
               onClick={clickable ? () => onSelect(item) : undefined}
               onPointerEnter={text ? undefined : () => setHover(item.id)}
               onPointerLeave={text ? undefined : () => setHover(null)}
             >
               {text &&
                 (refined && item.rest ? (
-                  <OtherNestedTile item={item} text={text} w={w} h={h} />
+                  <OtherNestedTile item={item} text={text} w={w} h={h} onSelectSubItem={onSelectSubItem} />
                 ) : refined ? (
                   <RefinedTileBody item={item} w={w} h={h} text={text} />
                 ) : (

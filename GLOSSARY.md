@@ -76,6 +76,18 @@ _Avoid_: Average yearly return
 The share of total portfolio value, cash included, held in the largest company exposure, and in the five largest combined. Only companies are ranked; fund value that cannot be traced to a company stays in the total but is never ranked.
 _Avoid_: Security weight
 
+**Current valuation**:
+The estimated AUD value of the selected accounts using current holdings and cash balances and the latest available prices and exchange rates.
+_Avoid_: Account balance, broker NAV
+
+**FX translation impact**:
+The change in the current AUD valuation produced by applying the current exchange rate in place of the last complete closing valuation's rate to the same current foreign-currency holdings and cash.
+_Avoid_: Currency trading profit, total investment return
+
+**Portfolio close-to-close change**:
+The investment gain in AUD between the two latest usable closing valuations for the selected accounts, after subtracting net external flows over that interval.
+_Avoid_: Today's price change, current valuation change
+
 **Valuation snapshot**:
 An account or portfolio value as of a specified date, based on the positions, cash balances, prices, and exchange rates for that valuation.
 _Avoid_: Broker statement

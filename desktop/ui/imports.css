@@ -110,6 +110,9 @@
   background: none;
   text-decoration: underline;
 }
+.imp .history-actions { white-space: nowrap; }
+.imp .history-actions button + button { margin-inline-start: 0.85em; }
+
 .imp button.lnk.cap {
   font-size: 12px;
   line-height: 16px;

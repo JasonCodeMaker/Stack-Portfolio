@@ -805,7 +805,7 @@ export async function fetchWebullReport(
   const warnings: string[] = [];
   if (!cash.available) {
     warnings.push(
-      "Webull did not return a cash activity ledger for this account, so deposits, withdrawals, currency conversions, dividends, interest, and standalone fees were not imported. Webull Australia's OpenAPI does not document this endpoint yet; reconcile cash against your Webull statements.",
+      "Webull OpenAPI did not provide cash activity records for this account.",
     );
   } else if (cash.activities.length === 0) {
     warnings.push(

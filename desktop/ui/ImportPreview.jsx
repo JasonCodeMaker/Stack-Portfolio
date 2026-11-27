@@ -211,11 +211,14 @@ export function ImportPreview({ result, done, accounts, confirm, close, reconcil
   const changed = changedReports(result);
   const priceWarnings = [...new Set((result.reports || [result]).flatMap((r) => r.priceWarnings || []))];
   const { title, button, note } = impact(changed, done, t);
+  const webullFundsIncomplete = !done && !changed.length &&
+    (result.reports || [result]).some((report) => report.webullFundsStatus && report.webullFundsStatus !== "loaded");
   return (
     <section ref={panel} tabIndex={-1} className="imp-preview" aria-label={done ? t("preview.titleDone") : t("preview.titlePreview")}>
       <div className="impact">
         <div className="what">
-          <h3>{result.choices?.length ? t("preview.choicesFirst", { count: result.choices.length }) : title}</h3>
+          <h3>{result.choices?.length ? t("preview.choicesFirst", { count: result.choices.length })
+            : webullFundsIncomplete ? t("preview.webullFundsIncomplete") : title}</h3>
           {note && <p>{note}</p>}
           {priceWarnings.map((warning) => (
             <p key={warning}>{t("preview.warningSuffix", { warning })}</p>

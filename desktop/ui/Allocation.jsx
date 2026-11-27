@@ -264,46 +264,390 @@ function CompanyBars({ items, select, selected }) {
   );
 }
 
+const TAIL_SECTOR_COLORS = ["var(--s2)", "var(--s1)", "var(--s4)", "var(--s3)", "var(--s5)", "var(--s6)"];
+const sectorColor = (sector, index) =>
+  sector === "Unclassified" ? "var(--l3)" : TAIL_SECTOR_COLORS[index % TAIL_SECTOR_COLORS.length];
+
+const TAIL_INITIAL_LIMIT = 100;
+const tailSector = (sector) => (!sector || sector === "Mixed/Conflicting" ? "Unclassified" : sector);
+const tailBucketLabel = (bucket, t, allocationLabel) =>
+  bucket?.kind === "opaque" ? t("alloc.tail.opaqueLabel", { ticker: bucket.ticker }) : allocationLabel(bucket?.label);
+
+function TailExplorer({
+  tailScope,
+  setTailScope,
+  buckets,
+  canMergeTail,
+  mergedTail,
+  otherAud,
+  etfDayChange,
+  weight,
+  openFund,
+  chosen,
+  choose,
+  height,
+}) {
+  const { t, allocationLabel } = useI18n();
+  const [sectorFilter, setSectorFilter] = useState(null);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("weight");
+  const [overlapOnly, setOverlapOnly] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+
+  const isMerged = tailScope === "ALL";
+  const activeBucket = isMerged ? null : buckets.find((b) => b.key === tailScope) ?? buckets[0];
+  const activeKind = activeBucket?.kind;
+
+  useEffect(() => {
+    setSectorFilter(null);
+    setOverlapOnly(false);
+    setShowAll(false);
+    if (isMerged || activeKind !== "etf") setSortBy((prev) => (prev === "fundWeight" ? "weight" : prev));
+  }, [tailScope, isMerged, activeKind]);
+
+  const rawMembers = isMerged ? mergedTail.members : (activeBucket?.allMembers ?? []);
+  const sectors = isMerged ? mergedTail.sectors : (activeBucket?.sectors ?? []);
+  const scopeTotalAud = isMerged ? mergedTail.totalAud : (activeBucket?.valueAud ?? 0);
+  const unattributedAud = isMerged ? mergedTail.unattributedAud : (activeBucket?.unattributedAud ?? 0);
+  const activeEtfDay = activeBucket?.kind === "etf" ? etfDayChange(activeBucket.etfKey) : null;
+  const bucketColorMap = useMemo(
+    () => new Map(buckets.map((b, i) => [b.key, `var(--s${(i % 6) + 1})`])),
+    [buckets],
+  );
+  const sectorPalette = useMemo(
+    () => new Map(sectors.map((s, i) => [s.sector, sectorColor(s.sector, i)])),
+    [sectors],
+  );
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const list = rawMembers.filter((m) => {
+      const sec = tailSector(m.sector);
+      if (sectorFilter && sec !== sectorFilter) return false;
+      if (isMerged && overlapOnly && !m.overlaps) return false;
+      if (q) {
+        const secLabel = allocationLabel(sec).toLowerCase();
+        const hay = `${m.ticker || ""} ${m.label || ""} ${secLabel}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    return [...list].sort((a, b) => {
+      if (sortBy === "sector") {
+        return allocationLabel(tailSector(a.sector)).localeCompare(allocationLabel(tailSector(b.sector)))
+          || b.valueAud - a.valueAud;
+      }
+      if (sortBy === "fundWeight" && !isMerged) {
+        return (b.fundWeight ?? b.valueAud) - (a.fundWeight ?? a.valueAud);
+      }
+      return b.valueAud - a.valueAud;
+    });
+  }, [rawMembers, sectorFilter, isMerged, overlapOnly, search, sortBy, allocationLabel]);
+
+  const visibleRows = showAll ? filtered : filtered.slice(0, TAIL_INITIAL_LIMIT);
+  const showUnattributedRow =
+    unattributedAud > 0 && !search.trim() && !overlapOnly && (!sectorFilter || sectorFilter === "Unclassified");
+  const maxAud = rawMembers[0]?.valueAud || 1;
+  const scopeItems = [
+    ...buckets.map((b) => [b.key, t("alloc.tail.bucketTab", {
+      ticker: allocationLabel(b.kind === "etf" ? b.label : b.ticker), pct: pct(b.weight),
+    })]),
+    ...(canMergeTail ? [["ALL", t("alloc.tail.mergedTab", { pct: pct(weight(otherAud)) })]] : []),
+  ];
+
+  return (
+    <div className="alloc-tail-explorer" style={{ minHeight: height }}>
+      <div className="row alloc-drillbar">
+        <button type="button" className="btn sm" onClick={() => setTailScope(null)}>
+          {t("alloc.backPrefix")}{t("alloc.backMap")} (Esc)
+        </button>
+        <span className="alloc-drillpath">
+          {t("alloc.tile.other")} {pct(weight(otherAud))} {" › "}
+          <b>{isMerged ? t("alloc.tail.mergedTab", { pct: pct(weight(otherAud)) }) : tailBucketLabel(activeBucket, t, allocationLabel)}</b>
+        </span>
+        <span className="sp" />
+        <Segmented label={t("alloc.tail.scopeAria")} items={scopeItems} value={isMerged ? "ALL" : activeBucket?.key} select={setTailScope} />
+      </div>
+
+      <div className="alloc-tail-summary">
+        {isMerged ? (
+          <>
+            <span>{t("alloc.tail.mergedSummary", { pct: pct(mergedTail.weight), amount: aud(mergedTail.totalAud), count: rawMembers.length })}</span>
+            {mergedTail.overlapCount > 0 && (
+              <span className="tag">{t("alloc.tail.overlapBadge", { count: mergedTail.overlapCount })}</span>
+            )}
+          </>
+        ) : activeBucket?.kind === "etf" ? (
+          <>
+            {activeEtfDay != null && (
+              <span className="alloc-tail-etf-day">
+                <span className="cap">{t("alloc.tail.etfToday")}</span> <Delta rate={activeEtfDay} />
+              </span>
+            )}
+            <span className="sp" />
+            {activeBucket.etfKey && (
+              <button type="button" className="alloc-link" onClick={() => openFund(activeBucket.etfKey)}>
+                {t("alloc.tail.manageFund")}
+              </button>
+            )}
+          </>
+        ) : (
+          <>
+            <span><b>{tailBucketLabel(activeBucket, t, allocationLabel)}</b> · {pct(activeBucket?.weight)} · {aud(activeBucket?.valueAud)}</span>
+            {activeBucket?.subtitle && <span className="cap">{allocationLabel(activeBucket.subtitle)}</span>}
+            <span className="sp" />
+            {activeBucket?.kind === "opaque" && activeBucket.etfKey && (
+              <button type="button" className="alloc-link" onClick={() => openFund(activeBucket.etfKey)}>
+                {t("alloc.tail.manageFund")}
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {sectors.length > 0 && scopeTotalAud > 0 && (
+        <div className="alloc-tail-sectors">
+          <div className="row m0">
+            <span className="alloc-tail-sec-title">{t("alloc.tail.sectorHeading")}</span>
+            <span className="sp" />
+            <span className="cap">{t("alloc.tail.sectorCoverage", { pct: pct(weight(scopeTotalAud)) })}</span>
+          </div>
+          <div className="alloc-sector-bar" role="group" aria-label={t("alloc.tail.sectorHeading")}>
+            {sectors.map((s) => {
+              const pctW = (s.valueAud / scopeTotalAud) * 100;
+              if (pctW <= 0) return null;
+              const active = sectorFilter === s.sector;
+              const dimmed = Boolean(sectorFilter && !active);
+              const label = allocationLabel(s.sector);
+              return (
+                <button
+                  key={s.sector}
+                  type="button"
+                  className={active ? "on" : dimmed ? "dim" : undefined}
+                  style={{ width: `${pctW}%`, background: sectorPalette.get(s.sector) }}
+                  title={`${label} · ${t("alloc.tile.ofTotal", { pct: pct(s.weight) })} · ${aud(s.valueAud)}`}
+                  aria-label={`${label} ${pct(s.weight)}`}
+                  aria-pressed={active}
+                  onClick={() => setSectorFilter((prev) => (prev === s.sector ? null : s.sector))}
+                />
+              );
+            })}
+          </div>
+          <div className="alloc-sector-chips">
+            {sectors.slice(0, 7).map((s) => {
+              const active = sectorFilter === s.sector;
+              return (
+                <button
+                  key={s.sector}
+                  type="button"
+                  className={active ? "on" : undefined}
+                  aria-pressed={active}
+                  onClick={() => setSectorFilter((prev) => (prev === s.sector ? null : s.sector))}
+                >
+                  <i style={{ background: active ? "var(--on-accent)" : sectorPalette.get(s.sector) }} />
+                  <span>{allocationLabel(s.sector)} {pct(s.weight)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="row alloc-tail-toolbar">
+        <input
+          type="search"
+          className="btn alloc-tail-search"
+          aria-label={t("alloc.tail.searchPlaceholder")}
+          placeholder={t("alloc.tail.searchPlaceholder")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        {sectorFilter && (
+          <button type="button" className="btn sm" onClick={() => setSectorFilter(null)}>
+            {t("alloc.tail.clearSector", { sector: allocationLabel(sectorFilter) })}
+          </button>
+        )}
+        {isMerged && mergedTail.overlapCount > 0 && (
+          <button
+            type="button"
+            className={"btn sm" + (overlapOnly ? " pri" : "")}
+            aria-pressed={overlapOnly}
+            onClick={() => setOverlapOnly((v) => !v)}
+          >
+            {t("alloc.tail.overlapOnly", { count: mergedTail.overlapCount })}
+          </button>
+        )}
+        <span className="sp" />
+        {(rawMembers.length > 0 || !showUnattributedRow) && (
+          <span className="cap">{t("alloc.tail.countNote", { shown: visibleRows.length, total: filtered.length })}</span>
+        )}
+        <select
+          className="btn sm"
+          aria-label={t("alloc.tail.sortWeight")}
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value)}
+        >
+          <option value="weight">{t("alloc.tail.sortWeight")}</option>
+          {!isMerged && activeBucket?.kind === "etf" && <option value="fundWeight">{t("alloc.tail.sortFundWeight")}</option>}
+          <option value="sector">{t("alloc.tail.sortSector")}</option>
+        </select>
+      </div>
+
+      <div className="alloc-tail-table-wrap">
+        <Table
+          head={[
+            t("alloc.tail.colCompany"),
+            [t("alloc.tail.colSector"), "left"],
+            [t("alloc.tail.colSource"), "left"],
+            t("alloc.tail.colBar"),
+            [t("alloc.tail.colShare"), "num"],
+            [!isMerged && activeBucket?.kind === "etf" ? t("alloc.tail.colFundWeight") : t("alloc.tail.colAmount"), "num"],
+          ]}
+        >
+          {visibleRows.length === 0 && !showUnattributedRow ? (
+            <tr>
+              <td colSpan={6} className="alloc-tail-empty">{t("alloc.tail.noMatch")}</td>
+            </tr>
+          ) : (
+            visibleRows.map((m) => {
+              const sec = tailSector(m.sector);
+              const secColor = sectorPalette.get(sec) || "var(--l3)";
+              const sources = m.sources ?? [];
+              return (
+                <tr
+                  key={m.key}
+                  className={"click" + (chosen === m.key ? " sel" : "")}
+                  onClick={() => choose(chosen === m.key ? null : m.key)}
+                >
+                  <td>
+                    <button type="button" className="alloc-link">{m.ticker || m.label}</button>
+                    {m.ticker && m.label !== m.ticker && <i className="alloc-tail-name">{m.label}</i>}
+                  </td>
+                  <td className="left">
+                    <span className="alloc-tail-sec-cell">
+                      <i style={{ background: secColor }} />
+                      {allocationLabel(sec)}
+                    </span>
+                  </td>
+                  <td className="left">
+                    <span className={"tag" + (m.overlaps ? " overlap" : "")}>
+                      {sources.map((s) => allocationLabel(s.key.startsWith("etf:") ? s.label : s.ticker)).join(" + ") || "—"}
+                    </span>
+                  </td>
+                  <td>
+                    <span className="alloc-tail-bar" aria-hidden="true">
+                      {isMerged && sources.length > 1 ? (
+                        sources.map((s) => (
+                          <i
+                            key={s.key}
+                            style={{
+                              width: `${Math.max(2, (s.valueAud / maxAud) * 100)}%`,
+                              background: bucketColorMap.get(s.key) || secColor,
+                            }}
+                          />
+                        ))
+                      ) : (
+                        <i style={{ width: `${Math.max(4, (m.valueAud / maxAud) * 100)}%`, background: secColor }} />
+                      )}
+                    </span>
+                  </td>
+                  <td className="num"><b>{pct(m.weight)}</b></td>
+                  <td className="num">
+                    {!isMerged && activeBucket?.kind === "etf" ? pct(m.fundWeight) : aud(m.valueAud, 2)}
+                  </td>
+                </tr>
+              );
+            })
+          )}
+          {showUnattributedRow && (
+            <tr className="alloc-tail-unattributed">
+              <td colSpan={4}>{t("alloc.tail.unattributed")}</td>
+              <td className="num"><b>{pct(weight(unattributedAud))}</b></td>
+              <td className="num">
+                {!isMerged && activeKind === "etf"
+                  ? pct(activeBucket?.etfTotalAud > 0 ? unattributedAud / activeBucket.etfTotalAud : null)
+                  : aud(unattributedAud, 2)}
+              </td>
+            </tr>
+          )}
+        </Table>
+      </div>
+      {!showAll && filtered.length > visibleRows.length && (
+        <div className="alloc-tail-more">
+          <button type="button" className="btn sm" onClick={() => setShowAll(true)}>
+            {t("alloc.tail.showAll", { count: filtered.length })}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height }) {
   const { t, allocationLabel } = useI18n();
   const [view, setView] = useState("tree"),
     [color, setColor] = useState("day"),
-    [zoomPath, setZoomPath] = useState([]),
-    [otherUnit, setOtherUnit] = useState("total");
+    [tailScope, setTailScope] = useState(null);
   const totalAud = d.portfolio.totalAud;
-  const { named, otherAud, otherBuckets, companies: topFive, waiting } = useMemo(
+  const { named, otherAud, otherBuckets, mergedTail, companies: topFive, waiting } = useMemo(
     () => buildComposition(d.exposure, totalAud),
     [d.exposure, totalAud],
   );
   const top = topFive[0], namedCompanies = named.filter((row) => row.type === "stock");
   const day = (key) => d.today?.companies?.[key] ?? null;
 
-  useEffect(() => {
-    if (zoomPath.length >= 1 && otherBuckets.length === 0) setZoomPath([]);
-    else if (zoomPath.length === 2 && !otherBuckets.some((b) => b.key === zoomPath[1])) setZoomPath(["OTHER"]);
-  }, [otherBuckets, zoomPath]);
-
-  useEffect(() => {
-    if (zoomPath.length === 0 || chosen) return undefined;
-    const onKeyDown = (event) => {
-      if (event.key !== "Escape") return;
-      const tag = event.target?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
-      setZoomPath((prev) => prev.slice(0, -1));
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [zoomPath.length, chosen]);
-
-  const splitTicker = (raw) => {
-    const parts = String(raw || "").split(" / ");
-    return { primaryTicker: parts[0], secondaryTicker: parts.slice(1).join(" / ") || null };
-  };
+  const etfDayLookup = useMemo(() => {
+    const byEtfKey = new Map();
+    const etfKeyByHoldingId = new Map(d.rows.map((row) => [row.id, row.etfKey]));
+    const todayDate = d.today?.date;
+    const datedRate = (quote) => (!todayDate || quote?.date === todayDate) ? quote?.change ?? null : null;
+    const rateFor = (row) => row.type === "etf"
+      ? datedRate(row.today?.priceChange) ?? datedRate(row.quoteChange) : null;
+    for (const s of d.holdings?.securities ?? []) {
+      const key = etfKeyByHoldingId.get(s.rowIds?.[0]);
+      const rate = rateFor(s);
+      if (key && rate != null) byEtfKey.set(key, rate);
+    }
+    for (const r of d.rows ?? []) {
+      const rate = rateFor(r);
+      if (r.etfKey && rate != null && !byEtfKey.has(r.etfKey)) byEtfKey.set(r.etfKey, rate);
+    }
+    return byEtfKey;
+  }, [d.holdings, d.rows, d.today?.date]);
+  const etfDayChange = (key) => etfDayLookup.get(key) ?? null;
 
   const visibleOtherBuckets = useMemo(() => {
     const meaningful = otherBuckets.filter((b) => !(b.key === "residual" && (b.weight ?? 0) < 0.0005));
     return meaningful.length > 0 ? meaningful : otherBuckets;
   }, [otherBuckets]);
+  const canMergeTail = otherBuckets.length > 1;
+  const defaultTailScope = canMergeTail ? "ALL" : otherBuckets[0]?.key ?? null;
+
+  useEffect(() => {
+    if (tailScope == null) return;
+    const validScope = tailScope === "ALL" ? canMergeTail : visibleOtherBuckets.some((b) => b.key === tailScope);
+    if (!validScope) {
+      setTailScope(defaultTailScope);
+    }
+  }, [canMergeTail, defaultTailScope, visibleOtherBuckets, tailScope]);
+
+  useEffect(() => {
+    if (view !== "tree" || tailScope == null || chosen) return undefined;
+    const onKeyDown = (event) => {
+      // A dialog above the view takes Esc first (matches Inspector in Shell.jsx).
+      if (event.key !== "Escape" || event.defaultPrevented || document.querySelector("dialog[open]")) return;
+      const tag = event.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      setTailScope(null);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [view, tailScope, chosen]);
+
+  const splitTicker = (raw) => {
+    const parts = String(raw || "").split(" / ");
+    return { primaryTicker: parts[0], secondaryTicker: parts.slice(1).join(" / ") || null };
+  };
 
   const tiles = named.map((row) => {
     const selectable = row.type === "stock";
@@ -349,14 +693,31 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
   }).sort((a, b) => b.value - a.value);
 
   if (otherAud > 0) {
-    const subItems = visibleOtherBuckets.map((bucket, i) => ({
-      id: bucket.key,
-      label: allocationLabel(bucket.ticker),
-      value: bucket.valueAud,
-      share: pct(bucket.weight),
-      inside: bucket.shareOfOther != null ? pct(bucket.shareOfOther) : undefined,
-      accent: `var(--s${(i % 6) + 1})`,
-    }));
+    const subItems = visibleOtherBuckets.map((bucket, i) => {
+      const isEtf = bucket.kind === "etf";
+      const change = isEtf ? etfDayChange(bucket.etfKey) : null;
+      const previewTickers = bucket.allMembers.slice(0, 3).map((m) => m.ticker || m.label).filter(Boolean);
+      const preview = previewTickers.length > 0 ? `${previewTickers.join(" · ")}…` : undefined;
+      return {
+        id: bucket.key,
+        label: allocationLabel(isEtf ? bucket.label : bucket.ticker),
+        value: bucket.valueAud,
+        share: pct(bucket.weight),
+        inside: bucket.shareOfOther != null ? pct(bucket.shareOfOther) : undefined,
+        accent: `var(--s${(i % 6) + 1})`,
+        isEtf,
+        change,
+        colorMode: color,
+        tailCountLabel: bucket.memberCount > 0 ? t("alloc.tail.itemsShort", { count: bucket.memberCount }) : undefined,
+        preview,
+        title: [
+          tailBucketLabel(bucket, t, allocationLabel),
+          t("alloc.tile.ofTotal", { pct: pct(bucket.weight) }),
+          bucket.shareOfOther != null && t("alloc.tile.ofOther", { pct: pct(bucket.shareOfOther) }),
+          change != null && t("alloc.tile.todayText", { pct: directedPct(change) }),
+        ].filter(Boolean).join(" · "),
+      };
+    });
     tiles.push({
       id: "composition:other",
       label: t("alloc.tile.other"),
@@ -365,75 +726,10 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
       selectable: visibleOtherBuckets.length > 0,
       detail: [pct(weight(otherAud))],
       subItems,
+      mergeSubItems: canMergeTail,
       title: t("alloc.tile.otherTitle", { pct: pct(weight(otherAud)) }),
     });
   }
-
-  const depth = zoomPath.length;
-  const activeBucket = depth === 2 ? visibleOtherBuckets.find((b) => b.key === zoomPath[1]) : null;
-  const bucketTiles = useMemo(() => {
-    if (depth !== 1) return [];
-    return visibleOtherBuckets.map((bucket, i) => {
-      const mainShare = otherUnit === "total" ? pct(bucket.weight) : pct(bucket.shareOfOther);
-      const subShare = otherUnit === "total"
-        ? t("alloc.tile.ofOther", { pct: pct(bucket.shareOfOther) })
-        : t("alloc.tile.ofTotal", { pct: pct(bucket.weight) });
-      return {
-        id: bucket.key,
-        label: allocationLabel(bucket.ticker),
-        value: bucket.valueAud,
-        share: mainShare,
-        selectable: bucket.members.length > 0,
-        bucketDrillable: bucket.members.length > 0,
-        bucketAccent: `var(--s${(i % 6) + 1})`,
-        bucketSub: bucket.members.length > 0
-          ? t("alloc.tile.tailTracked", { count: bucket.members.length + bucket.restCount })
-          : undefined,
-        bucketMainPct: mainShare,
-        bucketSubPct: subShare,
-        bucketAmount: aud(bucket.valueAud),
-        detail: [mainShare, subShare],
-        title: `${allocationLabel(bucket.label)} · ${t("alloc.tile.ofTotal", { pct: pct(bucket.weight) })} · ${t("alloc.tile.ofOther", { pct: pct(bucket.shareOfOther) })} · ${aud(bucket.valueAud)}`,
-      };
-    });
-  }, [depth, visibleOtherBuckets, otherUnit, t, allocationLabel]);
-
-  const memberTiles = useMemo(() => {
-    if (depth !== 2 || !activeBucket) return [];
-    const items = activeBucket.members.map((m) => {
-      const change = day(m.key);
-      const share = pct(m.weight);
-      const label = allocationLabel(m.ticker || m.label);
-      const { primaryTicker, secondaryTicker } = splitTicker(label);
-      return {
-        id: m.key,
-        label,
-        primaryTicker,
-        secondaryTicker,
-        name: m.label,
-        share,
-        value: m.valueAud,
-        selectable: false,
-        change,
-        colorMode: color,
-        detail: change != null ? [share, directedPct(change)] : [share],
-        title: [m.label, t("alloc.tile.ofTotal", { pct: share }), aud(m.valueAud), change != null && t("alloc.tile.todayText", { pct: directedPct(change) })].filter(Boolean).join(" · "),
-      };
-    });
-    if (activeBucket.restValueAud > 0) {
-      const restWeight = totalAud > 0 ? activeBucket.restValueAud / totalAud : null;
-      items.push({
-        id: `${activeBucket.key}:rest`,
-        label: activeBucket.members.length ? t("alloc.tile.otherRemainder", { count: activeBucket.restCount }) : allocationLabel(activeBucket.ticker),
-        value: activeBucket.restValueAud,
-        rest: true,
-        selectable: false,
-        detail: [pct(restWeight)],
-        title: t("alloc.tile.remainderTitle", { label: allocationLabel(activeBucket.label), amount: aud(activeBucket.restValueAud) }),
-      });
-    }
-    return items;
-  }, [depth, activeBucket, totalAud, d.today, color, t, allocationLabel]);
 
   const tileColor = (item) => {
     if (item.cash || item.bucketAccent) return {};
@@ -455,7 +751,7 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
   const handleSelectTile = (item) => {
     if (item.id === "composition:other") {
       choose(null);
-      setZoomPath(["OTHER"]);
+      setTailScope(defaultTailScope);
       return;
     }
     choose(item.id);
@@ -467,8 +763,16 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
         <h2 id="allocation-company-title">{t("alloc.chartTitle")}</h2>
         <span className="cap">{t("alloc.chartSubtitle")}</span>
         <span className="sp" />
-        <Segmented label={t("alloc.viewAria")} items={[["tree", t("alloc.view.tree")], ["bars", t("alloc.view.bars")]]} value={view} select={setView} />
-        {view === "tree" && depth === 0 && (
+        <Segmented
+          label={t("alloc.viewAria")}
+          items={[["tree", t("alloc.view.tree")], ["bars", t("alloc.view.bars")]]}
+          value={view}
+          select={(next) => {
+            setView(next);
+            if (next !== "tree") setTailScope(null);
+          }}
+        />
+        {view === "tree" && tailScope == null && (
           <Segmented label={t("alloc.colorAria")} items={[["day", t("alloc.color.day")], ["sources", t("alloc.color.sources")]]} value={color} select={setColor} />
         )}
       </div>
@@ -488,80 +792,47 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
           <dd>{totalAud > 0 ? t("alloc.kpi.over1Val", { count: namedCompanies.length, pct: pct(weight(sumBy(namedCompanies, "totalAud"))) }) : "—"}</dd>
         </div>
       </dl>
-      {view === "tree" && depth > 0 && (
-        <div className="row alloc-drillbar">
-          <button type="button" className="btn sm" onClick={() => setZoomPath((prev) => prev.slice(0, -1))}>
-            {t("alloc.backPrefix")}{depth === 2 ? t("alloc.backOtherEtf") : t("alloc.backMap")} (Esc)
-          </button>
-          <span className="alloc-drillpath">
-            {depth === 1 ? (
-              <><b>{t("alloc.drillOtherTitle")}</b>{t("alloc.drillOtherTotal", { pct: pct(weight(otherAud)) })}</>
-            ) : (
-              <>
-                <button type="button" className="alloc-link" onClick={() => setZoomPath(["OTHER"])}>
-                  {t("alloc.tile.other")} {pct(weight(otherAud))}
-                </button>
-                {" › "}
-                <b>{allocationLabel(activeBucket?.ticker)}</b>{t("alloc.drillTailSuffix", { pct: pct(activeBucket?.weight) })}
-              </>
-            )}
-          </span>
-          <span className="sp" />
-          {depth === 1 && (
-            <Segmented
-              label={t("alloc.unitAria")}
-              items={[["total", t("alloc.unit.total")], ["inside", t("alloc.unit.inside")]]}
-              value={otherUnit}
-              select={setOtherUnit}
-            />
-          )}
-        </div>
-      )}
       <div>
         {!tiles.length ? (
           <Empty>{d.exposure.rows.length ? t("alloc.empty.cantCompute") : t("alloc.empty.noAssets")}</Empty>
         ) : view === "tree" ? (
           <>
-            {depth === 0 && (
+            {tailScope == null ? (
               <Treemap
                 items={tiles}
                 height={height}
                 color={tileColor}
                 onSelect={handleSelectTile}
+                onSelectSubItem={(id) => {
+                  choose(null);
+                  setTailScope(id);
+                }}
                 selected={chosen}
                 refined
                 layoutOptions={{ pinOtherRight: true, gap: 5 }}
               />
-            )}
-            {depth === 1 && (
-              <Treemap
-                items={bucketTiles}
+            ) : (
+              <TailExplorer
+                tailScope={tailScope}
+                setTailScope={setTailScope}
+                buckets={visibleOtherBuckets}
+                canMergeTail={canMergeTail}
+                mergedTail={mergedTail}
+                otherAud={otherAud}
+                etfDayChange={etfDayChange}
+                weight={weight}
+                openFund={openFund}
+                chosen={chosen}
+                choose={choose}
                 height={height}
-                color={tileColor}
-                onSelect={(item) => item.bucketDrillable && setZoomPath(["OTHER", item.id])}
-                refined
-                layoutOptions={{ gap: 5 }}
-              />
-            )}
-            {depth === 2 && (
-              <Treemap
-                items={memberTiles}
-                height={height}
-                color={tileColor}
-                refined
-                layoutOptions={{ gap: 5 }}
               />
             )}
             <div className="row alloc-chart-footer">
               <span className="cap">
-                {depth === 0
-                  ? t("alloc.footer.root")
-                  : depth === 1
-                    ? t("alloc.footer.buckets")
-                    : t("alloc.footer.members")}
+                {tailScope == null ? t("alloc.footer.root") : t("alloc.tail.footer")}
               </span>
               <span className="sp" />
-              {depth !== 1 && (color === "day" ? <DailyKey /> : <ExposureKey />)}
+              {tailScope == null && (color === "day" ? <DailyKey /> : <ExposureKey />)}
             </div>
           </>
         ) : (
@@ -572,7 +843,7 @@ function CompanyChart({ d, weight, holdings, openFund, chosen, choose, height })
               select={(id) => {
                 if (id === "composition:other") {
                   choose(null);
-                  setZoomPath(["OTHER"]);
+                  setTailScope(defaultTailScope);
                   setView("tree");
                 } else {
                   choose(id);

@@ -168,7 +168,7 @@
   min-width: 0;
   overflow: hidden;
 }
-.ch-tmap.refined .ch-tm.compact .ch-tm-card {
+.ch-tmap.refined :is(.ch-tm, .ch-tm-sub).compact .ch-tm-card {
   padding: 6px 8px;
 }
 .ch-tmap.refined .ch-tm-card-top {
@@ -239,7 +239,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.ch-tmap.refined .ch-tm.compact .ch-tm-pct {
+.ch-tmap.refined :is(.ch-tm, .ch-tm-sub).compact .ch-tm-pct {
   font-size: 11.5px;
 }
 .ch-tmap.refined .ch-tm-badge-dark {
@@ -361,6 +361,7 @@
 }
 .ch-tm-drill-badge {
   display: inline-block;
+  font: inherit;
   font-size: 11px;
   font-weight: 600;
   padding: 2px 7px;
@@ -370,43 +371,57 @@
   border: 1px solid var(--sep);
   white-space: nowrap;
 }
+button.ch-tm-drill-badge {
+  cursor: pointer;
+}
+button.ch-tm-drill-badge:hover {
+  background: var(--surface2);
+  border-color: var(--accent);
+}
 .ch-tm-drill-badge.corner {
   margin-top: 6px;
 }
 .ch-tm-sub {
   position: absolute;
-  border-radius: 6px;
-  padding: 5px 7px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
+  box-sizing: border-box;
+  border-radius: 8px;
+  padding: 0;
+  display: block;
+  line-height: 1.2;
   overflow: hidden;
+  text-align: left;
+  font-family: inherit;
   background: var(--surface);
+  color: var(--l1);
   border: 1px solid var(--sep);
   border-left-width: 3px;
+  transition: filter 120ms ease, box-shadow 120ms ease;
 }
-.ch-tm-sub-tk {
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--l1);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.ch-tm-sub.semantic {
+  border-left-width: 1px;
 }
-.ch-tm-sub-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 4px;
+.ch-tm-sub.click {
+  cursor: pointer;
 }
-.ch-tm-sub-row small {
-  font-size: 11px;
+.ch-tm-sub.click:hover {
+  filter: brightness(1.04);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+.ch-tm-sub.semantic.click:hover {
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.72);
+}
+.ch-tm-sub-badge {
+  font-size: 10px;
   font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface2);
   color: var(--l2);
+  flex-shrink: 0;
 }
-.ch-tm-sub-row .ch-tm-sub-in {
-  font-weight: 400;
-  color: var(--l3);
+.ch-tm-sub.semantic .ch-tm-sub-badge {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--tm-tile-text);
 }
 
 .ch-selectable {

@@ -188,4 +188,20 @@ describe("fetchIbkrFlexReport", () => {
     await expect(failure).rejects.toThrow("IBKR report request failed due to a network error.");
     await expect(failure).rejects.not.toThrow(/SECRET|Q1/);
   });
+
+  it.each([
+    ["SendRequest", 200],
+    ["GetStatement", 200],
+    ["SendRequest", 429],
+  ] as const)("reports too many failed attempts from %s (HTTP %i) without retrying", async (stage, status) => {
+    const request = vi.fn();
+    if (stage === "GetStatement") {
+      request.mockResolvedValueOnce({ status: 200, body: "<Status>Success</Status><ReferenceCode>R1</ReferenceCode>" });
+    }
+    request.mockResolvedValueOnce({ status, body: "<Status>Fail</Status><ErrorCode>1025</ErrorCode>" });
+
+    await expect(fetchIbkrFlexReport({ request }, { queryId: "Q1", token: "test-token" }))
+      .rejects.toThrow(/too many failed attempts.*1025/i);
+    expect(request).toHaveBeenCalledTimes(stage === "SendRequest" ? 1 : 2);
+  });
 });

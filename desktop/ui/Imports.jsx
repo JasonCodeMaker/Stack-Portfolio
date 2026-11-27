@@ -286,6 +286,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     [offset, setOffset] = useState(0),
     [search, setSearch] = useState(""),
     [modal, setModal] = useState(null);
+  const [connectingFunds, setConnectingFunds] = useState(false);
   const [form, setForm] = useState({ ...blank, date: d.date }),
     [date, setDate] = useState(d.date),
     [cash, setCash] = useState([{ currency: "AUD", value: "" }]),
@@ -302,6 +303,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     [amendForm, setAmendForm] = useState({}),
     [revisions, setRevisions] = useState([]),
     [voided, setVoided] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const deletesGroup = Boolean(deleteTarget?.group && deleteTarget.activityType.startsWith("TRANSFER_"));
   const demo = mode === "demo",
     webullSample = demo && account === "demo-webull";
   function selectAccount(next, keepImport = false) {
@@ -318,6 +321,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     setNav("");
     setOffset(0);
     setAmend(null);
+    setDeleteTarget(null);
   }
   useEffect(() => {
     let a = true;
@@ -335,6 +339,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   function chooseTab(next) {
     setTab(next);
     setAmend(null);
+    setDeleteTarget(null);
   }
   function chooseBroker(b) {
     requests.current = {};
@@ -453,7 +458,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     amend?.id,
     (id) => {
       const v = entries.find((e) => e.id === id);
-      if (v) run(() => edit(v), false);
+      if (v && !superseded(v)) run(() => edit(v), false);
     },
   );
   if (!d.accounts.some((a) => a.active))
@@ -541,6 +546,34 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         useStatement(result.statement || { date: d.date });
       }}
     >
+      {!r.done && r.webullFundsStatus && r.webullFundsStatus !== "loaded" && (
+        <div className="notice" role="status">
+          <span>{t({
+            login: "imports.webullFundsLogin",
+            verification: "imports.webullFundsVerification",
+            unavailable: "imports.webullFundsError",
+          }[r.webullFundsStatus])}</span>
+          <button
+            type="button"
+            className="btn sm"
+            disabled={connectingFunds}
+            onClick={async () => {
+              const activeRequest = requests.current.webull;
+              setConnectingFunds(true);
+              try {
+                const status = await run(() => api.connectWebullFunds({ account: r.account }), false);
+                if (requests.current.webull !== activeRequest) return;
+                if (status === "loaded") await prepare("live", "webull", r.account);
+                if (status === "unavailable") updateReport("webull", { ...r, webullFundsStatus: status });
+              } finally {
+                setConnectingFunds(false);
+              }
+            }}
+          >
+            {t("imports.webullFundsConnect")}
+          </button>
+        </div>
+      )}
       <ListingChoices
         choices={r.choices}
         resolve={(c, id) =>
@@ -835,14 +868,14 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     key={v.id}
                     data-row={v.id}
                     className={"click" + (amend?.id === v.id ? " sel" : "")}
-                    onClick={() => run(() => edit(v), false)}
+                    onClick={superseded(v) ? undefined : () => run(() => edit(v), false)}
                   >
                     <td>{String(v.date).slice(0, 10)}</td>
                     <td className="l">
                       {v.metadata?.fx
                         ? (v.activityType === "TRANSFER_OUT" ? t("imports.fxSell") : t("imports.fxBuy"))
                         : typeLabel(v.activityType)}
-                      {superseded(v) && <small>{t("imports.voidedTag")}</small>}
+                      {superseded(v) && <small>{t(v.metadata?.deletedByUser ? "imports.deletedTag" : "imports.voidedTag")}</small>}
                       {fx?.sourceCurrency && fx.destinationCurrency && (
                         <small>
                           {execution?.autoFx && t("imports.autoFxTag")}
@@ -864,10 +897,14 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                       {sources[v.sourceSystem] || sourceLabel(v.sourceSystem || "旧账本")}
                       <small>{v.sourceRecordId || v.comment}</small>
                     </td>
-                    <td>
-                      <button type="button" className="lnk">
-                        {t("imports.amendBtn")}
-                      </button>
+                    <td className="history-actions">
+                      {!superseded(v) && <>
+                        <button type="button" className="lnk">{t("imports.amendBtn")}</button>
+                        <button type="button" className="lnk" onClick={(event) => {
+                          event.stopPropagation();
+                          setDeleteTarget(v);
+                        }}>{t("imports.deleteBtn")}</button>
+                      </>}
                     </td>
                   </tr>
                 );
@@ -1031,6 +1068,31 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             </div>
           </div>
         </Detail>
+      )}
+
+      {tab === "history" && deleteTarget && (
+        <Modal title={t("imports.deleteTitle")} close={() => setDeleteTarget(null)}>
+          <p>{t("imports.deleteDescription", {
+            date: String(deleteTarget.date).slice(0, 10),
+            type: typeLabel(deleteTarget.activityType),
+          })}</p>
+          {deletesGroup && <p>{t("imports.deleteGroup")}</p>}
+          <div className="acts">
+            <button type="button" className="btn" onClick={() => setDeleteTarget(null)}>{t("app.cancel")}</button>
+            <button type="button" className="btn pri" onClick={() => run(async () => {
+              await api.deleteActivity({
+                id: deleteTarget.id,
+                account: deleteTarget.accountId,
+                prior: JSON.stringify(deleteTarget),
+                deleteGroup: deletesGroup,
+              });
+              requests.current = {};
+              setReports({});
+              setDeleteTarget(null);
+              setAmend(null);
+            }, t("imports.deleteSaved"))}>{t("imports.confirmDelete")}</button>
+          </div>
+        </Modal>
       )}
 
       {modal === "file" && (

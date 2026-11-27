@@ -1,4 +1,4 @@
-// Run after npm run build. Uses an isolated sample book and an offscreen Electron window.
+// Run after npm run build. Uses isolated books and an offscreen Electron window.
 const { _electron: electron } = require("playwright-core");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -6,12 +6,185 @@ const os = require("node:os");
 const path = require("node:path");
 const { resizeContent } = require("./fixtures/display.cjs");
 
+const tailDate = "2026-10-30";
+
+async function seedTailBook(p) {
+  await p.evaluate(async (date) => {
+    const api = window.portfolio, openingDate = "2026-10-29";
+    const account = await api.account({ name: "ETF 尾部验证", currency: "AUD" });
+    await api.opening({
+      account, date: openingDate, cash: { AUD: "20000" },
+      positions: ["IVV", "SPMO"].map((symbol) => ({
+        symbol, mic: "ARCX", kind: "ETF", quantity: "100", price: "400", currency: "AUD",
+      })),
+    });
+    const d = await api.dashboard({ ids: [account], date });
+    for (const { assetId, ticker, etfKey } of d.rows) {
+      if (!etfKey) continue;
+      await api.savePrice({ assetId, date, price: ticker === "IVV" ? 404 : 396 });
+      const tailCount = 240, tailWeight = 0.8;
+      const weightDenominator = tailCount * (tailCount + 1) / 2;
+      const holdings = Array.from({ length: tailCount }, (_, index) => ({
+        symbol: `${index < 12 ? "SHARED" : ticker}${String(index).padStart(3, "0")}`,
+        name: `Constituent ${index}`,
+        mic: "XNAS",
+        sector: index % 2 === 0 ? "Technology" : "Financials",
+        country: "United States",
+        underlyingType: "stock",
+        weight: (tailCount - index) * tailWeight / weightDenominator,
+      }));
+      const uncoveredWeight = ticker === "SPMO" ? 0.015 : 0;
+      holdings.push({ ...holdings[0], symbol: `${ticker}CORE`, name: `${ticker} Core`, weight: 1 - tailWeight - uncoveredWeight });
+      await api.fundSave({ snapshot: {
+        schemaVersion: 2, etfKey, provider: "Tail explorer fixture", asOfDate: openingDate,
+        fetchedAt: `${openingDate}T05:00:00Z`, holdings,
+      } });
+    }
+  }, tailDate);
+}
+
+async function verifyTailExplorer(app, p, chart) {
+  const button = (scope, name) => scope.getByRole("button", { name, exact: typeof name === "string" });
+  const nav = p.getByRole("navigation", { name: "页面" });
+  await button(nav, "配置分析").click();
+  await p.getByLabel("估值日").fill(tailDate);
+  await p.getByText(`正在查看 ${tailDate}`).waitFor();
+  await resizeContent(app, p, 1920, 1080);
+
+  const other = chart.locator(".ch-tm.rest.has-sub");
+  const ivv = button(other, /^IVV/);
+  const spmo = button(other, /^SPMO/);
+  await ivv.waitFor();
+  assert.match(await ivv.innerText(), /ETF[\s\S]*尾部 240 项[\s\S]*SHARED000 · SHARED001 · SHARED002/);
+  const stock = chart.locator(".ch-tm:not(.rest):not(.cash):not(.compact) .ch-tm-card").first();
+  const cardInset = (card) => card.evaluate((element) => getComputedStyle(element).padding);
+  assert.equal(await cardInset(ivv.locator(".ch-tm-card")), await cardInset(stock));
+  const { ticker, share, pill, tile } = await ivv.evaluate((element) => {
+    const bounds = (selector) => element.querySelector(selector).getBoundingClientRect().toJSON();
+    return {
+      ticker: bounds(".ch-tm-ticker-wrap b"),
+      share: bounds(".ch-tm-pct"),
+      pill: bounds(".ch-tm-badge-dark"),
+      tile: element.getBoundingClientRect().toJSON(),
+    };
+  });
+  assert.ok(Math.abs(ticker.left - share.left) < 1);
+  assert.ok(share.left - tile.left < 16 && tile.right - pill.right < 16);
+  assert.ok(Math.abs(share.bottom - pill.bottom) < 1);
+  assert.match(await ivv.getAttribute("title"), /\+1\.00%/);
+  assert.match(await spmo.getAttribute("title"), /−1\.00%/);
+  assert.notEqual(await ivv.evaluate((tile) => tile.style.background), await spmo.evaluate((tile) => tile.style.background));
+  await button(chart, "持有方式").click();
+  assert.deepEqual(await ivv.or(spmo).evaluateAll((tiles) => tiles.map((tile) => tile.style.background)),
+    ["var(--tm-how-etf)", "var(--tm-how-etf)"]);
+
+  const explorer = chart.locator(".alloc-tail-explorer");
+  const scope = explorer.getByRole("group", { name: "尾部查看范围" });
+  const rows = explorer.locator("tbody tr.click");
+  const search = explorer.getByRole("searchbox", { name: "搜索代码、公司或行业" });
+  const sector = explorer.getByRole("group", { name: "尾部行业分布（点击过滤）" });
+  await ivv.click();
+  await scope.getByRole("button", { name: /^IVV/, pressed: true }).waitFor();
+  assert.doesNotMatch(await explorer.locator(".alloc-tail-summary").innerText(), /总占总资产|主图 >1%/);
+  await button(explorer, "管理成分表").waitFor();
+  assert.equal(await rows.count(), 100);
+  assert.ok(Math.abs(await sector.getByRole("button").evaluateAll((segments) =>
+    segments.reduce((sum, segment) => sum + parseFloat(segment.style.width), 0)) - 100) < 0.01);
+  const financials = button(sector, /^金融/);
+  const technology = button(sector, /^科技/);
+  await technology.focus();
+  await technology.press("Tab");
+  assert.ok(await financials.evaluate((segment) => segment === document.activeElement));
+  assert.equal(await financials.evaluate((segment) => getComputedStyle(segment).outlineStyle), "solid");
+  await financials.press("Enter");
+  assert.equal(await financials.getAttribute("aria-pressed"), "true");
+  assert.deepEqual(await sector.getByRole("button").evaluateAll((segments) =>
+    segments.map((segment) => getComputedStyle(segment).borderRadius)), ["0px", "0px"]);
+  assert.deepEqual([...new Set(await rows.locator(".alloc-tail-sec-cell").allTextContents())], ["金融"]);
+  await button(explorer, /行业：金融/).click();
+  const sort = explorer.getByRole("combobox", { name: "按占总资产降序" });
+  const readSectors = () => rows.locator(".alloc-tail-sec-cell").allTextContents();
+  const defaultSectors = await readSectors();
+  await sort.selectOption("sector");
+  assert.equal(new Set(defaultSectors).size, 2);
+  assert.equal(new Set(await readSectors()).size, 1);
+  await sort.selectOption("fundWeight");
+  assert.equal(await rows.first().getByRole("button").innerText(), "SHARED000");
+  await search.fill("IVV239");
+  assert.equal(await rows.count(), 1);
+  await button(rows, "IVV239").waitFor();
+  await search.fill("");
+  await button(scope, /^SPMO/).click();
+  await scope.getByRole("button", { name: /^SPMO/, pressed: true }).waitFor();
+  assert.doesNotMatch(await explorer.locator(".alloc-tail-summary").innerText(), /总占总资产|未穿透项占/);
+  await button(explorer, "管理成分表").click();
+  const fund = p.getByRole("dialog", { name: "SPMO · 基金成分" });
+  await fund.waitFor();
+  await p.keyboard.press("Escape");
+  await fund.waitFor({ state: "detached" });
+  await explorer.waitFor();
+  await button(explorer, /返回方框图/).click();
+  await button(other, "合并全部尾部 ↗").click();
+  await scope.getByRole("button", { name: /^合并全部尾部/, pressed: true }).waitFor();
+  assert.equal(await rows.count(), 100);
+  await button(explorer, "显示全部 468 项").click();
+  assert.equal(await rows.count(), 468);
+  await button(explorer, "仅看跨 ETF 重叠（12）").click();
+  assert.equal(await rows.count(), 12);
+  const shared = rows.filter({ has: button(p, "SHARED000") });
+  assert.match(await shared.innerText(), /IVV \+ SPMO/);
+  assert.equal(await shared.locator(".alloc-tail-bar i").count(), 2);
+  await resizeContent(app, p, 1280, 720);
+  await button(shared, "SHARED000").press("Enter");
+  const sources = p.getByRole("dialog", { name: /SHARED000/ });
+  await button(sources, "通过 IVV 持有").waitFor();
+  await button(sources, "通过 SPMO 持有").waitFor();
+  await p.keyboard.press("Escape");
+  await sources.waitFor({ state: "detached" });
+  await explorer.waitFor();
+  await p.keyboard.press("Escape");
+  await chart.locator(".ch-tmap").waitFor();
+  console.log("Route C verified in Electron: two ETF tails, 468 merged companies, 12 overlaps, filters, inspectors and Escape navigation.");
+}
+
+async function openTailTestBook(app, p) {
+  await app.evaluate(({ protocol }) => {
+    globalThis.tailQuoteRequests = [];
+    const intercept = (url) => {
+      const { hostname, pathname } = new URL(url);
+      globalThis.tailQuoteRequests.push(hostname + decodeURIComponent(pathname));
+      return new Response(null, { status: 503 });
+    };
+    protocol.handle("https", (request) => intercept(request.url));
+    globalThis.fetch = async (request) => intercept(request instanceof Request ? request.url : request);
+  });
+  await p.evaluate(async () => {
+    await window.portfolio.newBook();
+    await window.portfolio.marketSettings({ autoUpdate: false });
+  });
+  await seedTailBook(p);
+  await p.reload();
+}
+
+async function verifyTailQuoteScope(app, p) {
+  const requests = () => app.evaluate(() => globalThis.tailQuoteRequests);
+  assert.deepEqual(await requests(), [], "Opening and navigating the tail should not request market data");
+  const result = await p.evaluate(() => window.portfolio.updateMarket());
+  assert.deepEqual(result.filter((entry) => entry.id).map((entry) => entry.name).sort(), ["IVV", "SPMO"]);
+  assert.deepEqual((await requests()).sort(), [
+    "fred.stlouisfed.org/graph/fredgraph.csv",
+    ...["AUDUSD=X", "IVV", "SPMO", "^SP500TR", "^XNDX"].map((ticker) => `query1.finance.yahoo.com/v8/finance/chart/${ticker}`),
+  ]);
+  console.log("Tail navigation made zero requests; market refresh requested only held ETFs and standard benchmark/FX data.");
+}
+
 async function verify() {
   const root = path.join(__dirname, "..");
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "stack-portfolio-allocation-"));
   const env = {
     ...process.env,
     STACK_PORTFOLIO_HEADLESS: "1",
+    STACK_PORTFOLIO_LOCALE: "zh-CN",
     STACK_PORTFOLIO_TEST_DIR: directory,
     STACK_PORTFOLIO_TEST_SOURCE: path.join(directory, "empty"),
   };
@@ -22,8 +195,14 @@ async function verify() {
     app = await electron.launch({
       executablePath: packaged ? path.resolve(packaged) : require("electron"), args: packaged ? [] : [root], env, timeout: 30000,
     });
+    assert.equal(await app.evaluate(({ app }) => app.getPath("userData")), directory);
     const p = await app.firstWindow();
     p.setDefaultTimeout(8000);
+    const errors = [];
+    p.on("pageerror", (error) => errors.push(error.message));
+    const home = await p.evaluate(() => window.portfolio.home());
+    if (!home.mode && !home.hasReal && !home.onboardingSeen)
+      await p.getByRole("button", { name: "暂时跳过", exact: true }).click();
     await p.getByRole("button", { name: "打开示例账本" }).click();
     await p.getByRole("heading", { name: "总览", exact: true }).waitFor();
 
@@ -215,8 +394,15 @@ async function verify() {
     });
     assert.ok(connected);
     await smallLabel.press("Enter");
-    await p.getByRole("dialog", { name: /SMALL/ }).waitFor();
+    const smallSources = p.getByRole("dialog", { name: /SMALL/ });
+    await smallSources.waitFor();
+    await p.keyboard.press("Escape");
+    await smallSources.waitFor({ state: "detached" });
     console.log("Allocation targets, company sources and chart label callouts verified in the app.");
+    await openTailTestBook(app, p);
+    await verifyTailExplorer(app, p, chart);
+    await verifyTailQuoteScope(app, p);
+    assert.deepEqual(errors, []);
   } finally {
     if (app) await app.close();
     fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });

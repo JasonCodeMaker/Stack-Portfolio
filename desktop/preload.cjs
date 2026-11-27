@@ -7,6 +7,7 @@ const actions = [
   "checkAccountSetup",
   "bindAccount",
   "leaveAccountSetup",
+  "reauthorizeIbkr",
   "disconnectAccount",
   "displayState",
   "setUserScale",
@@ -44,6 +45,7 @@ const actions = [
   "connections",
   "saveConnection",
   "connectWebull",
+  "connectWebullFunds",
   "resetSync",
   "autoRefresh",
   "backup",
@@ -54,7 +56,7 @@ contextBridge.exposeInMainWorld(
   "portfolio",
   {
     ...Object.fromEntries(
-      [...actions, "amend", "corrections"].map((name) => [
+      [...actions, "amend", "deleteActivity", "corrections"].map((name) => [
         name,
         (args = {}) => ipcRenderer.invoke("portfolio:" + name, args),
       ]),

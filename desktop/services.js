@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
 import { parseCsvRows } from "./allocation/domain/etf";
 import { runSync, sourceKey, importedKeysStorageKey, resetImportedKeysForMappings } from "./brokers/syncEngine";
-import { parseIbkrFlexReport, fetchIbkrFlexReport } from "./brokers/ibkrFlex";
+import { IbkrFlexAttemptsError, parseIbkrFlexReport, fetchIbkrFlexReport } from "./brokers/ibkrFlex";
+import { WEBULL_FUNDS_ID_PREFIX } from "./brokers/webullFunds";
 import {
   fetchWebullReport,
   fetchWebullAccountValue,
@@ -316,7 +317,7 @@ export function syncHost(db, history) {
         .prepare("SELECT data FROM sp_events WHERE account=?")
         .all(id)
         .map((r) => json(r.data, {}))
-        .filter((e) => !e.metadata?.supersededBy && !history?.superseded.has(e.id))
+        .filter((e) => !e.metadata?.deletedByUser && !e.metadata?.supersededBy && !history?.superseded.has(e.id))
         .map((e) =>
           history?.aliases.has(e.id)
             ? {
@@ -382,6 +383,36 @@ export function securityHistory(db, { accountIds, assetIds, through, limit }) {
   return events;
 }
 
+export function deleteActivity(db, args) {
+  return transaction(db, () => {
+    const row = db.prepare("SELECT data FROM sp_events WHERE id=? AND account=?").get(args.id, args.account);
+    if (!row) throw Error(tMain("svc.amendNotFound"));
+    if (args.prior !== row.data) throw Error(tMain("svc.amendChangedReload"));
+    const current = json(row.data, {});
+    if (!live(current) || current.metadata?.supersededBy) throw Error(tMain("svc.activityAlreadyInactive"));
+
+    const related = current.group && current.activityType.startsWith("TRANSFER_");
+    if (related && args.deleteGroup !== true) throw Error(tMain("svc.activityGroupConfirmation"));
+    const rows = related
+      ? db.prepare(`SELECT data FROM sp_events
+        WHERE json_extract(data,'$.group')=? AND json_extract(data,'$.activityType') IN ('TRANSFER_IN','TRANSFER_OUT')`)
+        .all(current.group)
+      : [row];
+    const correction = db.prepare("INSERT INTO sp_corrections VALUES(?,?,?,?,?,?)");
+    const check = db.prepare("INSERT OR REPLACE INTO sp_checks VALUES(?,?,?)");
+    const created = new Date().toISOString();
+    for (const { data } of rows) {
+      const before = json(data, {});
+      if (!live(before) || before.metadata?.supersededBy) continue;
+      const after = { ...before, status: "VOID", metadata: { ...before.metadata, deletedByUser: true } };
+      saveEvent(db, after);
+      correction.run(randomUUID(), after.id, created, tMain("svc.activityDeleted"), data, JSON.stringify(after));
+      check.run(after.accountId, dayOf(after.date), tMain("svc.amendCheckNeeded"));
+    }
+    return current.id;
+  });
+}
+
 export function amendEvent(db, args) {
   const row = db.prepare("SELECT data FROM sp_events WHERE id=? AND account=?").get(args.id, args.account);
   if (!row) throw Error(tMain("svc.amendNotFound"));
@@ -389,6 +420,7 @@ export function amendEvent(db, args) {
     reason = String(args.reason || "").trim();
   if (!reason) throw Error(tMain("svc.amendNeedReason"));
   if (args.prior !== row.data) throw Error(tMain("svc.amendChangedReload"));
+  if (before.metadata?.deletedByUser) throw Error(tMain("svc.activityAlreadyInactive"));
   if (
     ![
       "BUY",
@@ -447,13 +479,22 @@ function activityDetail(r) {
   };
 }
 
+function depositKey(record) {
+  return JSON.stringify([dayOf(record.date), record.currency, D(record.amount).toString()]);
+}
+
 function splitConflicts(db, acc, report, history) {
-  const exists = new Map(), storedById = new Map();
+  const exists = new Map(), storedById = new Map(), priorDeposits = new Map();
   for (const { data } of db.prepare("SELECT data FROM sp_events WHERE account=?").all(acc)) {
     const e = json(data, {});
     storedById.set(e.id, e);
     const id = recordIdentity(e);
     if (id && !e.metadata?.supersededBy && !history?.superseded.has(e.id)) exists.set(id, e);
+    if (report.webullFundsStatus === "loaded" && live(e) && !e.metadata?.supersededBy &&
+        e.activityType === "DEPOSIT" && !e.sourceRecordId?.startsWith(WEBULL_FUNDS_ID_PREFIX)) {
+      const key = depositKey(e);
+      priorDeposits.set(key, (priorDeposits.get(key) || 0) + 1);
+    }
   }
   const active = [],
     problems = [...(report.unknown || [])],
@@ -467,6 +508,7 @@ function splitConflicts(db, acc, report, history) {
   for (const r of report.activities) {
     const id = r.broker + ":" + r.brokerRecordId,
       prior = exists.get(id);
+    if (prior?.metadata?.deletedByUser) continue;
     if (history?.blocked.has(id)) {
       problems.push({ ...activityDetail(r), reason: history.blocked.get(id) });
       continue;
@@ -482,6 +524,15 @@ function splitConflicts(db, acc, report, history) {
     if (counts.get(id) > 1) {
       problems.push({ ...activityDetail(r), reason: tMain("svc.duplicateIdInFile") });
       continue;
+    }
+    if (!prior && r.broker === "webull" && r.brokerRecordId.startsWith(WEBULL_FUNDS_ID_PREFIX)) {
+      const key = depositKey(r);
+      const unmatched = priorDeposits.get(key) || 0;
+      if (unmatched > 0) {
+        priorDeposits.set(key, unmatched - 1);
+        problems.push({ ...activityDetail(r), reason: tMain("svc.webullFundsSameDeposit") });
+        continue;
+      }
     }
     const native = prior?.sourceSystem === r.broker.toUpperCase() && prior.metadata?.brokerSync?.recordId === r.brokerRecordId;
     const changed =
@@ -644,6 +695,7 @@ export async function batch(db, accountId, broker, report, source, commit = fals
       invalid: result.invalid,
       audit: { ...report.audit, warnings: [...(report.audit?.warnings || []), ...prices.warnings] },
       priceWarnings: prices.warnings,
+      webullFundsStatus: report.webullFundsStatus,
       statement: report.statement || report.valuation,
       previousValue,
       valueChange,
@@ -1000,7 +1052,12 @@ export async function brokerReport(db, broker, secrets, bound) {
   if (broker === "ibkr") {
     const {queryId, token} = bound || {queryId: preference(db, BROKER, "ibkr.flex-query-id"), token: await secrets.get("ibkr.flex-token")};
     if (!queryId || !token) throw Error(tMain("svc.ibkrNeedCreds"));
-    return withIbkrStatement(await fetchIbkrFlexReport(network, { queryId, token }, "australia"));
+    try {
+      return withIbkrStatement(await fetchIbkrFlexReport(network, { queryId, token }, "australia"));
+    } catch (error) {
+      if (error instanceof IbkrFlexAttemptsError) throw Error(tMain("svc.ibkrTooManyFailedAttempts"));
+      throw error;
+    }
   }
   const { appKey, appSecret, accessToken, accountId } = bound || await webullCredentials(db, secrets);
   if (!appKey || !appSecret || !accessToken || !accountId) throw Error(tMain("svc.webullNeedCreds"));

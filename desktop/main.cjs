@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain, dialog, safeStorage, Menu, net, screen, nativeTheme, shell } = require("electron");
+const { connectWebullFunds: openFundsLogin, fetchWebullFunds } = require("./webullFundsWindow.cjs");
 const guideLinks = Object.values(require("./ui/onboarding/guide-sources.json"));
 const {bindings,bindingFor,credentialsFor,savedWebullToken,saveBinding,disconnectBinding} = require("./brokerBindings");
 const path = require("node:path"),
@@ -49,6 +50,7 @@ const {
   recordHolding,
   securityHistory,
   amendEvent,
+  deleteActivity,
   brokerReport,
   connectWebull,
   authorizeWebull,
@@ -311,7 +313,28 @@ async function verifyDraft(draft) {
   return {ticket:draft.ticket,accounts:draft.accounts};
 }
 const nativeBackup = () => [{ name: tMain("dialog.filter.restoreBackup"), extensions: ["spbackup", "sqlite", "db"] }];
+function webullFundsTarget(book, localId, binding) {
+  if (binding && binding.broker !== "webull") return;
+  const remoteId = binding?.remoteId || preference(book, BROKER, "webull.api-account-id");
+  return remoteId ? JSON.stringify([localId, remoteId]) : undefined;
+}
+
 const handlers = {
+  async connectWebullFunds({ account: localId }) {
+    const book = db;
+    if (!book || mode !== "real") throw Error(tMain("err.connectBrokerInReal"));
+    const local = account(book, localId);
+    if (!local.active || local.mode !== "TRANSACTIONS") throw Error(tMain("err.selectActiveTxAccount"));
+    const target = webullFundsTarget(book, local.id, bindingFor(book, local.id));
+    if (!target) throw Error(tMain("svc.webullNeedCreds"));
+    const status = await openFundsLogin(target, win, tMain("imports.webullFundsTitle", { account: local.name }));
+    if (status !== "loaded") return status;
+    if (db !== book || webullFundsTarget(book, local.id, bindingFor(book, local.id)) !== target) {
+      throw Error(tMain("err.bookSwitchedResync"));
+    }
+    putPref(book, BROKER, "webull.funds." + local.id, target);
+    return status;
+  },
   displayState: () => syncDisplay(),
   setUserScale,
   async home() {
@@ -355,6 +378,26 @@ const handlers = {
     return result;
   },
   leaveAccountSetup() {setupDraft=null;writePreferences({onboardingSeen:true});},
+  async reauthorizeIbkr({ id, queryId = "", token }) {
+    if (mode !== "real") throw Error(tMain("err.openRealBook"));
+    const book = requireBook();
+    const binding = bindingFor(book, id);
+    if (binding?.broker !== "ibkr") throw Error(tMain("err.bindingNotFound"));
+    const local = account(book, id);
+    if (!local.active || local.mode !== "TRANSACTIONS") throw Error(tMain("err.selectActiveTxAccount"));
+    if (typeof queryId !== "string" || queryId.length > 4096 ||
+        typeof token !== "string" || !token.trim() || token.length > 4096) {
+      throw Error(tMain("err.incompleteCredentials"));
+    }
+    const draft = {
+      broker: "ibkr",
+      credentials: { queryId: queryId.trim() || credentialsFor(book, id, safeStorage).queryId, token: token.trim() },
+    };
+    await verifyDraft(draft);
+    if (draft.accounts[0].accountId !== binding.remoteId) throw Error(tMain("err.ibkrAccountMismatch"));
+    saveBinding(book, safeStorage, draft, { remoteId: binding.remoteId, localId: id }, { selectForImport: false });
+    expireAccountPreviews(id);
+  },
   disconnectAccount({id}) {
     if(mode!=="real") throw Error(tMain("err.openRealBook"));
     disconnectBinding(requireBook(),id);
@@ -468,6 +511,13 @@ const handlers = {
   recordHolding: (args) => recordHolding(requireBook(), args),
   rememberListing: (args) => rememberListing(requireBook(), args),
   amend: (args) => amendEvent(requireBook(), args),
+  deleteActivity(args) {
+    const result = deleteActivity(requireBook(), args);
+    // A grouped transfer can affect both sides of the ledger.
+    previews.clear();
+    previewRequests.clear();
+    return result;
+  },
   corrections: (args) =>
     requireBook()
       .prepare("SELECT created,reason FROM sp_corrections WHERE event=? ORDER BY created DESC")
@@ -509,6 +559,14 @@ const handlers = {
       } catch (error) {
         if (db === book && !binding) putPref(book, BROKER, "verified." + broker, null);
         throw error;
+      }
+      if (broker === "webull" && !report.activities.some((activity) => activity.activityType === "DEPOSIT")) {
+        const target = webullFundsTarget(book, a.id, binding);
+        const funds = target && preference(book, BROKER, "webull.funds." + a.id) === target
+          ? await fetchWebullFunds(target)
+          : { status: "login" };
+        report.webullFundsStatus = funds.status;
+        if (funds.status === "loaded") report.activities.push(...funds.activities);
       }
       source = tMain("source.liveSync", { broker: broker.toUpperCase() });
     } else {
@@ -840,7 +898,7 @@ for (const [name, fn] of Object.entries(handlers))
         event.senderFrame?.url !== page) throw Error(tMain("err.invalidRequestOrigin"));
     // Display actions are synchronous and independent of ledger operations.
     if (name === "displayState" || name === "setUserScale") return fn(args ?? {});
-    if (!switchingBooks && ["dashboard", "history", "connections", "preview"].includes(name)) {
+    if (!switchingBooks && ["dashboard", "history", "connections", "preview", "connectWebullFunds"].includes(name)) {
       const read = Promise.resolve().then(() => fn(args || {}));
       readers.add(read);
       return read.finally(() => readers.delete(read));

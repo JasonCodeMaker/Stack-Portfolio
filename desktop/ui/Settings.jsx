@@ -39,6 +39,73 @@ function Fold({ title, children }) {
     </details>
   );
 }
+
+function IbkrReauthorization({ binding, close, onSaved }) {
+  const { t } = useI18n();
+  const [queryId, setQueryId] = useState("");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const canSubmit = !busy && token.trim() && (binding.authorized || queryId.trim());
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.reauthorizeIbkr({ id: binding.id, queryId, token });
+      onSaved();
+    } catch (e) {
+      setError(String(e.message || e).replace(/^Error invoking remote method '[^']+': (?:Error: )?/, ""));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      title={t("settings.ibkrReauthTitle", { name: binding.name })}
+      close={() => { if (!busy) close(); }}
+    >
+      <form className="stack" onSubmit={submit}>
+        <F label="Flex Query ID">
+          <input
+            autoFocus={!binding.authorized}
+            aria-describedby={binding.authorized ? "ibkr-reauth-query-help" : undefined}
+            disabled={busy}
+            maxLength={4096}
+            required={!binding.authorized}
+            value={queryId}
+            onChange={(e) => setQueryId(e.target.value)}
+          />
+        </F>
+        {binding.authorized && (
+          <p id="ibkr-reauth-query-help" className="cap">{t("settings.ibkrReauthQueryHelp")}</p>
+        )}
+        <F label="Flex Token">
+          <input
+            autoFocus={binding.authorized}
+            autoComplete="off"
+            disabled={busy}
+            maxLength={4096}
+            required
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+          />
+        </F>
+        {error && <p className="notice" role="alert">{error}</p>}
+        <div className="acts">
+          <button type="button" className="btn" disabled={busy} onClick={close}>{t("app.cancel")}</button>
+          <button type="submit" className="btn pri" disabled={!canSubmit}>
+            {busy ? t("ob.checkingBroker") : t("settings.ibkrReauthSubmit")}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 export function Settings({ d, mode, theme = "system", onThemeChange, userScale = 1, onUserScaleChange, run, initial = {}, workspace, openHome, onPage, onSetup }) {
   const { t, languagePreference, localeOptions, changeLanguage, formatDate, formatDateTime, kindLabel, marketLabel } = useI18n();
   const securityLabel = (r) =>
@@ -54,6 +121,7 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
     [market, setMarket] = useState(null),
     [dialog, setDialog] = useState("");
   const [disconnect, setDisconnect] = useState(null);
+  const [reauthorize, setReauthorize] = useState(null);
   const [asset, setAsset] = useState("fx"),
     [price, setPrice] = useState(""),
     [date, setDate] = useState(d.date),
@@ -669,6 +737,9 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
               {a.broker === "ibkr" ? "IBKR" : "Webull AU"} ···· {a.suffix} · {a.authorized ? t("settings.bindingAuthSaved") : t("settings.bindingNeedsReauth")}
             </span>
             <span className="sp" />
+            {a.broker === "ibkr" && (
+              <button className="btn sm" onClick={() => setReauthorize(a)}>{t("settings.ibkrReauthBtn")}</button>
+            )}
             {a.authorized && <>
               <button className="btn sm" onClick={() => onPage("imports", {broker:a.broker, account:a.id, sync:true})}>
                 {t("settings.previewSyncBtn")}
@@ -680,6 +751,16 @@ export function Settings({ d, mode, theme = "system", onThemeChange, userScale =
           </div>)}
           <p className="cap">{t("settings.genericConnNote")}</p>
         </Panel>
+      )}
+      {reauthorize && (
+        <IbkrReauthorization
+          binding={reauthorize}
+          close={() => setReauthorize(null)}
+          onSaved={() => {
+            setReauthorize(null);
+            run(async () => setConn(await api.connections()), t("settings.ibkrReauthSaved"));
+          }}
+        />
       )}
       {disconnect && <Modal title={t("settings.disconnectAccountTitle", { name: disconnect.name })} close={() => setDisconnect(null)}>
         <p>{t("settings.disconnectAccountDesc")}</p>

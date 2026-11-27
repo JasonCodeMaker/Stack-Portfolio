@@ -15,6 +15,7 @@ const {
   compareStatement,
   addManual,
   amendEvent,
+  deleteActivity,
   parseWebullCsv,
   detailedIbkr,
 } = require("../out/services.cjs");
@@ -500,6 +501,72 @@ test("migrated FX fees are charged once when a legacy cash snapshot included the
   assert.equal(get(), "78");
   anchor.run(id, day, "{}", '{"AUD":"300"}');
   assert.equal(get(), "300");
+});
+
+test("Webull website deposits enter the ledger once and surface an earlier matching deposit for review", async (t) => {
+  const { db } = fixture(t);
+  await seedDemo(db);
+  const account = "demo-webull";
+  const date = "2026-11-24";
+  addManual(db, { account, date, type: "DEPOSIT", currency: "AUD", amount: "900", reference: "already-recorded" });
+  const activity = (id, amount) => ({
+    broker: "webull", brokerRecordId: "funds:" + id, activityType: "DEPOSIT",
+    date: date + "T12:00:00Z", symbol: "", currency: "AUD", amount,
+  });
+  const report = {
+    webullFundsStatus: "loaded",
+    activities: [activity("matches-manual", 900), activity("new-deposit", 1300)],
+  };
+
+  const preview = await batch(db, account, "webull", report, "Webull");
+  assert.equal(preview.webullFundsStatus, "loaded");
+  assert.deepEqual(preview.rows.map(({ amount, status }) => [String(amount), status]), [["1300", "new"], ["900", "review"]]);
+  assert.equal((await batch(db, account, "webull", report, "Webull", true)).imported, 1);
+  assert.equal((await batch(db, account, "webull", report, "Webull", true)).imported, 0);
+  const rows = db.prepare("SELECT count(*) AS n FROM sp_events WHERE account=? AND day=?").get(account, date);
+  assert.equal(rows.n, 2);
+});
+
+test("a deleted deposit leaves cash and stays deleted on broker resync", async (t) => {
+  const { db } = fixture(t);
+  await seedDemo(db);
+  const { loadBook, positions } = require("../out/flows.cjs");
+  const account = "demo-webull";
+  const date = "2026-11-24";
+  const report = { webullFundsStatus: "loaded", activities: [{
+    broker: "webull", brokerRecordId: "funds:void-test", activityType: "DEPOSIT",
+    date: date + "T12:00:00Z", amount: 600, currency: "AUD", symbol: "",
+  }] };
+  const cash = () => Number(positions(loadBook(db), { id: account }, date).cash.get("AUD"));
+  const before = cash();
+  await batch(db, account, "webull", report, "Webull", true);
+  const row = () => db.prepare("SELECT id,data FROM sp_events WHERE account=? AND day=?").get(account, date);
+  const imported = row();
+  assert.equal(cash() - before, 600);
+  const deletion = { account, id: imported.id, prior: imported.data };
+  deleteActivity(db, deletion);
+  assert.equal(cash(), before);
+  assert.equal(JSON.parse(row().data).sourceRecordId, "funds:void-test");
+  assert.throws(() => deleteActivity(db, deletion), /重新加载/);
+  assert.equal((await batch(db, account, "webull", report, "Webull", true)).imported, 0);
+  assert.equal(cash(), before);
+  assert.equal(JSON.parse(row().data).status, "VOID");
+  assert.equal(db.prepare("SELECT prior FROM sp_corrections WHERE event=?").get(imported.id).prior, imported.data);
+});
+
+test("deleting one side of a linked transfer requires explicit group confirmation", async (t) => {
+  const { db } = fixture(t);
+  await seedDemo(db);
+  const instrument = { currency: "AUD", date: "2026-11-24", amount: 50, group: "test-paired-transfer" };
+  const first = addManual(db, { ...instrument, type: "TRANSFER_OUT", account: "demo-webull", reference: "paired-out" });
+  const second = addManual(db, { ...instrument, type: "TRANSFER_IN", account: "demo-ibkr", reference: "paired-in" });
+  const get = db.prepare("SELECT data FROM sp_events WHERE id=?");
+  const deletion = { account: "demo-webull", id: first, prior: get.get(first).data };
+  assert.throws(() => deleteActivity(db, deletion), /确认删除同组转账/);
+  assert.equal(JSON.parse(get.get(second).data).status, "POSTED");
+  deleteActivity(db, { ...deletion, deleteGroup: true });
+  assert.equal(JSON.parse(get.get(first).data).status, "VOID");
+  assert.equal(JSON.parse(get.get(second).data).status, "VOID");
 });
 
 test("a dated Webull snapshot values matched local holdings with broker marks even during a duplicate-only sync", async (t) => {

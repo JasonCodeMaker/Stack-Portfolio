@@ -191,3 +191,174 @@ button.alloc-company-bar:is(:hover, [aria-pressed="true"]) { background: var(--s
 .allocation-breakdown { min-width: 0; }
 .allocation-breakdown .table-scroll { max-height: 500px; overflow: auto; }
 .allocation-breakdown th { position: sticky; top: 0; background: var(--surface); }
+
+.alloc-tail-explorer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.alloc-tail-explorer .alloc-drillbar {
+  margin-bottom: 0;
+}
+.alloc-tail-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  padding: 8px 12px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--sep);
+  font-size: 12.5px;
+}
+.alloc-tail-etf-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.alloc-tail-sectors {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.alloc-tail-sec-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--l1);
+}
+.alloc-sector-bar {
+  display: flex;
+  height: 18px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--sep);
+  background: var(--surface2);
+}
+.alloc-sector-bar button {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: opacity var(--fast);
+}
+.alloc-sector-bar button.dim {
+  opacity: 0.32;
+}
+.alloc-sector-bar button.on {
+  box-shadow: inset 0 2px var(--l1), inset 0 -2px var(--l1);
+}
+.alloc-sector-bar button:focus-visible {
+  outline: 2px solid var(--l1);
+  outline-offset: -2px;
+}
+.alloc-sector-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.alloc-sector-chips button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 5px;
+  border: 1px solid var(--sep);
+  background: var(--surface);
+  color: var(--l2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.alloc-sector-chips button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.alloc-sector-chips i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+.alloc-tail-toolbar {
+  margin-bottom: 0;
+}
+.alloc-tail-search {
+  width: 240px;
+  max-width: 100%;
+  height: 28px;
+  font-size: 12px;
+}
+.alloc-tail-table-wrap {
+  max-height: 256px;
+  overflow: auto;
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.alloc-tail-table-wrap th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface2);
+  padding: 0 10px;
+}
+.alloc-tail-table-wrap td {
+  padding: 0 10px;
+  height: 36px;
+}
+.alloc-tail-table-wrap :is(th.left, td.left) {
+  text-align: left;
+}
+.alloc-tail-name {
+  display: inline-block;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+.alloc-tail-sec-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.alloc-tail-sec-cell i {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.tag.overlap {
+  background: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  color: var(--accent);
+  font-weight: 600;
+}
+.alloc-tail-bar {
+  display: inline-flex;
+  align-items: center;
+  width: 84px;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface2);
+  vertical-align: middle;
+}
+.alloc-tail-bar i {
+  height: 100%;
+}
+.alloc-tail-empty {
+  text-align: center !important;
+  color: var(--l2);
+  padding: 20px !important;
+}
+.alloc-tail-unattributed td {
+  background: var(--surface2);
+  color: var(--l2);
+  font-size: 12px;
+}
+.alloc-tail-more {
+  display: flex;
+  justify-content: center;
+}

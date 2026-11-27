@@ -140,21 +140,75 @@ describe("portfolio composition", () => {
       snapshots: new Map([
         [
           "XASX:VGS",
-          snapshot("XASX:VGS", [stock("BIG", 0.5), stock("ASML", 0.02)]),
+          snapshot("XASX:VGS", [stock("BIG", 0.5), stock("ASML", 0.02), { name: "Cash", weight: 0.47, underlyingType: "cash" }]),
         ],
       ]),
       totalAud: 1000,
     });
 
     const result = buildComposition(exposure, 1000);
-    expect(result.otherAud).toBeCloseTo(155);
+    expect(result.otherAud).toBeCloseTo(14);
     expect(result.otherBuckets.map((b) => [b.ticker, Math.round(b.valueAud)])).toEqual([
-      ["未穿透余项", 144],
       ["VGS", 6],
       ["直接小仓位", 5],
+      ["未穿透余项", 3],
     ]);
-    expect(result.otherBuckets.find((b) => b.ticker === "VGS")?.members.map((m) => m.ticker)).toEqual(["ASML"]);
+    const vgs = result.otherBuckets.find((b) => b.ticker === "VGS");
+    expect(vgs?.members.map((m) => m.ticker)).toEqual(["ASML"]);
+    expect(vgs?.etfTotalAud).toBeCloseTo(300);
+    expect(vgs?.allMembers[0].fundWeight).toBeCloseTo(0.02);
     expect(result.otherBuckets.reduce((s, b) => s + b.valueAud, 0)).toBeCloseTo(result.otherAud);
+  });
+
+  it("uses the held ETF's identity for nested constituents and separates same-symbol listings", () => {
+    const exposure = buildExposureModel({
+      holdings: [etf("VGS", 1000), holding("us-vgs", "VGS", "etf", 1000, { etfKey: "ARCX:VGS" })],
+      snapshots: new Map([
+        ["XASX:VGS", snapshot("XASX:VGS", [{ symbol: "INNER", name: "Inner", mic: "ARCX", weight: 1, underlyingType: "etf" }])],
+        ["ARCX:INNER", snapshot("ARCX:INNER", [stock("BIG", 0.98), stock("SMALL", 0.01)])],
+        ["ARCX:VGS", snapshot("ARCX:VGS", [stock("BIG", 0.98), stock("SMALL", 0.01), stock("US_ONLY", 0.01)])],
+      ]),
+      totalAud: 2000,
+    });
+
+    const result = buildComposition(exposure, 2000);
+    const buckets = result.otherBuckets.filter((bucket) => bucket.kind === "etf");
+    expect(buckets.map((bucket) => bucket.etfKey)).toEqual(["ARCX:VGS", "XASX:VGS"]);
+    expect(new Set(buckets.map((bucket) => bucket.label)).size).toBe(2);
+    expect(buckets.map((bucket) => bucket.valueAud)).toEqual([20, 10]);
+    expect(buckets[1]?.etfTotalAud).toBeCloseTo(1000);
+    expect(buckets[1]?.allMembers[0].fundWeight).toBeCloseTo(0.01);
+    expect(result.mergedTail.members.find((member) => member.ticker === "SMALL")).toMatchObject({ overlaps: true, valueAud: 20 });
+  });
+
+  it("retains full untruncated tail members, ETF totals, sector totals, and merged cross-ETF overlaps", () => {
+    const aaaTail = Array.from({ length: 18 }, (_, i) => stock(`T${i}`, 0.008, i % 2 === 0 ? "Information Technology" : "Financials"));
+    const exposure = buildExposureModel({
+      holdings: [etf("AAA", 1000), etf("BBB", 1000), holding("direct-t1", "T1", "stock", 5)],
+      snapshots: new Map([
+        ["XASX:AAA", snapshot("XASX:AAA", [stock("MEGA", 0.856, "Information Technology"), ...aaaTail])],
+        ["XASX:BBB", snapshot("XASX:BBB", [stock("MEGA", 0.5, "Information Technology"), stock("T0", 0.008, "Information Technology"), stock("B_ONLY", 0.492, "Health Care")])],
+      ]),
+      totalAud: 2005,
+    });
+
+    const result = buildComposition(exposure, 2005);
+    const aaa = result.otherBuckets.find((b) => b.ticker === "AAA");
+    expect(aaa).toBeDefined();
+    expect(aaa?.members).toHaveLength(14);
+    expect(aaa?.allMembers).toHaveLength(18);
+    expect(aaa?.etfTotalAud).toBeCloseTo(1000);
+    expect(aaa?.allMembers[0]?.fundWeight).toBeCloseTo(0.008);
+    expect(aaa?.sectors.reduce((s, x) => s + x.valueAud, 0)).toBeCloseTo(aaa?.valueAud ?? 0);
+
+    expect(result.mergedTail.overlapCount).toBe(1);
+    const t0 = result.mergedTail.members.find((m) => m.ticker === "T0");
+    expect(t0?.overlaps).toBe(true);
+    expect(t0?.valueAud).toBeCloseTo(16);
+    expect(t0?.sources?.map((s) => s.ticker)).toEqual(["AAA", "BBB"]);
+    const t1 = result.mergedTail.members.find((m) => m.ticker === "T1");
+    expect(t1?.overlaps).toBe(false);
+    expect(result.mergedTail.sectors.reduce((s, x) => s + x.valueAud, 0)).toBeCloseTo(result.otherAud);
   });
 });
 

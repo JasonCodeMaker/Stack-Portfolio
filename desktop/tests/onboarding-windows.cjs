@@ -9,7 +9,7 @@ const button = (page, name) => page.getByRole("button", { name, exact: typeof na
 const appRoot = path.join(__dirname, "..");
 const executablePath = process.argv[2] || require("electron");
 
-async function open(verify) {
+async function open(verify, ibkrToken = "test-1001") {
   const env = {
     ...process.env,
     STACK_PORTFOLIO_TEST_DIR: profile,
@@ -22,18 +22,26 @@ async function open(verify) {
   try {
     assert.equal(await app.evaluate(({ app }) => app.getPath("userData")), profile);
     // The signed requests traverse the production adapters. Only the HTTP responses are fixtures.
-    await app.evaluate(() => {
+    await app.evaluate((_, ibkrToken) => {
       let checks = 0;
+      const flexTokens = { "1001": ibkrToken, "1002": "test-1002" };
       globalThis.fetch = async (input) => {
         const url = new URL(input);
+        const token = url.searchParams.get("t");
         if (url.pathname.endsWith("/SendRequest")) {
           const id = url.searchParams.get("q");
-          if (!["1001", "1002"].includes(id) || url.searchParams.get("t") !== "test-" + id)
+          if (token === "test-locked")
+            return new Response("<Status>Fail</Status><ErrorCode>1025</ErrorCode>");
+          if (id === "1001" && token === "test-1001" && token !== ibkrToken)
+            return new Response("<Status>Fail</Status><ErrorCode>1012</ErrorCode>");
+          if (token !== flexTokens[id])
             return new Response("<Status>Fail</Status><ErrorCode>1015</ErrorCode>");
           return new Response("<Status>Success</Status><ReferenceCode>" + id + "</ReferenceCode>");
         }
         if (url.pathname.endsWith("/GetStatement")) {
           const id = url.searchParams.get("q");
+          if (token !== flexTokens[id])
+            return new Response("<Status>Fail</Status><ErrorCode>1015</ErrorCode>");
           return new Response(
             '<FlexQueryResponse><FlexStatements><FlexStatement accountId="TEST' +
               id +
@@ -70,7 +78,7 @@ async function open(verify) {
         }
         throw Error("Offline test transport");
       };
-    });
+    }, ibkrToken);
     const page = await app.firstWindow();
     page.setDefaultTimeout(12000);
     const errors = [];
@@ -319,6 +327,59 @@ async function main() {
     await page.getByText(/入账账户 · Sample IBKR 1001/).waitFor();
     assert.equal((await page.evaluate(() => window.portfolio.connections())).bindings.length, 4);
   });
+  const renewedToken = "test-renewed-1001";
+  await open(async (page) => {
+    await page.getByRole("heading", { name: "总览", exact: true }).waitFor();
+    await button(page.getByRole("navigation", { name: "页面" }), "设置").click();
+    const before = await page.evaluate(() => window.portfolio.connections());
+    const bound = before.bindings.find((b) => b.remoteId === "TEST1001");
+    const other = before.bindings.find((b) => b.remoteId === "TEST1002");
+    const preview = (id = bound.id) => page.evaluate(
+      (account) => window.portfolio.preview({ broker: "ibkr", account, source: "live" }),
+      id,
+    );
+    await preview(other.id);
+    await assert.rejects(preview(), /1012/);
+
+    const row = page.locator(".binding-row").filter({ hasText: bound.name });
+    await button(row, "重新授权").click();
+    const dialog = page.getByRole("dialog", { name: /Sample IBKR 1001/ });
+    const query = dialog.getByLabel("Flex Query ID", { exact: true });
+    const token = dialog.getByLabel("Flex Token", { exact: true });
+    const submit = button(dialog, "验证并保存");
+    await token.fill("test-locked");
+    await submit.click();
+    await dialog.getByRole("alert").getByText(/失败尝试过多.*1025/).waitFor();
+
+    await query.fill("1002");
+    await token.fill("test-1002");
+    await submit.click();
+    await dialog.getByRole("alert").getByText(/券商账户与当前绑定不符/).waitFor();
+    await assert.rejects(preview(), /1012/);
+
+    await query.clear();
+    await token.fill(renewedToken);
+    await submit.click();
+    await dialog.waitFor({ state: "hidden" });
+    await page.getByText("IBKR 授权已更新", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.portfolio.dashboard().then((d) => d.brokerAccounts.ibkr)), other.id);
+    assert.ok((await preview()).token);
+
+    const after = await page.evaluate(() => window.portfolio.connections());
+    assert.deepEqual(after.bindings, before.bindings);
+    assert.equal(after.present["ibkr.flex-token"], before.present["ibkr.flex-token"]);
+  }, renewedToken);
+  await open(async (page) => {
+    await page.getByRole("heading", { name: "总览", exact: true }).waitFor();
+    const { bindings } = await page.evaluate(() => window.portfolio.connections());
+    for (const account of bindings.filter((b) => b.broker === "ibkr")) {
+      const report = await page.evaluate(
+        (id) => window.portfolio.preview({ broker: "ibkr", account: id, source: "live" }),
+        account.id,
+      );
+      assert.ok(report.token);
+    }
+  }, renewedToken);
   console.log(
     "Passed Windows account onboarding, offline broker verification, multiple accounts, retry, restart, reauthorization and import routing.",
   );

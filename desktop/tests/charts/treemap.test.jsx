@@ -184,6 +184,49 @@ describe("treemap component", () => {
     expect(html).toContain("ch-tm-sub");
     expect(html).toContain("VGS");
     expect(html).toContain("IVV");
+
+    const semanticHtml = renderToStaticMarkup(
+      <Treemap
+        width={1000}
+        height={400}
+        refined
+        layoutOptions={{ pinOtherRight: true, gap: 5 }}
+        color={() => ({})}
+        onSelectSubItem={() => {}}
+        items={[
+          { id: "AVGO", label: "AVGO", value: 68.2, detail: ["68.2%"] },
+          {
+            id: "other",
+            label: "其他",
+            value: 31.8,
+            rest: true,
+            selectable: true,
+            detail: ["31.8%"],
+            subItems: [
+              { id: "etf:IVV", label: "IVV", value: 16.7, share: "16.7%", inside: "52.7%", change: 0.0064, colorMode: "day", isEtf: true, tailCountLabel: "尾部 488 项", preview: "META · LLY · TSLA…", accent: "var(--s1)" },
+              { id: "etf:SPMO", label: "SPMO", value: 15.1, share: "15.1%", inside: "47.3%", change: -0.0092, colorMode: "day", isEtf: true, tailCountLabel: "尾部 91 项", accent: "var(--s2)" },
+            ],
+          },
+        ]}
+      />,
+    );
+    expect(semanticHtml).toContain("ch-tm-sub semantic click");
+    expect(semanticHtml).toContain("var(--tm-up-1)");
+    expect(semanticHtml).toContain("META · LLY · TSLA…");
+    expect(semanticHtml).toContain("合并全部尾部 ↗");
+  });
+
+  it("offers the merged view when a residual is too small for a sub-tile", () => {
+    const html = renderToStaticMarkup(
+      <Treemap width={1000} height={400} refined color={() => ({})} onSelectSubItem={() => {}} items={[
+        { id: "main", label: "Main", value: 69.99 },
+        {
+          id: "other", label: "其他", value: 30.01, rest: true, mergeSubItems: true, detail: ["30.0%"],
+          subItems: [{ id: "etf:IVV", label: "IVV", value: 30, isEtf: true }],
+        },
+      ]} />,
+    );
+    expect(html).toContain("合并全部尾部 ↗");
   });
 
   it("keeps Level-1 ETF bucket tiles absolutely positioned side by side", () => {

@@ -357,6 +357,26 @@ async function reopenNote(p) {
   await button(p, "账户范围 · IBKR").waitFor();
 }
 
+async function verifyDeleteFlow(p) {
+  await p.evaluate(() => window.portfolio.manual({
+    account: "demo-webull", date: "2026-10-28", amount: "25", currency: "AUD",
+    type: "DEPOSIT", reference: "SMOKE-DELETE",
+  }));
+  await open(p, "导入与对账");
+  await button(p, "交易流水").click();
+  await p.locator("select.btn").selectOption("demo-webull");
+  const row = p.getByRole("row").filter({ hasText: "SMOKE-DELETE" });
+  await button(row, "修改").waitFor();
+  await button(row, "删除").click();
+  const confirm = p.getByRole("dialog", { name: "删除流水", exact: true });
+  await button(confirm, "取消").click();
+  await button(row, "删除").click();
+  await button(confirm, "确认删除").click();
+  await row.waitFor({ state: "hidden" });
+  await p.getByLabel("显示已删除和已冲销的流水").check();
+  await row.getByText("已删除", { exact: true }).waitFor();
+}
+
 async function verifyBrokerRetry(app, p, file) {
   await open(p, "导入与对账");
   const webull = region(p, "WEBULL 同步结果");
@@ -556,6 +576,7 @@ async function main() {
     await withDesktop(path.join(directory, "brokers"), async (app, p) => {
       await openSample(p);
       await verifyBrokerRetry(app, p, path.join(directory, "six-trades.xml"));
+      await verifyDeleteFlow(p);
     });
     if (values.screenshots) {
       const output = path.resolve(values.screenshots);

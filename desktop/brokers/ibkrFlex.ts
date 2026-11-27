@@ -17,6 +17,12 @@ export interface IbkrFlexCredentials {
   token: string;
 }
 
+export class IbkrFlexAttemptsError extends Error {
+  constructor() {
+    super("IBKR Flex: Too many failed attempts (1025). Please try again later.");
+  }
+}
+
 export interface IbkrFlexAudit {
   period?: { from: string; to: string };
   baseCurrency?: string;
@@ -462,7 +468,16 @@ export function parseIbkrFlexReport(xml: string): IbkrFlexReport {
 }
 
 function assertSuccess(response: NetworkResponse, step: string): void {
-  if (response.status < 200 || response.status >= 300) throw new Error(`IBKR ${step} failed with HTTP ${response.status}.`);
+  if (response.status < 200 || response.status >= 300) {
+    checkFlexErrorCode(response.body);
+    throw new Error(`IBKR ${step} failed with HTTP ${response.status}.`);
+  }
+}
+
+function checkFlexErrorCode(body: string): string | undefined {
+  const code = elementText(body, "ErrorCode")?.match(/^\d{3,5}$/)?.[0];
+  if (code === "1025") throw new IbkrFlexAttemptsError();
+  return code;
 }
 
 async function safeNetworkRequest(
@@ -498,7 +513,7 @@ export async function fetchIbkrFlexReport(
   }, "report request");
   assertSuccess(requested, "report request");
   if (elementText(requested.body, "Status")?.toLowerCase() !== "success") {
-    const code = elementText(requested.body, "ErrorCode")?.match(/^\d{3,5}$/)?.[0] ?? "unknown";
+    const code = checkFlexErrorCode(requested.body) ?? "unknown";
     throw new Error(`IBKR rejected the Flex request (code ${code}). Check the Query ID and token.`);
   }
   const reference = elementText(requested.body, "ReferenceCode");
@@ -513,7 +528,7 @@ export async function fetchIbkrFlexReport(
     }, "statement download");
     assertSuccess(statement, "statement download");
     if (/<FlexStatement\b/i.test(statement.body)) return parseIbkrFlexReport(statement.body);
-    const code = elementText(statement.body, "ErrorCode")?.match(/^\d{3,5}$/)?.[0];
+    const code = checkFlexErrorCode(statement.body);
     if (code !== "1019" && code !== "1003") throw new Error(`IBKR could not generate the statement (code ${code ?? "unknown"}).`);
   }
   throw new Error("IBKR statement is still being generated. Wait a minute and try again.");

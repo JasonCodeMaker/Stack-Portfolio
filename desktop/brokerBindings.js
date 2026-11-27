@@ -39,7 +39,7 @@ export function savedWebullToken(db, storage, credentials) {
   }
 }
 
-export function saveBinding(db, storage, draft, { remoteId, localId, name, currency }) {
+export function saveBinding(db, storage, draft, { remoteId, localId, name, currency }, { selectForImport = true } = {}) {
   const remote = draft.accounts.find((a) => a.accountId === remoteId);
   if (!remote) throw Error(tMain("err.selectFromReturnedAccounts"));
   if (!localId && (typeof name !== "string" || !name.trim() || name.length > 120))
@@ -61,7 +61,7 @@ export function saveBinding(db, storage, draft, { remoteId, localId, name, curre
     const record = { broker: draft.broker, remoteId, suffix: (remote.accountNumber || remoteId).slice(-4) };
     putPref(db, records, id, JSON.stringify(record));
     putPref(db, vault, id, encrypted);
-    putPref(db, BROKER, "local-account." + draft.broker, id);
+    if (selectForImport) putPref(db, BROKER, "local-account." + draft.broker, id);
     return { ...record, id, name: local.name, authorized: true };
   });
 }
