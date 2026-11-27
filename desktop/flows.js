@@ -1,5 +1,5 @@
 import Decimal from "decimal.js";
-import { ALLOCATION, BROKER, day, dayOf, hasTable, json, preference, putPref } from "./ledger.js";
+import { ALLOCATION, BROKER, CUSTOM_ACCOUNT, day, dayOf, hasTable, json, preference, putPref } from "./ledger.js";
 import { normalizeHolding, buildPortfolioModel, securityType } from "./allocation/domain/portfolio";
 import { canonicalIdentity } from "./allocation/domain/identifiers";
 import { CASH_TARGET, STOCKS_TARGET, fullTargetTotal } from "./allocation/domain/rebalance";
@@ -71,9 +71,13 @@ export function loadBook(db) {
     : [];
   const archived = db.prepare("SELECT * FROM sp_archive ORDER BY account,day").all();
   const accounts = db
-    .prepare("SELECT * FROM sp_accounts ORDER BY rowid")
-    .all()
-    .map((r) => ({ ...r, isActive: Boolean(r.active), isArchived: !r.active, trackingMode: r.mode }));
+    .prepare(`SELECT a.*, p.value AS customBroker FROM sp_accounts a
+      LEFT JOIN sp_prefs p ON p.scope=? AND p.key=a.id ORDER BY a.rowid`)
+    .all(CUSTOM_ACCOUNT)
+    .map(({ customBroker, ...r }) => ({
+      ...r, ...(customBroker === null ? {} : { custom: true, brokerName: customBroker }),
+      isActive: Boolean(r.active), isArchived: !r.active, trackingMode: r.mode,
+    }));
   const assets = new Map(
     db
       .prepare("SELECT * FROM sp_assets")
