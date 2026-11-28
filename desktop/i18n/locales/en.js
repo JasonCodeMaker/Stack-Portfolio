@@ -1593,6 +1593,7 @@ module.exports = {
   "ledger.invalidAmountOrQty": "Invalid amount or quantity.",
   "ledger.invalidCurrency": "Enter a 3-letter currency code.",
   "ledger.newerVersionRequired": "This ledger version requires a newer Stock Portfolio.",
+  "ledger.upgradeBackupFailed": "Could not back up the ledger before upgrading it, so the ledger was left unchanged. {message}",
   "ledger.selectWealthfolioDb": "Select a Wealthfolio SQLite ledger or unencrypted .db backup.",
   "ledger.alreadyStockPortfolioDb": "Source contains Stock Portfolio tables. Check source or use Restore Backup.",
   "ledger.quotePositive": "Quote must be greater than zero.",

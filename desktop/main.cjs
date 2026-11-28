@@ -1021,7 +1021,8 @@ const handlers = {
       diagnostics.stage("replace");
       publishFile(target, (stage) => {
         encryptedCopy(source, stage, key);
-        const next = createBook(stage, key);
+        // The selected backup stays as the pre-upgrade copy; the replaced ledger gets before-restore below.
+        const next = createBook(stage, key, { upgradeBackup: false });
         try {
           if (backupMode(next) !== nextMode) throw Error(tMain("err.backupChangedDuringRestore"));
           loadBook(next);

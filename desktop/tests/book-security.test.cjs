@@ -110,3 +110,80 @@ test("a missing or unreadable Windows key cannot be regenerated over an encrypte
   assert.throws(() => createBook(path.join(dir, "new.sqlite")));
   assert.ok(!fs.existsSync(path.join(dir, "new.sqlite")));
 });
+
+// An older release's ledger: the same rows without the tables a later version added.
+function olderLedger(dir, secret) {
+  const ledger = path.join(dir, "portfolio.sqlite");
+  const db = createBook(ledger, secret);
+  try {
+    db.prepare("INSERT INTO sp_accounts VALUES ('a',?,'AUD',1,'TRANSACTIONS')").run(marker);
+    db.exec("DROP TABLE sp_review_notes; DROP TABLE sp_broker_prices");
+    return { ledger, structure: structure(db) };
+  } finally { db.close(); }
+}
+const structure = (db) => db.prepare("SELECT type,name,sql FROM sqlite_schema ORDER BY type,name").all();
+const upgradeBackups = (dir) => fs.readdirSync(dir).filter((file) => file.startsWith("before-upgrade-"));
+
+test("a structural upgrade first writes an encrypted copy of the ledger named with its schema version", (t) => {
+  const dir = directory(t), secret = key();
+  const { ledger, structure: before } = olderLedger(dir, secret);
+  assert.deepEqual(upgradeBackups(dir), []);
+  const upgraded = createBook(ledger, secret);
+  try {
+    assert.ok(upgraded.prepare("SELECT 1 FROM sqlite_schema WHERE name='sp_review_notes'").get());
+  } finally { upgraded.close(); }
+  const [name, ...others] = upgradeBackups(dir);
+  assert.match(name, /^before-upgrade-portfolio-schema-1-\d{17}\.sqlite$/);
+  assert.deepEqual(others, []);
+  const file = path.join(dir, name);
+  assert.ok(!isPlainDatabase(file) && !fs.readFileSync(file).includes(Buffer.from(marker)));
+  const backup = openDatabase(file, secret, { readonly: true, existing: true });
+  try {
+    checkIntegrity(backup);
+    assert.deepEqual(structure(backup), before);
+    assert.equal(backup.prepare("SELECT name FROM sp_accounts").get().name, marker);
+  } finally { backup.close(); }
+  // An up-to-date ledger and a new ledger have nothing to protect.
+  createBook(ledger, secret).close();
+  createBook(path.join(dir, "sample.sqlite"), secret).close();
+  assert.deepEqual(upgradeBackups(dir), [name]);
+});
+
+test("a ledger whose pre-upgrade backup cannot be written is left unchanged", (t) => {
+  const dir = directory(t), secret = key();
+  const { ledger, structure: before } = olderLedger(dir, secret);
+  const bytes = fs.readFileSync(ledger);
+  const rename = t.mock.method(fs, "renameSync", () => { throw Error("simulated full disk"); });
+  assert.throws(() => createBook(ledger, secret), /simulated full disk/);
+  assert.equal(rename.mock.callCount(), 1);
+  rename.mock.restore();
+  assert.deepEqual(fs.readFileSync(ledger), bytes);
+  assert.deepEqual(fs.readdirSync(dir), ["portfolio.sqlite"]);
+  const untouched = openDatabase(ledger, secret, { readonly: true, existing: true });
+  try { assert.deepEqual(structure(untouched), before); }
+  finally { untouched.close(); }
+  createBook(ledger, secret).close();
+  assert.equal(upgradeBackups(dir).length, 1);
+});
+
+test("the pre-upgrade backup restores the ledger to the structure the previous version reads", (t) => {
+  const dir = directory(t), secret = key();
+  const { ledger, structure: before } = olderLedger(dir, secret);
+  const upgraded = createBook(ledger, secret);
+  try {
+    upgraded.prepare("INSERT INTO sp_review_notes VALUES ('n','2026-11-28','{}')").run();
+    upgraded.prepare("UPDATE sp_accounts SET name='written by the withdrawn version'").run();
+  } finally { upgraded.close(); }
+  const backup = openDatabase(path.join(dir, upgradeBackups(dir)[0]), secret, { readonly: true, existing: true });
+  try {
+    assert.equal(backupMode(backup), "real");
+    publishFile(ledger, (stage) => encryptedCopy(backup, stage, secret));
+  } finally { backup.close(); }
+  const restored = openDatabase(ledger, secret, { existing: true });
+  try {
+    checkIntegrity(restored);
+    assert.deepEqual(structure(restored), before);
+    assert.equal(restored.prepare("SELECT value FROM sp_meta WHERE key='version'").get().value, "1");
+    assert.equal(restored.prepare("SELECT name FROM sp_accounts").get().name, marker);
+  } finally { restored.close(); }
+});

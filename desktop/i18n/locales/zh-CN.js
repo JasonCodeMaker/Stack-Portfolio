@@ -1593,6 +1593,7 @@ module.exports = {
   "ledger.invalidAmountOrQty": "金额或数量无效。",
   "ledger.invalidCurrency": "请输入三位币种代码。",
   "ledger.newerVersionRequired": "此账本版本需要更新的 Stock Portfolio。",
+  "ledger.upgradeBackupFailed": "升级前无法备份账本，账本未作任何更改。{message}",
   "ledger.selectWealthfolioDb": "请选择 Wealthfolio 的 SQLite 账本或未加密 .db 备份。",
   "ledger.alreadyStockPortfolioDb": "来源包含投资账本专用的数据库对象。请检查来源，或使用恢复备份。",
   "ledger.quotePositive": "报价必须大于零。",
