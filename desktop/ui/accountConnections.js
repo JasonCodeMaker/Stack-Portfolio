@@ -18,8 +18,8 @@ export function accountBroker(account, conn, mapping = {}) {
 export function accountConnection(account, conn, mapping = {}, demo = false, t = tMain) {
   if (account.custom) return { kind: "custom", broker: null, tone: "muted", label: t("settings.conn.manual"), syncable: false };
   const broker = accountBroker(account, conn, mapping);
-  if (demo)
-    return { kind: "sample", broker, tone: broker ? "up" : "muted", label: t("settings.state.sample"), syncable: !!broker };
+  if (demo && broker) return { kind: "sample", broker, tone: "up", label: t("settings.state.sample"), syncable: true };
+  if (demo) return { kind: "none", broker: null, tone: "muted", label: t("settings.conn.notConnected"), syncable: false };
   if (!conn) return { kind: "loading", broker, tone: "muted", label: t("settings.state.loading"), syncable: false };
   const binding = conn.bindings?.find((b) => b.id === account.id);
   if (binding)

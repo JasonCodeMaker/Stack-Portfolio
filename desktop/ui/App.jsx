@@ -550,6 +550,7 @@ function Application() {
             run={run}
             initial={initial}
             onPage={onPage}
+            onAddAccount={openSetup}
           />
         )}
         {page === "settings" && (

@@ -125,6 +125,34 @@ const shot = async (p, name) => {
     await p.getByRole("region", { name: /^期初建账 · IBKR/ }).waitFor();
     await p.getByRole("searchbox", { name: "筛选流水" }).or(p.getByLabel("筛选流水")).first().waitFor();
 
+    // Accounts are added only through the add-account guide, which needs the real ledger, so the sample
+    // ledger shows no add button. An account made in the sample ledger is managed and deleted from its workspace.
+    assert.equal(await button(list, /^添加账户/).count(), 0);
+    await button(nav(p), "设置").click();
+    await button(p.getByRole("navigation", { name: "设置分类" }), /^账户与券商连接/).click();
+    await p.getByLabel("新账户名称").fill("Temporary account");
+    await button(p, "创建账户").click();
+    await button(nav(p), "导入与对账").click();
+    const added = button(list, /^Temporary account/);
+    await added.waitFor();
+    assert.equal(await list.locator(".acct-children .acct-item").count(), 3);
+    await added.click();
+    await button(p.locator(".ws-head"), "管理账户").click();
+    const manage = p.getByRole("region", { name: "账户管理 · Temporary account" });
+    await manage.getByText("账户类型").waitFor();
+    await shot(p, "imports-manage-light");
+    await button(manage, /删除此账户/).click();
+    const confirm = p.getByRole("dialog", { name: "删除账户「Temporary account」？" });
+    const remove = button(confirm, /删除账户/);
+    assert.equal(await remove.isDisabled(), true, "Deleting waits for the acknowledgement");
+    await shot(p, "imports-delete-light");
+    await confirm.getByLabel("我了解此操作无法撤销").check();
+    await remove.click();
+    await added.waitFor({ state: "detached" });
+    assert.equal(await list.locator(".acct-children .acct-item").count(), 2);
+    assert.equal(await button(list, /^全部账户/).getAttribute("aria-current"), "true");
+    await p.locator(".toast").getByRole("button").click().catch(() => {});
+
     // Dark theme and 21:9.
     await button(nav(p), "设置").click();
     await p.getByLabel("主题", { exact: true }).selectOption("dark");

@@ -36,7 +36,7 @@ import { tMain } from "./i18n/index.js";
 import { saveBrokerValue } from "./ledger.js";
 import { activityEdits, valuationEdits } from "./importChanges.js";
 import { addCustomManual, amendCustomActivity, customTransferGroup, transferMembers, validateTransferPair } from "./customAccounts.js";
-export { createCustomAccount, deleteCustomAccount, customAccount, customCsvHeader, importCustomCsv, transferMembers } from "./customAccounts.js";
+export { createCustomAccount, deleteCustomAccount, deleteLedgerAccount, customAccount, customCsvHeader, importCustomCsv, transferMembers } from "./customAccounts.js";
 import { EtfCache } from "./allocation/storage/etfCache";
 import { loadAllocationSettings } from "./allocation/storage/settings";
 import { createProviders, resolveEtfHoldings } from "./allocation/services/etf/providers";

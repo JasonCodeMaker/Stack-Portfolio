@@ -330,6 +330,11 @@ async function main() {
     await page.getByRole("navigation", { name: "账户列表" }).locator('.acct-item[aria-current="true"]').getByText("Sample IBKR 1001").waitFor();
     await page.getByRole("region", { name: "IBKR 同步结果", exact: true }).getByRole("heading", { name: "Sample IBKR 1001" }).waitFor();
     assert.equal((await page.evaluate(() => window.portfolio.connections())).bindings.length, 4);
+    // In a real ledger, 添加账户 under the account list opens the same add-account guide.
+    await button(page.getByRole("navigation", { name: "账户列表" }), /^添加账户/).click();
+    await expectStep(page, 1);
+    await button(page, "取消添加").click();
+    await page.getByRole("heading", { name: "导入与对账", exact: true }).waitFor();
   });
   const renewedToken = "test-renewed-1001";
   await open(async (page) => {

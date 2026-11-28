@@ -35,6 +35,7 @@ const actions = [
   "account",
   "createCustomAccount",
   "deleteCustomAccount",
+  "deleteAccount",
   "previewCustomCsv",
   "commitCustomCsv",
   "downloadCustomCsv",

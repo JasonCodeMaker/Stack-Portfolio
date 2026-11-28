@@ -7,7 +7,7 @@ const { randomBytes } = require("node:crypto");
 const { createBook, putPref, createAccount, resolveAsset } = require("../out/ledger.cjs");
 const { loadBook, positions, externalFlows } = require("../out/flows.cjs");
 const {
-  addManual, amendEvent, createCustomAccount, customCsvHeader, deleteActivity, deleteCustomAccount, importCustomCsv,
+  addManual, amendEvent, createCustomAccount, customCsvHeader, deleteActivity, deleteCustomAccount, deleteLedgerAccount, importCustomCsv,
 } = require("../out/services.cjs");
 
 const sample = `
@@ -193,4 +193,28 @@ test("account deletion rejects built-in accounts and rolls back an interrupted c
   assert.deepEqual(book.accounts.map((account) => account.id), [kept, id]);
   assert.equal(book.accounts[1].custom, true);
   assert.equal(db.prepare("SELECT id FROM sp_events WHERE id=?").get(entry).id, entry);
+});
+
+test("deleting a broker account removes its records, binding and import mapping but keeps shared credentials", (t) => {
+  const { db } = fixture(t);
+  const removed = createAccount(db, "IBKR main");
+  const kept = createAccount(db, "Webull");
+  putPref(db, "broker-account", removed, JSON.stringify({ broker: "ibkr", remoteId: "U1001", suffix: "1001" }));
+  putPref(db, "broker-account-credentials", removed, "sealed");
+  putPref(db, "broker-sync", "local-account.ibkr", removed);
+  putPref(db, "broker-sync", "local-account.webull", kept);
+  putPref(db, "broker-sync", "ibkr.flex-query-id", "1184220");
+  addManual(db, { account: removed, date: "2026-11-05", type: "DEPOSIT", amount: "100", currency: "AUD", reference: "DEP-1" });
+  const survivor = addManual(db, { account: kept, date: "2026-11-05", type: "DEPOSIT", amount: "50", currency: "AUD", reference: "DEP-2" });
+
+  deleteLedgerAccount(db, removed);
+  assert.deepEqual(loadBook(db).accounts.map((account) => account.id), [kept]);
+  assert.deepEqual(db.prepare("SELECT id FROM sp_events").all().map((row) => row.id), [survivor]);
+  const pref = (scope, key) => db.prepare("SELECT value FROM sp_prefs WHERE scope=? AND key=?").get(scope, key)?.value ?? null;
+  assert.equal(pref("broker-account", removed), null);
+  assert.equal(pref("broker-account-credentials", removed), null);
+  assert.equal(pref("broker-sync", "local-account.ibkr"), null);
+  assert.equal(pref("broker-sync", "local-account.webull"), kept);
+  assert.equal(pref("broker-sync", "ibkr.flex-query-id"), "1184220");
+  assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
 });
