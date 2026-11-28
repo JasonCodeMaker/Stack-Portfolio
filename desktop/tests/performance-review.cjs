@@ -6,6 +6,11 @@ const os = require("node:os");
 const path = require("node:path");
 const { resizeContent } = require("./fixtures/display.cjs");
 
+// A first launch shows the onboarding page before the welcome page.
+async function skipOnboarding(page) {
+  const home = await page.evaluate(() => window.portfolio.home());
+  if (!home.mode && !home.hasReal && !home.onboardingSeen) await page.getByRole("button", { name: "暂时跳过" }).click();
+}
 async function seedFullYear(app, root) {
   await app.evaluate(({ app, safeStorage }, root) => {
     const require = process.getBuiltinModule("node:module").createRequire(root + "/package.json");
@@ -66,6 +71,8 @@ async function seedFullYear(app, root) {
     app = await electron.launch({ executablePath: require("electron"), args: [root], env, timeout: 30000 });
     const page = await app.firstWindow();
     page.setDefaultTimeout(8000);
+    await skipOnboarding(page);
+
     await page.getByRole("button", { name: "打开示例账本" }).click();
     const nav = page.getByRole("navigation", { name: "页面" });
     await page.getByLabel("估值日").fill("2026-10-30");
@@ -173,6 +180,8 @@ async function seedFullYear(app, root) {
     await seedFullYear(app, root);
     const annual = await app.firstWindow();
     annual.setDefaultTimeout(8000);
+    await skipOnboarding(annual);
+
     await annual.getByRole("button", { name: "打开示例账本" }).click();
     const annualNav = annual.getByRole("navigation", { name: "页面" });
     await annual.getByLabel("估值日").fill("2025-12-31");

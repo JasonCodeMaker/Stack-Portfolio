@@ -16,6 +16,11 @@ const env = {
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
+// A first launch shows the onboarding page before the welcome page.
+async function skipOnboarding(page) {
+  const home = await page.evaluate(() => window.portfolio.home());
+  if (!home.mode && !home.hasReal && !home.onboardingSeen) await page.getByRole("button", { name: "暂时跳过" }).click();
+}
 async function launch() {
   const app = await electron.launch({ executablePath: require("electron"), args: [root], env, timeout: 30000 });
   const p = await app.firstWindow();
@@ -29,6 +34,8 @@ async function launch() {
   try {
     let p;
     ({ app, p } = await launch());
+    await skipOnboarding(p);
+
     await p.getByRole("button", { name: "打开示例账本" }).click();
     await p.getByRole("heading", { name: "总览", exact: true }).waitFor();
     let head = p.locator("header.head");
@@ -118,6 +125,8 @@ async function launch() {
     await head.getByLabel("估值日").fill("2026-10-20");
     await head.getByText("正在查看 2026-10-20").waitFor();
     await p.getByRole("button", { name: "切换账本 · 示例账本" }).click();
+    await skipOnboarding(p);
+
     await p.getByRole("button", { name: "打开示例账本" }).click();
     await head.getByRole("button", { name: "账户范围 · 全部账户" }).waitFor();
     assert.deepEqual(await pressed(), ["今年以来"]);
