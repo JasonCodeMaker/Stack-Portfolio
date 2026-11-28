@@ -125,15 +125,14 @@ const shot = async (p, name) => {
     await p.getByRole("region", { name: /^期初建账 · IBKR/ }).waitFor();
     await p.getByRole("searchbox", { name: "筛选流水" }).or(p.getByLabel("筛选流水")).first().waitFor();
 
-    // Accounts are added under the account list and managed or deleted from the selected account's workspace.
-    // Only the button sits in the list; the name is asked for in a dialog.
-    assert.equal(await list.getByRole("textbox").count(), 0);
-    await button(list, /^添加账户/).click();
-    const addDialog = p.getByRole("dialog", { name: "添加账户" });
-    await addDialog.getByLabel("新账户名称").fill("Temporary account");
-    await shot(p, "imports-add-light");
-    await button(addDialog, "创建账户").click();
-    await addDialog.waitFor({ state: "detached" });
+    // Accounts are added only through the add-account guide, which needs the real ledger, so the sample
+    // ledger shows no add button. An account made in the sample ledger is managed and deleted from its workspace.
+    assert.equal(await button(list, /^添加账户/).count(), 0);
+    await button(nav(p), "设置").click();
+    await button(p.getByRole("navigation", { name: "设置分类" }), /^账户与券商连接/).click();
+    await p.getByLabel("新账户名称").fill("Temporary account");
+    await button(p, "创建账户").click();
+    await button(nav(p), "导入与对账").click();
     const added = button(list, /^Temporary account/);
     await added.waitFor();
     assert.equal(await list.locator(".acct-children .acct-item").count(), 3);

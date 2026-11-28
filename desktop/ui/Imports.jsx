@@ -331,13 +331,10 @@ export function Imports({ d, mode, run, initial = {}, onPage, onAddAccount }) {
     [revisions, setRevisions] = useState([]),
     [voided, setVoided] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  // Account management: the account being deleted, its acknowledgement, and the sample book's quick add form.
+  // Account deletion: the account being deleted, its acknowledgement and whether it is running.
   const [removing, setRemoving] = useState(null),
     [removeAck, setRemoveAck] = useState(false),
     [removeBusy, setRemoveBusy] = useState(false);
-  const [adding, setAdding] = useState(false),
-    [newName, setNewName] = useState(""),
-    [newCurrency, setNewCurrency] = useState("AUD");
   const [affectedAccounts, setAffectedAccounts] = useState(null);
   const [manualType, setManualType] = useState("DEPOSIT");
   const destination = d.accounts.find((a) => a.id === account);
@@ -633,12 +630,14 @@ export function Imports({ d, mode, run, initial = {}, onPage, onAddAccount }) {
           );
         })}
       </div>
-      {/* The real ledger opens the add-account guide; the sample ledger asks for a name in a dialog. */}
-      <button type="button" className="add-account" onClick={demo ? () => setAdding(true) : onAddAccount}>
-        <CirclePlus {...ico} />
-        <span>{t("imports.addAccount")}</span>
-        <small>{t(demo ? "imports.addAccountSampleSub" : "imports.addAccountSub")}</small>
-      </button>
+      {/* Accounts are added only through the add-account guide, which needs the real ledger. */}
+      {!demo && onAddAccount && (
+        <button type="button" className="add-account" onClick={onAddAccount}>
+          <CirclePlus {...ico} />
+          <span>{t("imports.addAccount")}</span>
+          <small>{t("imports.addAccountSub")}</small>
+        </button>
+      )}
     </nav>
   );
 
@@ -1505,38 +1504,6 @@ export function Imports({ d, mode, run, initial = {}, onPage, onAddAccount }) {
         </Modal>
       )}
 
-      {adding && (
-        <Modal title={t("imports.addAccount")} close={() => setAdding(false)}>
-          <form
-            className="imp"
-            onSubmit={(e) => {
-              e.preventDefault();
-              run(async () => {
-                await api.account({ name: newName.trim(), currency: newCurrency });
-                setAdding(false);
-                setNewName("");
-              }, t("settings.accountCreated"));
-            }}
-          >
-            <div className="fg">
-              <F label={t("settings.newAccountName")}>
-                <input autoFocus required maxLength={120} value={newName} placeholder={t("settings.newAccountPlaceholder")}
-                  onChange={(e) => setNewName(e.target.value)} />
-              </F>
-              <F label={t("settings.currency")}>
-                <select value={newCurrency} onChange={(e) => setNewCurrency(e.target.value)}>
-                  <option>AUD</option>
-                  <option>USD</option>
-                </select>
-              </F>
-            </div>
-            <div className="acts">
-              <button type="button" className="btn" onClick={() => setAdding(false)}>{t("app.cancel")}</button>
-              <button type="submit" className="btn pri" disabled={!newName.trim()}>{t("settings.createAccount")}</button>
-            </div>
-          </form>
-        </Modal>
-      )}
       {removing && (
         <Modal
           title={t("imports.delete.title", { name: removing.name })}

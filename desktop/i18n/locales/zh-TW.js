@@ -1227,7 +1227,6 @@ module.exports = {
   "imports.pageSub": "左側選擇帳戶，右側同步、匯入、記帳與對帳。",
   "imports.addAccount": "新增帳戶",
   "imports.addAccountSub": "IBKR、Webull AU 或自訂帳戶",
-  "imports.addAccountSampleSub": "範例帳本中的練習帳戶",
   "imports.manageAccount": "管理帳戶",
   "imports.drawer.manage": "帳戶管理 · {account}",
   "imports.manage.type": "帳戶類型",

@@ -1227,7 +1227,6 @@ module.exports = {
   "imports.pageSub": "Pick an account on the left; sync, import, record and reconcile on the right.",
   "imports.addAccount": "Add account",
   "imports.addAccountSub": "IBKR, Webull AU or a custom account",
-  "imports.addAccountSampleSub": "A practice account in the sample ledger",
   "imports.manageAccount": "Manage account",
   "imports.drawer.manage": "Manage account · {account}",
   "imports.manage.type": "Account type",
