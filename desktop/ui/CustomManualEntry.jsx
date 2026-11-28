@@ -37,7 +37,8 @@ function entryEffect(form, t) {
   }
 }
 
-export function CustomManualEntry({ d, account, type, close, run, onSaved }) {
+// inline: rendered inside the Imports workspace drawer instead of a dialog.
+export function CustomManualEntry({ d, account, type, close, run, onSaved, inline = false }) {
   const { t, typeLabel } = useI18n();
   const [form, setForm] = useState({ type, date: d.date, currency: account.currency, symbol: "", kind: "EQUITY" });
   const [error, setError] = useState(null);
@@ -93,9 +94,8 @@ export function CustomManualEntry({ d, account, type, close, run, onSaved }) {
     ["note", "imports.field.note", "text", true],
   ];
   const columnName = { price: "unit_price", reference: "record_id", group: "transfer_group", toCurrency: "to_currency", toAmount: "to_amount" };
-  return (
-    <Modal title={t("imports.manualModalTitle")} close={() => { if (!lock.current) close(); }}>
-      <form className="imp" onSubmit={save}>
+  const content = (
+      <form className="imp" onSubmit={save} aria-label={inline ? t("imports.manualModalTitle") : undefined}>
         <p>{t("custom.destination", { name: account.name })}</p>
         <div className="fg">
           <Field label={t("imports.field.type")}>
@@ -139,6 +139,8 @@ export function CustomManualEntry({ d, account, type, close, run, onSaved }) {
           <button type="button" className="btn" disabled={saving} onClick={close}>{t("app.cancel")}</button>
         </div>
       </form>
-    </Modal>
+  );
+  return inline ? content : (
+    <Modal title={t("imports.manualModalTitle")} close={() => { if (!lock.current) close(); }}>{content}</Modal>
   );
 }

@@ -104,39 +104,46 @@ const book = {
   },
 };
 const page = (props) => renderToStaticMarkup(<Settings d={book} run={() => {}} onPage={() => {}} {...props} />);
-const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+const text = (html) => html.replace(/<[^>]+>/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ");
 
 describe("settings page", () => {
-  it("has three tabs named 券商连接, 账本 and 数据, opening on 券商连接", () => {
+  it("has four categories in a side rail, opening on 通用与外观", () => {
     const html = page({ mode: "real" });
-    const tabs = [...html.matchAll(/<button[^>]*aria-pressed="(true|false)"[^>]*>([^<]+)</g)].map((m) => [m[2], m[1]]);
-    expect(tabs).toEqual([
-      ["券商连接", "true"],
-      ["账本", "false"],
-      ["数据", "false"],
-    ]);
-    expect(text(html)).toMatch(/Interactive Brokers.*Webull Australia.*行情自动更新.*重置/);
-    expect(text(html)).not.toMatch(/其他行情来源|Twelve Data|Alpha Vantage|本机 API 端口/);
+    const cats = [...html.matchAll(/<button[^>]*class="cat-btn[^"]*"[^>]*>(.*?)<\/button>/g)].map((m) => text(m[1]).trim());
+    expect(cats).toEqual(["通用与外观", "账户与券商连接 1", "账本与备份", "行情与分类规则"]);
+    expect(html).toMatch(/aria-current="page" class="cat-btn on"[^>]*>.*?通用与外观/);
+    expect(text(html)).not.toMatch(/危险操作/);
   });
 
-  it("explains the sample connection in the sample book and still offers 立即更新", () => {
-    const out = text(page({ mode: "demo" }));
+  it("puts theme, language, updates, diagnostics and factory reset under 通用与外观", () => {
+    const out = text(page({ mode: "real", appVersion: "1.6.0" }));
+    expect(out).toMatch(/券商连接 .*最近行情更新 .*最近本地备份/);
+    expect(out).toMatch(/外观与显示 主题模式.*界面语言.*应用更新与诊断 应用版本.*1\.6\.0.*本地诊断日志/);
+    expect(out).toMatch(/恢复出厂设置 不可撤销 .*恢复出厂设置/);
+  });
+
+  it("lists every account with its connection and keeps 重置游标 folded under 账户与券商连接", () => {
+    const out = text(page({ mode: "real", initial: { cat: "accounts" } }));
+    expect(out).toMatch(/账户与券商连接 添加账户 IBKR AUD · 最近同步 尚未同步 正在读取 管理连接 CommSec AUD 归档/);
+    expect(out).toMatch(/同步排错与重置游标 展开 仅在某账户漏拉历史成交时使用/);
+    expect(out).not.toContain("预览同步");
+  });
+
+  it("explains the sample connection in the sample book", () => {
+    const out = text(page({ mode: "demo", initial: { tab: "connections" } }));
     expect(out).toContain("正式账本可保存券商授权。示例账本使用随附样例。");
-    expect(out).toMatch(/Interactive Brokers 示例连接 .*立即更新/);
+    expect(out).toMatch(/IBKR AUD .*示例连接/);
   });
 
-  it("keeps the ledger, backups and accounts on the 账本 tab", () => {
+  it("keeps the ledger and backups under 账本与备份", () => {
     const out = text(page({ mode: "real", initial: { tab: "book" } }));
-    expect(out).toMatch(/当前账本 .*正式账本.*切换账本 \/ 迁入 Wealthfolio 备份账本 恢复账本备份 加密旧备份/);
-    expect(out).toMatch(/账户 名称 基础币种 状态 IBKR AUD 启用 CommSec AUD 归档/);
-    expect(out).toContain("添加账户");
+    expect(out).toMatch(/当前账本与本地备份 正式账本.*切换账本 \/ 迁入 Wealthfolio 本地加密备份 .*备份账本 恢复账本备份 加密旧备份/);
   });
 
-  it("names each security by full name, market and currency on the 数据 tab", () => {
+  it("folds quotes, fund sources and classification rules under 行情与分类规则", () => {
     const out = text(page({ mode: "real", initial: { tab: "data" } }));
-    expect(out).toMatch(/维护结单报价.*手动调整基金数据来源.*更正证券类别及基金成分匹配/);
-    expect(out).toContain("Apple Inc. · AAPL · 美国 Nasdaq · USD");
-    expect(out).toMatch(/来源 来源标识 规范标识 ishares GOOG US02079K1079/);
+    expect(out).toMatch(/行情与汇率更新 行情自动更新.*立即更新行情 维护结单报价.*编辑/);
+    expect(out).toMatch(/ETF 成分来源与资产分类规则 手动调整基金数据来源 账本中有 0 只基金 编辑 更正证券类别及基金成分匹配 已配置 1 条别名规则 编辑/);
   });
 
   it("renders English and Traditional Chinese cleanly inside I18nProvider", () => {
@@ -147,21 +154,20 @@ describe("settings page", () => {
         </I18nProvider>,
       ),
     );
-    expect(enOut).toContain("Connections");
-    expect(enOut).toContain("Ledger");
-    expect(enOut).toContain("Data");
-    expect(enOut).toContain("Automatic Market Updates");
+    expect(enOut).toContain("General & Appearance");
+    expect(enOut).toContain("Accounts & Brokers");
+    expect(enOut).toContain("Ledger & Backups");
+    expect(enOut).toContain("Market Data & Rules");
 
     const twOut = text(
       renderToStaticMarkup(
         <I18nProvider locale="zh-TW" languagePreference="zh-TW" systemLocale="zh-TW">
-          <Settings d={book} run={() => {}} onPage={() => {}} mode="real" />
+          <Settings d={book} run={() => {}} onPage={() => {}} mode="real" initial={{ cat: "market" }} />
         </I18nProvider>,
       ),
     );
-    expect(twOut).toContain("券商連線");
-    expect(twOut).toContain("帳本");
-    expect(twOut).toContain("資料");
+    expect(twOut).toContain("帳戶與券商連線");
+    expect(twOut).toContain("帳本與備份");
     expect(twOut).toContain("行情自動更新");
   });
 });

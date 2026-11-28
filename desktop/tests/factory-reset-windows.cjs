@@ -76,7 +76,7 @@ async function verify() {
     });
     await page.reload();
     await button(page, "Settings").click();
-    await button(page, "Ledger").click();
+    // Factory reset sits at the bottom of General & Appearance, the category Settings opens on.
     await button(page, "Factory reset…").click();
     const modal = page.getByRole("dialog", { name: "Reset Stock Portfolio?" });
     await modal.waitFor();

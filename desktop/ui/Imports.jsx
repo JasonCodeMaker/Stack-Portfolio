@@ -1,11 +1,16 @@
-import React, { useEffect, useState, useRef } from "react";
-import { FileUp, CloudDownload, FileText } from "lucide-react";
+// Imports (D08 Route B+): an account list on the left and a workspace on the right, with 一键更新全部账户 above.
+// Sync, file import, manual entry, statement reconciliation and opening balances open inline in the workspace.
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import {
+  Building2, CloudDownload, FileSpreadsheet, FileText, Flag, Layers, PenLine, RefreshCw, Scale, Search, Upload,
+} from "lucide-react";
 import { HoldingEditor, SecurityFields, listingLabel, marketNames } from "./HoldingEditor";
 import { BrokerResult } from "./ImportPreview";
 import { CustomCsvImport } from "./CustomCsvImport";
 import { CustomManualEntry } from "./CustomManualEntry";
-import { Detail, Grid, useRowKeys, useShell } from "./Shell";
-import { checkLayout, quantityGaps, syncLayout } from "./importsLayout.js";
+import { Detail, useRowKeys } from "./Shell";
+import { quantityGaps } from "./importsLayout.js";
+import { accountBroker, accountConnection, accountTitle, brokerNames, lastBatches, syncTargets } from "./accountConnections.js";
 import { api, num, fmt, types, Empty, Modal } from "./common";
 import { tMain, useI18n } from "./i18n.jsx";
 import "./imports.css";
@@ -25,27 +30,8 @@ const blank = {
   kind: "EQUITY",
   group: "",
 };
-const tabIds = ["file", "check", "history", "opening"];
-const brokerIds = ["both", "ibkr", "webull"];
 const PAGE = 100;
 
-function Seg({ items, value, onChange }) {
-  return (
-    <span className="seg">
-      {items.map(([id, label]) => (
-        <button
-          type="button"
-          key={id}
-          aria-pressed={value === id}
-          className={value === id ? "on" : ""}
-          onClick={() => onChange(id)}
-        >
-          {label}
-        </button>
-      ))}
-    </span>
-  );
-}
 function F({ label, children }) {
   return (
     <label className="f">
@@ -270,21 +256,58 @@ function ListingChoices({ choices, resolve }) {
     </div>
   );
 }
+const errorText = (e) => String(e.message || e).replace(/^Error invoking remote method '.*?': (?:Error: )?/, "");
+const ico = { size: 16, strokeWidth: 1.8, "aria-hidden": true };
+
+// One action of the workspace: an icon, a name and what it does.
+function Tile({ icon: Icon, title, sub, onClick, disabled = false, active = false }) {
+  return (
+    <button type="button" className={"tile-btn" + (active ? " on" : "")} disabled={disabled} onClick={onClick}>
+      <span className="tile-head"><Icon {...ico} /><span>{title}</span></span>
+      <small>{sub}</small>
+    </button>
+  );
+}
+// A form or result that opens inside the workspace card, in place of a dialog.
+function Drawer({ icon: Icon, title, action, onClose, children }) {
+  const { t } = useI18n();
+  return (
+    <section className="inline-drawer" aria-label={title}>
+      <div className="drawer-head">
+        <h3>{Icon && <Icon {...ico} />}{title}</h3>
+        <span className="sp" />
+        {action}
+        <button type="button" className="btn sm" onClick={onClose}>{t("imports.drawer.close")}</button>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export function Imports({ d, mode, run, initial = {}, onPage }) {
   const { t, formatDateTime, typeLabel, sourceLabel } = useI18n();
-  const { cols } = useShell();
-  const [tab, setTab] = useState(initial.tab || "file"),
-    [broker, setBroker] = useState(initial.broker || "both");
-  const defaultAccount =
-    initial.account ||
-    (initial.broker &&
-      d.accounts.find((a) => a.active && a.name.toLowerCase().includes(initial.broker))?.id) ||
-    d.selected[0] ||
-    "";
-  const [account, setAccount] = useState(defaultAccount),
-    [reports, setReports] = useState({});
+  const demo = mode === "demo";
+  const active = d.accounts.filter((a) => a.active);
+  const mapping = useMemo(
+    () => (initial.account && ["ibkr", "webull"].includes(initial.broker)
+      ? { ...d.brokerAccounts, [initial.broker]: initial.account }
+      : d.brokerAccounts || {}),
+    [d.brokerAccounts],
+  );
+  const initialAccount = active.some((a) => a.id === initial.account)
+    ? initial.account
+    : ["ibkr", "webull"].includes(initial.broker) ? mapping[initial.broker] || "" : "";
+  const [sel, setSel] = useState(initialAccount || "all");
+  const [account, setAccount] = useState(
+    initialAccount || d.selected.find((id) => active.some((a) => a.id === id)) || active[0]?.id || "",
+  );
+  const [drawer, setDrawer] = useState({ check: "reconcile", opening: "opening" }[initial.tab] || null);
+  const [returnTo, setReturnTo] = useState(null);
+  const [conn, setConn] = useState(null);
+  const [reports, setReports] = useState({});
   const started = useRef(false);
   const requests = useRef({});
+  const historyRef = useRef(null);
   const [ledger, setLedger] = useState([]),
     [offset, setOffset] = useState(0),
     [search, setSearch] = useState(""),
@@ -299,8 +322,6 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     [flow, setFlow] = useState(false);
   const [openCash, setOpenCash] = useState([]),
     [openPos, setOpenPos] = useState([]);
-  const [mapping, setMapping] = useState(() => initial.account && ["ibkr","webull"].includes(initial.broker)
-    ? {...d.brokerAccounts,[initial.broker]:initial.account} : d.brokerAccounts);
   const [nav, setNav] = useState("");
   const [amend, setAmend] = useState(null),
     [amendForm, setAmendForm] = useState({}),
@@ -311,92 +332,108 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   const [manualType, setManualType] = useState("DEPOSIT");
   const destination = d.accounts.find((a) => a.id === account);
   const custom = Boolean(destination?.custom);
-  const hasCustom = d.accounts.some((a) => a.custom && a.active);
+  const selected = sel === "all" ? null : d.accounts.find((a) => a.id === sel);
   const deletesGroup = Boolean(deleteTarget?.group && deleteTarget.activityType.startsWith("TRANSFER_"));
-  const demo = mode === "demo",
-    webullSample = demo && account === "demo-webull";
-  function selectAccount(next, keepImport = false) {
+  const webullSample = demo && account === "demo-webull";
+  useEffect(() => {
+    let live = true;
+    api
+      .connections()
+      .then((c) => {
+        if (live) setConn(c);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [d, mode]);
+  // Forms work on one account; switching it clears what was being entered for the previous one.
+  function chooseAccount(next) {
     if (next === account) return;
     setAccount(next);
-    setLedger([]);
     setOpenCash([]);
     setOpenPos([]);
-    if (!keepImport) {
-      setReports({});
-    }
     setCompare(null);
     setFlow(false);
     setCash([{ currency: "AUD", value: "" }]);
     setPos([]);
     setNoSecurities(false);
     setNav("");
+  }
+  function selectAccount(next) {
+    setSel(next);
+    setDrawer(null);
+    setReturnTo(null);
     setOffset(0);
+    setLedger([]);
     setAmend(null);
     setDeleteTarget(null);
+    if (next !== "all") chooseAccount(next);
   }
   useEffect(() => {
-    let a = true;
-    if (tab === "history" && account)
-      api
-        .history({ account, limit: PAGE, offset, text: search })
-        .then((v) => {
-          if (a) setLedger(v);
-        })
-        .catch((e) => run(() => Promise.reject(e)));
+    let live = true;
+    api
+      .history({ account: sel === "all" ? "" : sel, limit: PAGE, offset, text: search })
+      .then((v) => {
+        if (live) setLedger(v);
+      })
+      .catch((e) => run(() => Promise.reject(e)));
     return () => {
-      a = false;
+      live = false;
     };
-  }, [tab, account, offset, search, d]);
-  function chooseTab(next) {
-    setTab(next);
-    setAmend(null);
-    setDeleteTarget(null);
+  }, [sel, offset, search, d]);
+  const toggleDrawer = (next) => {
+    setReturnTo(null);
+    setDrawer(drawer === next ? null : next);
+  };
+  const showHistory = () => historyRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  function updateReport(id, result) {
+    setReports((prev) => {
+      const next = { ...prev };
+      if (result) next[id] = result;
+      else delete next[id];
+      return next;
+    });
   }
-  function chooseBroker(b) {
-    requests.current = {};
-    setBroker(b);
-    if (b !== "both") selectAccount(mapping[b] || "");
-    setReports({});
-  }
-  function updateReport(b, result) {
-    setReports((prev) => ({ ...prev, [b]: result }));
-  }
-  async function prepare(source, which = broker, id = which === "both" ? "" : mapping[which]) {
-    if (which === "both") {
-      if (mapping.ibkr && mapping.ibkr === mapping.webull)
-        return run(() => {
-          throw Error(t("imports.distinctAccountsError"));
-        }, false);
-      return Promise.all(["ibkr", "webull"].map((b) => prepare(source, b, mapping[b])));
-    }
+  async function prepare(source, broker, id) {
+    if (!id) return;
     const request = Symbol();
-    requests.current[which] = request;
-    if (source !== "file") updateReport(which, { broker: which, loading: true });
+    requests.current[id] = request;
+    if (source !== "file") updateReport(id, { broker, account: id, loading: true });
     await run(async () => {
       try {
-        if (!id) throw Error(t("imports.selectTargetError"));
-        const v = await api.preview({ source, broker: which, account: id });
-        if (v && requests.current[which] === request) updateReport(which, { ...v, sourceKind: source });
+        const v = await api.preview({ source, broker, account: id });
+        if (v && requests.current[id] === request) updateReport(id, { ...v, broker, account: id, sourceKind: source });
       } catch (e) {
-        if (requests.current[which] === request)
-          updateReport(which, {
-            broker: which,
-            account: id,
-            sourceKind: source,
-            error: String(e.message).replace(/^Error invoking remote method '.*?': (?:Error: )?/, ""),
-          });
+        if (requests.current[id] === request) updateReport(id, { broker, account: id, sourceKind: source, error: errorText(e) });
       }
     }, false);
+  }
+  // 一键更新全部账户: every active broker account with a known broker, each in its own result card.
+  async function updateAll() {
+    selectAccount("all");
+    let current = conn;
+    if (!current && !demo) {
+      current = await api.connections().catch(() => null);
+      if (current) setConn(current);
+    }
+    const targets = syncTargets(d.accounts, current, mapping, demo);
+    if (!targets.length)
+      return run(() => {
+        throw Error(t("imports.updateAllNone"));
+      }, false);
+    await Promise.all(targets.map((target) => prepare(demo ? "sample" : "live", target.broker, target.account)));
   }
   useEffect(() => {
     if (!initial.sync || started.current) return;
     started.current = true;
-    prepare(demo ? "sample" : "live", initial.broker);
+    if (initialAccount && initial.broker !== "both") prepare(demo ? "sample" : "live", initial.broker, initialAccount);
+    else updateAll();
   }, []);
   async function commit(r) {
     await run(async () => {
       const v = await api.commit({ token: r.token });
-      updateReport(r.broker, { ...v, done: true });
+      updateReport(r.account, { ...v, broker: r.broker, account: r.account, done: true });
     }, t("imports.savedBrokerMsg"));
   }
   function useStatement(v) {
@@ -407,7 +444,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     setNav(v.base === "AUD" && v.nav != null ? String(v.nav) : "");
     setCompare(null);
     setFlow(false);
-    chooseTab("check");
+    setReturnTo(null);
+    setDrawer("reconcile");
   }
   function compareArgs() {
     return {
@@ -421,11 +459,9 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     };
   }
   function openManual(sample = false, type = "DEPOSIT") {
-    if (custom) {
-      setManualType(type);
-      setModal("manual");
-      return;
-    }
+    setReturnTo(drawer === "reconcile" ? "reconcile" : null);
+    setModal(null);
+    setManualType(type);
     setForm(
       sample
         ? {
@@ -439,9 +475,25 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           }
         : { ...blank, date: d.date, type },
     );
-    setModal("manual");
+    setDrawer("manual");
+  }
+  function manualSaved() {
+    setCompare(null);
+    setDrawer(returnTo);
+    setReturnTo(null);
+    if (!returnTo) {
+      setOffset(0);
+      setSearch("");
+      showHistory();
+    }
+  }
+  function reconcileFrom(id) {
+    if (sel !== "all" || !id) return toggleDrawer("reconcile");
+    selectAccount(id);
+    setDrawer("reconcile");
   }
   const accountName = destination?.name;
+  const nameOf = (id) => d.accounts.find((a) => a.id === id)?.name || "—";
   const activityLabel = (event) => typeLabel(event.metadata?.customRecord?.type || event.activityType);
   const accountReports = d.quantityReports
     .filter((r) => r.account === account)
@@ -465,9 +517,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     setRevisions([]);
     setRevisions(await api.corrections({ id: v.id }));
   }
-  const batches = d.batches.filter((b) =>
-    broker === "both" ? Object.values(mapping).includes(b.account) : b.account === account,
-  );
+  const batches = d.batches.filter((b) => sel === "all" || b.account === sel);
+  const synced = lastBatches(d.batches);
   // A booked record replaced by its broker original stays in the book but out of the default list.
   const superseded = (v) => v.metadata?.supersededBy || String(v.status).toUpperCase() === "VOID";
   const entries = ledger.filter((v) => voided || !superseded(v));
@@ -480,88 +531,149 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       if (v && !superseded(v)) run(() => edit(v), false);
     },
   );
-  if (!d.accounts.some((a) => a.active))
+  if (!active.length)
     return (
       <div className="imp imp-page">
         <Panel title={t("imports.needAccountTitle")} className="cap880">
           <Empty>{t("imports.needAccountEmpty")}</Empty>
-          <button className="btn pri" onClick={() => onPage("settings", { tab: "book" })}>
+          <button className="btn pri" onClick={() => onPage("settings", { cat: "accounts" })}>
             {t("imports.createAccountBtn")}
           </button>
         </Panel>
       </div>
     );
 
-  const brokers = broker === "both" ? ["ibkr", "webull"] : [broker];
-  const update = (
-    <Panel
-      title={t("imports.updatePanelTitle")}
-      action={<Seg items={brokerIds.map((id) => [id, t(`imports.broker.${id}`)])} value={broker} onChange={chooseBroker} />}
+  const states = Object.fromEntries(active.map((a) => [a.id, accountConnection(a, conn, mapping, demo, t)]));
+  const allTone = Object.values(states).some((s) => s.tone === "warn")
+    ? "warn"
+    : Object.values(states).some((s) => s.tone === "up") ? "up" : "muted";
+  const selectedState = selected && states[selected.id];
+  const selectedBroker = selected && !selected.custom ? accountBroker(selected, conn, mapping) : null;
+  const lastLine = (id) => {
+    const time = states[id]?.lastSuccess || synced[id];
+    return time ? t("imports.lastSync", { time: formatDateTime(time) }) : t("imports.neverSynced");
+  };
+  const fileBrokers = (a) => {
+    if (a.mode && a.mode !== "TRANSACTIONS") return [];
+    const b = accountBroker(a, conn, mapping);
+    return b ? [b] : ["ibkr", "webull"];
+  };
+  const fileButton = (b, id) => (
+    <button
+      key={b}
+      type="button"
+      className="btn sm"
+      onClick={() => {
+        setDrawer(null);
+        prepare("file", b, id);
+      }}
     >
-      <div className="opts">
-        <button type="button" onClick={() => prepare(demo ? "sample" : "live")}>
-          <CloudDownload size={22} strokeWidth={1.8} />
-          <b>{t("imports.opt.sync")}</b>
-          <small>{t(demo ? "imports.opt.syncDemo" : "imports.opt.syncLive")}</small>
-        </button>
-        <button type="button" onClick={() => setModal("file")}>
-          <FileUp size={22} strokeWidth={1.8} />
-          <b>{t("imports.opt.file")}</b>
-          <small>{t("imports.opt.fileSub")}</small>
-        </button>
-        <button type="button" onClick={() => setModal("entry")}>
-          <FileText size={22} strokeWidth={1.8} />
-          <b>{t("imports.opt.manual")}</b>
-          <small>{t("imports.opt.manualSub")}</small>
-        </button>
-      </div>
-      <details
-        className="account-mapping"
-        open={Object.keys(mapping).some((b) => brokers.includes(b) && !mapping[b]) || undefined}
-      >
-        <summary>
-          {t("imports.mappingSummary", {
-            names: brokers.map((b) => d.accounts.find((a) => a.id === mapping[b])?.name || t("imports.pendingSelect")).join(t("common.comma")),
-          })}
-        </summary>
-        <div className="fg">
-          {brokers.map((b) => (
-            <F key={b} label={t("imports.targetAccountLabel", { broker: b.toUpperCase() })}>
-              <select
-                value={mapping[b]}
-                onChange={(e) => {
-                  delete requests.current[b];
-                  setMapping({ ...mapping, [b]: e.target.value });
-                  if (!reports[b]?.error) updateReport(b, null);
-                  if (broker === b) selectAccount(e.target.value, true);
-                }}
-              >
-                <option value="">{t("app.selectAccount")}</option>
-                {d.accounts
-                  .filter((a) => a.active && a.mode === "TRANSACTIONS" && !a.custom)
-                  .map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-              </select>
-            </F>
-          ))}
-        </div>
-      </details>
-    </Panel>
+      <Upload {...ico} />
+      {t(b === "ibkr" ? "imports.chooseIbkrXml" : "imports.chooseWebullCsv")}
+    </button>
   );
-  const previews = ["ibkr", "webull"].filter((b) => reports[b]);
+
+  const master = (
+    <nav className="acct-list" aria-label={t("imports.accountsAria")}>
+      <button
+        type="button"
+        className={"acct-item" + (sel === "all" ? " on" : "")}
+        aria-current={sel === "all" ? "true" : undefined}
+        onClick={() => selectAccount("all")}
+      >
+        <span className="acct-ico"><Layers {...ico} /></span>
+        <span className="acct-item-body">
+          <span className="acct-item-top">
+            <span>{t("imports.allAccounts")}</span>
+            <span className={"dot " + allTone} />
+          </span>
+          <span className="cap">{t("imports.allAccountsSub", { count: active.length })}</span>
+        </span>
+      </button>
+      <div className="acct-group-label">{t("imports.subAccounts")}</div>
+      <div className="acct-children">
+        {active.map((a) => {
+          const s = states[a.id];
+          const broker = a.custom ? a.brokerName || t("custom.name") : s.broker ? brokerNames[s.broker] : t("settings.conn.notConnected");
+          return (
+            <button
+              type="button"
+              key={a.id}
+              className={"acct-item" + (sel === a.id ? " on" : "")}
+              aria-current={sel === a.id ? "true" : undefined}
+              title={s.label}
+              onClick={() => selectAccount(a.id)}
+            >
+              <span className="acct-ico">{a.custom ? <FileSpreadsheet {...ico} /> : <Building2 {...ico} />}</span>
+              <span className="acct-item-body">
+                <span className="acct-item-top">
+                  <span className="acct-name">{a.name}</span>
+                  <span className={"dot " + s.tone} />
+                </span>
+                <span className="cap">{broker} · {lastLine(a.id)}</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </nav>
+  );
+
+  const tiles =
+    sel === "all" ? (
+      <>
+        <Tile icon={RefreshCw} title={t("imports.updateAll")} sub={t(demo ? "imports.opt.syncDemo" : "imports.updateAllSub")} onClick={updateAll} />
+        <Tile icon={Upload} title={t("imports.tile.file")} sub={t("imports.tile.fileSubAll")} active={drawer === "file"} onClick={() => toggleDrawer("file")} />
+        <Tile icon={PenLine} title={t("imports.tile.manual")} sub={t("imports.tile.manualSub")} active={drawer === "manual"}
+          onClick={() => (drawer === "manual" ? setDrawer(null) : openManual(false))} />
+        <Tile icon={Scale} title={t("imports.tile.reconcile")} sub={t("imports.tile.reconcileAllSub")} active={drawer === "reconcile"}
+          onClick={() => setDrawer(drawer === "reconcile" ? null : "reconcile")} />
+      </>
+    ) : selected.custom ? (
+      <>
+        <Tile icon={FileSpreadsheet} title={t("custom.import")} sub={t("imports.tile.csvSub")} active={drawer === "file"} onClick={() => toggleDrawer("file")} />
+        <Tile icon={PenLine} title={t("imports.tile.manual")} sub={t("imports.tile.manualSub")} active={drawer === "manual"}
+          onClick={() => (drawer === "manual" ? setDrawer(null) : openManual(false))} />
+        <Tile icon={Scale} title={t("imports.tile.reconcile")} sub={t("imports.tile.reconcileSub")} active={drawer === "reconcile"} onClick={() => toggleDrawer("reconcile")} />
+      </>
+    ) : (
+      <>
+        <Tile
+          icon={CloudDownload}
+          title={selectedBroker ? t("imports.tile.syncOne", { broker: brokerNames[selectedBroker] }) : t("imports.opt.sync")}
+          sub={selectedBroker ? t(demo ? "imports.opt.syncDemo" : "imports.tile.syncOneSub") : t("imports.tile.syncNeedsConnection")}
+          disabled={!selectedBroker || (selectedState && !selectedState.syncable)}
+          onClick={() => prepare(demo ? "sample" : "live", selectedBroker, selected.id)}
+        />
+        <Tile
+          icon={Upload}
+          title={t("imports.tile.file")}
+          sub={t(selectedBroker ? "imports.tile.fileSub" : "imports.opt.fileSub")}
+          active={drawer === "file"}
+          onClick={() => {
+            const brokers = fileBrokers(selected);
+            if (brokers.length === 1) prepare("file", brokers[0], selected.id);
+            else toggleDrawer("file");
+          }}
+        />
+        <Tile icon={PenLine} title={t("imports.tile.manual")} sub={t("imports.tile.manualSub")} active={drawer === "manual"}
+          onClick={() => (drawer === "manual" ? setDrawer(null) : openManual(false))} />
+        <Tile icon={Scale} title={t("imports.tile.reconcile")} sub={t("imports.tile.reconcileSub")} active={drawer === "reconcile"} onClick={() => toggleDrawer("reconcile")} />
+      </>
+    );
+
   const brokerCard = (r) => (
     <BrokerResult
+      key={r.account}
       report={r}
+      title={accountTitle(nameOf(r.account), r.broker)}
       accounts={d.accounts}
       onConfirm={() => commit(r)}
-      onClose={() => updateReport(r.broker, null)}
-      onRetry={() => prepare(r.sourceKind, r.broker)}
-      onConnect={demo ? null : () => onPage("settings", { tab: "connections", broker: r.broker })}
+      onClose={() => updateReport(r.account, null)}
+      onRetry={() => prepare(r.sourceKind, r.broker, r.account)}
+      onConnect={demo ? null : () => onPage("settings", { cat: "accounts", account: r.account })}
       onReconcile={(result) => {
-        selectAccount(result.account, true);
+        selectAccount(result.account);
         useStatement(result.statement || { date: d.date });
       }}
     >
@@ -577,13 +689,13 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             className="btn sm"
             disabled={connectingFunds}
             onClick={async () => {
-              const activeRequest = requests.current.webull;
+              const activeRequest = requests.current[r.account];
               setConnectingFunds(true);
               try {
                 const status = await run(() => api.connectWebullFunds({ account: r.account }), false);
-                if (requests.current.webull !== activeRequest) return;
+                if (requests.current[r.account] !== activeRequest) return;
                 if (status === "loaded") await prepare("live", "webull", r.account);
-                if (status === "unavailable") updateReport("webull", { ...r, webullFundsStatus: status });
+                if (status === "unavailable") updateReport(r.account, { ...r, webullFundsStatus: status });
               } finally {
                 setConnectingFunds(false);
               }
@@ -598,43 +710,17 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         resolve={(c, id) =>
           run(async () => {
             await api.rememberListing({ ...c, assetId: id });
-            updateReport(r.broker, { ...(await api.preview({ token: r.token })), sourceKind: r.sourceKind });
+            updateReport(r.account, { ...(await api.preview({ token: r.token })), broker: r.broker, account: r.account, sourceKind: r.sourceKind });
           }, false)
         }
       />
     </BrokerResult>
   );
-  const batchCard = batches.length > 0 && (
-    <Panel title={t("imports.recentBatches")}>
-      <div className="tw">
-        <table>
-          <thead>
-            <tr>
-              <th>{t("imports.col.source")}</th>
-              <th className="l">{t("imports.col.time")}</th>
-              <th>{t("imports.col.imported")}</th>
-              <th>{t("imports.col.duplicate")}</th>
-              <th>{t("imports.col.repaired")}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {batches.slice(0, 8).map((b) => (
-              <tr key={b.id}>
-                <td>{sourceLabel(b.source)}</td>
-                <td className="l">{formatDateTime(b.created)}</td>
-                <td>{b.data.imported}</td>
-                <td>{b.data.duplicate}</td>
-                <td>{(b.data.updated || 0) + (b.data.repaired || 0)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </Panel>
-  );
+  const shownReports = [...active.map((a) => reports[a.id]), ...Object.values(reports).filter((r) => !active.some((a) => a.id === r.account))]
+    .filter((r) => r && (sel === "all" || r.account === sel));
 
   const evidence = accountReports.length > 0 && (
-    <Panel title={t("imports.evidenceTitle")}>
+    <Panel title={t("imports.evidenceTitle")} className="evidence">
       {accountReports.map((r) => (
         <div className="ev" key={r.day + r.asset}>
           <b>
@@ -658,7 +744,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             onClick={() => {
               setSearch(r.symbol);
               setOffset(0);
-              chooseTab("history");
+              showHistory();
             }}
           >
             {t("imports.viewRelatedActivity")}
@@ -667,9 +753,18 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       ))}
     </Panel>
   );
+  const accountPicker = sel === "all" && (
+    <div className="fg">
+      <F label={t("imports.belongAccount")}>
+        <AccountOptions d={d} value={account} set={chooseAccount} />
+      </F>
+    </div>
+  );
   const statement = (
-    <Panel
-      title={t("imports.reconcileTitle")}
+    <Drawer
+      icon={Scale}
+      title={t("imports.drawer.reconcile", { account: accountName || "" })}
+      onClose={() => setDrawer(null)}
       action={
         webullSample ? (
           <button type="button" className="btn sm" onClick={() => setModal("statement")}>
@@ -678,184 +773,421 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         ) : null
       }
     >
-      <div className="fg">
-        <F label={t("imports.statementDate")}>
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => {
-              setDate(e.target.value);
+      {accountPicker}
+      <div className={"reconcile-grid" + (evidence ? " two" : "")}>
+        <div className="reconcile-form">
+          <div className="fg">
+            <F label={t("imports.statementDate")}>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => {
+                  setDate(e.target.value);
+                  setCompare(null);
+                }}
+              />
+            </F>
+          </div>
+          <StatementLines
+            cash={cash}
+            setCash={(v) => {
+              setCash(v);
+              setCompare(null);
+            }}
+            positions={pos}
+            setPositions={(v) => {
+              setPos(v);
               setCompare(null);
             }}
           />
+          {!pos.length && (
+            <label className="chk">
+              <input
+                type="checkbox"
+                checked={noSecurities}
+                onChange={(e) => {
+                  setNoSecurities(e.target.checked);
+                  setCompare(null);
+                }}
+              />
+              {t("imports.zeroHoldings")}
+            </label>
+          )}
+          <div className="fg">
+            <F label={t("imports.statementNavOpt")}>
+              <input
+                type="number"
+                step=".01"
+                value={nav}
+                onChange={(e) => {
+                  setNav(e.target.value);
+                  setCompare(null);
+                }}
+              />
+            </F>
+          </div>
+          <div className="acts">
+            <button
+              type="button"
+              className="btn pri"
+              disabled={!account}
+              onClick={() => run(async () => setCompare(await api.compare(compareArgs())), false)}
+            >
+              {t("imports.compareBtn")}
+            </button>
+            <button type="button" className="btn" disabled={!account} onClick={() => openManual(false)}>
+              {t("imports.addOneFlowBtn")}
+            </button>
+            {!demo && nav.trim() && (
+              <button
+                type="button"
+                className="btn"
+                onClick={() =>
+                  run(() => api.recordAccountValue({ ...compareArgs(), positions: pos }), t("imports.brokerNavSaved"))
+                }
+              >
+                {t("imports.adoptBrokerNavBtn")}
+              </button>
+            )}
+          </div>
+          {compare && (
+            <>
+              <ListingChoices
+                choices={compare.choices}
+                resolve={(c, id) =>
+                  run(async () => {
+                    await api.rememberListing({ ...c, assetId: id });
+                    setCompare(await api.compare(compareArgs()));
+                  }, false)
+                }
+              />
+              {!compare.choices.length &&
+                quantityGaps(compare.rows, accountName, t).map((line) => (
+                  <p className="warn result" key={line}>
+                    {line}
+                  </p>
+                ))}
+              <div className="tw">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>{t("imports.col.item")}</th>
+                      <th>{t("imports.col.statement")}</th>
+                      <th>{t("imports.col.local")}</th>
+                      <th>{t("imports.col.diff")}</th>
+                      <th>{t("imports.col.ledgerLink")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {compare.rows.map((r) => (
+                      <tr key={r.label}>
+                        <td>{r.label}</td>
+                        <td>{num(r.expected)}</td>
+                        <td>{num(r.actual)}</td>
+                        <td className={r.delta == null || Number(r.delta) !== 0 ? "warn" : "up"}>
+                          {r.delta == null ? t("common.pending") : num(r.delta).replace(/^-/, "−")}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="lnk"
+                            onClick={() => {
+                              setSearch(r.symbol ? r.symbol : "");
+                              showHistory();
+                            }}
+                          >
+                            {t("imports.viewLedger")}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className={(compare.ok ? "up" : "warn") + " result"}>
+                {compare.ok ? t("imports.matchOk") : t("imports.matchMismatch")} {compare.warnings.join(" ")}
+              </p>
+              {compare.ok && (
+                <>
+                  <label className="chk">
+                    <input type="checkbox" checked={flow} onChange={(e) => setFlow(e.target.checked)} />
+                    {t("imports.flowsChecked")}
+                  </label>
+                  <button
+                    type="button"
+                    className="btn pri"
+                    disabled={!flow}
+                    onClick={() =>
+                      run(async () => {
+                        await api.confirmStatement(compareArgs());
+                        setCompare(null);
+                        setFlow(false);
+                        onPage("overview");
+                      }, t("imports.reconcileSaved"))
+                    }
+                  >
+                    {t("imports.completeReconcile")}
+                  </button>
+                </>
+              )}
+            </>
+          )}
+        </div>
+        {evidence}
+      </div>
+    </Drawer>
+  );
+
+  const manual = (
+    <Drawer icon={PenLine} title={t("imports.drawer.manual", { account: accountName || "" })} onClose={() => setDrawer(returnTo)}>
+      {accountPicker}
+      {custom ? (
+        <CustomManualEntry
+          key={account + manualType}
+          inline
+          d={d}
+          account={destination}
+          type={manualType}
+          run={run}
+          close={() => setDrawer(returnTo)}
+          onSaved={manualSaved}
+        />
+      ) : (
+        <form
+          className="imp"
+          aria-label={t("imports.manualModalTitle")}
+          onSubmit={(e) => {
+            e.preventDefault();
+            run(async () => {
+              await api.manual({ account, ...form });
+              manualSaved();
+            }, t("imports.entryBooked"));
+          }}
+        >
+          <div className="acts manual-kinds">
+            <button type="button" className="btn sm" disabled={!account} onClick={() => setModal("position")}>
+              {t("imports.manualHolding")}
+            </button>
+          </div>
+          <div className="fg">
+            <F label={t("imports.field.type")}>
+              <select
+                value={form.type}
+                onChange={(e) =>
+                  setForm({ ...form, type: e.target.value, assetId: "", symbol: "", mic: "", linkDividend: false })
+                }
+              >
+                {Object.keys(types).map((k) => (
+                  <option key={k} value={k}>
+                    {typeLabel(k)}
+                  </option>
+                ))}
+              </select>
+            </F>
+            {["BUY", "SELL", "DIVIDEND"].includes(form.type) &&
+            (form.type !== "DIVIDEND" || form.symbol || form.linkDividend) ? (
+              <SecurityFields d={d} form={form} setForm={setForm} />
+            ) : (
+              form.type === "DIVIDEND" && (
+                <button type="button" className="lnk" onClick={() => change("linkDividend", true)}>
+                  {t("imports.linkDividend")}
+                </button>
+              )
+            )}
+            {[
+              ["date", t("imports.field.date"), "date"],
+              ...(["BUY", "SELL"].includes(form.type) ||
+              (form.type === "DIVIDEND" && (form.linkDividend || form.symbol))
+                ? []
+                : [["currency", t("imports.field.currency"), "text"]]),
+              ...(["BUY", "SELL"].includes(form.type)
+                ? [
+                    ["quantity", t("imports.field.qty"), "number"],
+                    ["price", t("imports.field.price"), "number"],
+                    ["fee", t("imports.field.fee"), "number"],
+                  ]
+                : [["amount", t("imports.field.amount"), "number"]]),
+              ...(form.type.startsWith("TRANSFER") ? [["group", t("imports.field.transferGroup"), "text"]] : []),
+              ["reference", t("imports.field.reference"), "text"],
+              ["note", t("imports.field.note"), "text"],
+            ].map(([k, l, kindType]) => (
+              <F key={k} label={l}>
+                <input
+                  required={!["note", "fee", "mic", "group"].includes(k)}
+                  type={kindType}
+                  step="any"
+                  value={form[k]}
+                  onChange={(e) => change(k, e.target.value)}
+                />
+              </F>
+            ))}
+          </div>
+          <div className="acts">
+            <button className="btn pri" type="submit" disabled={!account}>
+              {t("imports.confirmBookTo", { account: accountName || "" })}
+            </button>
+            <button type="button" className="btn" onClick={() => setDrawer(returnTo)}>
+              {t("app.cancel")}
+            </button>
+          </div>
+        </form>
+      )}
+    </Drawer>
+  );
+
+  const opening = selected && (
+    <Drawer icon={Flag} title={t("imports.drawer.opening", { account: selected.name })} onClose={() => setDrawer(null)}>
+      <p className="muted">{t("imports.openingDesc")}</p>
+      <div className="fg">
+        <F label={t("imports.openingDate")}>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </F>
       </div>
       <StatementLines
-        cash={cash}
-        setCash={(v) => {
-          setCash(v);
-          setCompare(null);
-        }}
-        positions={pos}
-        setPositions={(v) => {
-          setPos(v);
-          setCompare(null);
-        }}
+        cash={openCash}
+        setCash={setOpenCash}
+        positions={openPos}
+        setPositions={setOpenPos}
+        listings={d.listings}
+        opening
       />
-      {!pos.length && (
-        <label className="chk">
-          <input
-            type="checkbox"
-            checked={noSecurities}
-            onChange={(e) => {
-              setNoSecurities(e.target.checked);
-              setCompare(null);
-            }}
-          />
-          {t("imports.zeroHoldings")}
-        </label>
-      )}
-      <div className="fg">
-        <F label={t("imports.statementNavOpt")}>
-          <input
-            type="number"
-            step=".01"
-            value={nav}
-            onChange={(e) => {
-              setNav(e.target.value);
-              setCompare(null);
-            }}
-          />
-        </F>
-      </div>
       <div className="acts">
         <button
           type="button"
           className="btn pri"
-          onClick={() => run(async () => setCompare(await api.compare(compareArgs())), false)}
+          onClick={() =>
+            run(async () => {
+              await api.opening({ account, date, cash: cashAmounts(openCash), positions: openPos });
+              setDrawer(null);
+              showHistory();
+            }, t("imports.openingSaved"))
+          }
         >
-          {t("imports.compareBtn")}
+          {t("imports.saveOpening")}
         </button>
-        <button type="button" className="btn" onClick={() => openManual(false)}>
-          {t("imports.addOneFlowBtn")}
-        </button>
-        {!demo && nav.trim() && (
-          <button
-            type="button"
-            className="btn"
-            onClick={() =>
-              run(() => api.recordAccountValue({ ...compareArgs(), positions: pos }), t("imports.brokerNavSaved"))
-            }
-          >
-            {t("imports.adoptBrokerNavBtn")}
+      </div>
+    </Drawer>
+  );
+
+  const files = (
+    <Drawer icon={Upload} title={selected?.custom ? t("custom.import") : t("imports.tile.file")} onClose={() => setDrawer(null)}>
+      {selected?.custom ? (
+        <CustomCsvImport key={selected.id} embedded account={selected} run={run} onHistory={showHistory} />
+      ) : (
+        <div className="file-targets">
+          {(selected ? [selected] : active).map((a) => (
+            <div className="file-target" key={a.id}>
+              <span className="acct-ico">{a.custom ? <FileSpreadsheet {...ico} /> : <Building2 {...ico} />}</span>
+              <span className="file-target-name">
+                <b>{a.name}</b>
+                <span className="cap">
+                  {a.custom ? t("custom.csv") : states[a.id].broker ? brokerNames[states[a.id].broker] : t("settings.conn.notConnected")}
+                </span>
+              </span>
+              <span className="sp" />
+              {a.custom ? (
+                <button
+                  type="button"
+                  className="btn sm"
+                  onClick={() => {
+                    selectAccount(a.id);
+                    setDrawer("file");
+                  }}
+                >
+                  <FileSpreadsheet {...ico} />
+                  {t("custom.import")}
+                </button>
+              ) : (
+                fileBrokers(a).map((b) => fileButton(b, a.id))
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Drawer>
+  );
+
+  const workspaceTitle = selected ? selected.name : t("imports.allWorkspace");
+  const workspace = (
+    <section className="card workspace" aria-label={workspaceTitle}>
+      <div className="ws-head">
+        <div className="ws-title">
+          <h2>{selected ? (selected.custom ? <FileSpreadsheet {...ico} /> : <Building2 {...ico} />) : <Layers {...ico} />}{workspaceTitle}</h2>
+          <p className="cap">
+            {selected
+              ? [selected.custom ? selected.brokerName || t("custom.name") : selectedBroker ? brokerNames[selectedBroker] : t("settings.conn.notConnected"),
+                 selectedState?.label, lastLine(selected.id)].filter(Boolean).join(t("common.middot"))
+              : t("imports.allWorkspaceSub")}
+          </p>
+        </div>
+        {selected && (
+          <button type="button" className={"btn sm" + (drawer === "opening" ? " on" : "")} aria-expanded={drawer === "opening"} onClick={() => toggleDrawer("opening")}>
+            <Flag {...ico} />
+            {t(selected.custom ? "custom.opening" : "imports.tile.opening")}
           </button>
         )}
       </div>
-      {compare && (
-        <>
-          <ListingChoices
-            choices={compare.choices}
-            resolve={(c, id) =>
-              run(async () => {
-                await api.rememberListing({ ...c, assetId: id });
-                setCompare(await api.compare(compareArgs()));
-              }, false)
-            }
-          />
-          {!compare.choices.length &&
-            quantityGaps(compare.rows, accountName, t).map((line) => (
-              <p className="warn result" key={line}>
-                {line}
-              </p>
+      <div className="action-tiles" role="group" aria-label={t("imports.actionsAria")}>
+        {tiles}
+      </div>
+      {drawer === "file" && files}
+      {drawer === "manual" && manual}
+      {drawer === "reconcile" && statement}
+      {drawer === "opening" && opening}
+      {shownReports.length > 0 && <div className="sync-results">{shownReports.map(brokerCard)}</div>}
+    </section>
+  );
+
+  const batchCard = batches.length > 0 && (
+    <Panel title={t("imports.recentBatches")} className="batches">
+      <div className="tw">
+        <table>
+          <thead>
+            <tr>
+              <th>{t("imports.col.source")}</th>
+              {sel === "all" && <th className="l">{t("imports.col.account")}</th>}
+              <th className="l">{t("imports.col.time")}</th>
+              <th>{t("imports.col.imported")}</th>
+              <th>{t("imports.col.duplicate")}</th>
+              <th>{t("imports.col.repaired")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {batches.slice(0, 8).map((b) => (
+              <tr key={b.id}>
+                <td>{sourceLabel(b.source)}</td>
+                {sel === "all" && <td className="l">{nameOf(b.account)}</td>}
+                <td className="l">{formatDateTime(b.created)}</td>
+                <td>{b.data.imported}</td>
+                <td>{b.data.duplicate}</td>
+                <td>{(b.data.updated || 0) + (b.data.repaired || 0)}</td>
+              </tr>
             ))}
-          <div className="tw">
-            <table>
-              <thead>
-                <tr>
-                  <th>{t("imports.col.item")}</th>
-                  <th>{t("imports.col.statement")}</th>
-                  <th>{t("imports.col.local")}</th>
-                  <th>{t("imports.col.diff")}</th>
-                  <th>{t("imports.col.ledgerLink")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {compare.rows.map((r) => (
-                  <tr key={r.label}>
-                    <td>{r.label}</td>
-                    <td>{num(r.expected)}</td>
-                    <td>{num(r.actual)}</td>
-                    <td className={r.delta == null || Number(r.delta) !== 0 ? "warn" : "up"}>
-                      {r.delta == null ? t("common.pending") : num(r.delta).replace(/^-/, "−")}
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="lnk"
-                        onClick={() => {
-                          setSearch(r.symbol ? r.symbol : "");
-                          chooseTab("history");
-                        }}
-                      >
-                        {t("imports.viewLedger")}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <p className={(compare.ok ? "up" : "warn") + " result"}>
-            {compare.ok ? t("imports.matchOk") : t("imports.matchMismatch")} {compare.warnings.join(" ")}
-          </p>
-          {compare.ok && (
-            <>
-              <label className="chk">
-                <input type="checkbox" checked={flow} onChange={(e) => setFlow(e.target.checked)} />
-                {t("imports.flowsChecked")}
-              </label>
-              <button
-                type="button"
-                className="btn pri"
-                disabled={!flow}
-                onClick={() =>
-                  run(async () => {
-                    await api.confirmStatement(compareArgs());
-                    setCompare(null);
-                    setFlow(false);
-                    onPage("overview");
-                  }, t("imports.reconcileSaved"))
-                }
-              >
-                {t("imports.completeReconcile")}
-              </button>
-            </>
-          )}
-        </>
-      )}
+          </tbody>
+        </table>
+      </div>
     </Panel>
   );
 
   const history = (
-    <Panel
-      title={t("imports.historyTitle")}
-      action={
-        <button type="button" className="btn pri" disabled={!account} onClick={() => openManual(false)}>
-          {t("imports.addEntryBtn")}
-        </button>
-      }
-    >
+    <section className="card history" aria-label={t("imports.historyTitle")} ref={historyRef}>
       <div className="row">
-        <input
-          className="btn history-search"
-          aria-label={t("imports.filterLedgerAria")}
-          placeholder={t("imports.filterLedgerPlaceholder")}
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setOffset(0);
-          }}
-        />
+        <h2><FileText {...ico} />{t("imports.ledgerFor", { account: selected ? selected.name : t("imports.allAccounts") })}</h2>
+        <span className="sp" />
+        <span className="search-box">
+          <Search {...ico} />
+          <input
+            className="btn history-search"
+            type="search"
+            aria-label={t("imports.filterLedgerAria")}
+            placeholder={t("imports.filterLedgerPlaceholder")}
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setOffset(0);
+            }}
+          />
+        </span>
         <label className="chk">
           <input type="checkbox" checked={voided} onChange={(e) => setVoided(e.target.checked)} />
           {t("imports.showVoided")}
@@ -867,6 +1199,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
             <thead>
               <tr>
                 <th>{t("imports.col.date")}</th>
+                {sel === "all" && <th className="l">{t("imports.col.account")}</th>}
                 <th className="l">{t("imports.col.type")}</th>
                 <th className="l">{t("imports.col.security")}</th>
                 <th>{t("imports.col.qtyPrice")}</th>
@@ -890,6 +1223,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                     onClick={superseded(v) ? undefined : () => run(() => edit(v), false)}
                   >
                     <td>{String(v.date).slice(0, 10)}</td>
+                    {sel === "all" && <td className="l">{nameOf(v.accountId)}</td>}
                     <td className="l">
                       {v.metadata?.fx && !v.metadata?.customRecord
                         ? (v.activityType === "TRANSFER_OUT" ? t("imports.fxSell") : t("imports.fxBuy"))
@@ -957,72 +1291,29 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           </span>
         )}
       </div>
-    </Panel>
-  );
-
-  const opening = (
-    <Panel title={t("imports.openingTitle")}>
-      <p className="muted">{t("imports.openingDesc")}</p>
-      <div className="fg">
-        <F label={t("imports.openingDate")}>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        </F>
-      </div>
-      <StatementLines
-        cash={openCash}
-        setCash={setOpenCash}
-        positions={openPos}
-        setPositions={setOpenPos}
-        listings={d.listings}
-        opening
-      />
-      <div className="acts">
-        <button
-          type="button"
-          className="btn pri"
-          onClick={() =>
-            run(async () => {
-              await api.opening({ account, date, cash: cashAmounts(openCash), positions: openPos });
-              chooseTab("history");
-            }, t("imports.openingSaved"))
-          }
-        >
-          {t("imports.saveOpening")}
-        </button>
-      </div>
-    </Panel>
+    </section>
   );
 
   return (
     <div className="imp imp-page">
-      <div className="row m0">
-        <Seg items={tabIds.map((id) => [id, t(custom && id === "opening" ? "custom.opening" : `imports.tab.${id}`)])} value={tab} onChange={chooseTab} />
+      <div className="imp-head">
+        <p className="cap">{t("imports.pageSub")}</p>
         <span className="sp" />
-        {(tab !== "file" || hasCustom) && <AccountOptions className="btn" d={d} value={account} set={selectAccount} />}
+        <button type="button" className="btn pri update-all" onClick={updateAll}>
+          <RefreshCw {...ico} />
+          {t("imports.updateAll")}
+        </button>
       </div>
-      {tab === "file" && custom && (
-        <CustomCsvImport key={account} account={destination} run={run}
-          onManual={() => openManual(false)} onOpening={() => chooseTab("opening")} onHistory={() => chooseTab("history")} />
-      )}
-      {tab === "file" && !custom && (
-        <Grid
-          layout={syncLayout(previews, { batches: !!batchCard })}
-          panels={{
-            update,
-            batches: batchCard,
-            ...Object.fromEntries(previews.map((b) => [b, brokerCard(reports[b])])),
-          }}
-        />
-      )}
-      {tab === "check" && (
-        <div className={cols > 1 && evidence ? "cap1760" : "cap880"}>
-          <Grid layout={checkLayout(!!evidence)} panels={{ statement, evidence }} />
+      <div className="master-detail">
+        {master}
+        <div className="detail-col">
+          {workspace}
+          {history}
+          {batchCard}
         </div>
-      )}
-      {tab === "history" && history}
-      {tab === "opening" && <div className="stack cap880">{opening}</div>}
+      </div>
 
-      {tab === "history" && amend && (
+      {amend && (
         <Detail title={t("imports.amendModalTitle")} onClose={() => setAmend(null)}>
           <div className="imp">
             <div className="dl">
@@ -1089,7 +1380,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
                 className="btn pri"
                 onClick={() =>
                   run(async () => {
-                    await api.amend({ ...blank, ...amendForm, account, id: amend.id, prior: JSON.stringify(amend) });
+                    await api.amend({ ...blank, ...amendForm, account: amend.accountId || account, id: amend.id, prior: JSON.stringify(amend) });
                     setAmend(null);
                   }, t("imports.amendSaved"))
                 }
@@ -1104,7 +1395,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         </Detail>
       )}
 
-      {tab === "history" && deleteTarget && (
+      {deleteTarget && (
         <Modal title={t("imports.deleteTitle")} close={() => setDeleteTarget(null)}>
           <p>{t("imports.deleteDescription", {
             date: String(deleteTarget.date).slice(0, 10),
@@ -1131,53 +1422,6 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         </Modal>
       )}
 
-      {modal === "file" && (
-        <Modal title={t("imports.fileModalTitle")} close={() => setModal(null)}>
-          <div className="imp">
-            {["ibkr", "webull"].map((b) => (
-              <div className="fg" key={b} style={{ alignItems: "end" }}>
-                <F label={t("imports.targetAccountLabel", { broker: b.toUpperCase() })}>
-                  <AccountOptions d={d} brokerOnly value={mapping[b]} set={(id) => setMapping({ ...mapping, [b]: id })} />
-                </F>
-                <button
-                  type="button"
-                  className="btn"
-                  style={{ justifySelf: "start" }}
-                  disabled={!mapping[b]}
-                  onClick={() => {
-                    setModal(null);
-                    prepare("file", b, mapping[b]);
-                  }}
-                >
-                  {t(b === "ibkr" ? "imports.chooseIbkrXml" : "imports.chooseWebullCsv")}
-                </button>
-              </div>
-            ))}
-          </div>
-        </Modal>
-      )}
-      {modal === "entry" && (
-        <Modal title={t("imports.manualPickTitle")} close={() => setModal(null)}>
-          <div className="imp">
-            <div className="fg">
-              <F label={t("imports.belongAccount")}>
-                <AccountOptions d={d} value={account} set={selectAccount} />
-              </F>
-            </div>
-            <div className="acts">
-              <button type="button" className="btn" onClick={() => openManual(false, "BUY")}>
-                {t("imports.manualBuySell")}
-              </button>
-              <button type="button" className="btn" onClick={() => setModal("position")}>
-                {t("imports.manualHolding")}
-              </button>
-              <button type="button" className="btn" onClick={() => openManual()}>
-                {t("imports.manualCashFlow")}
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
       {modal === "position" && (
         <HoldingEditor d={d} run={run} account={account} action="position" close={() => setModal(null)} />
       )}
@@ -1223,93 +1467,6 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
               </button>
             </div>
           </div>
-        </Modal>
-      )}
-      {modal === "manual" && custom && (
-        <CustomManualEntry d={d} account={destination} type={manualType} run={run}
-          close={() => setModal(null)} onSaved={() => {
-            setModal(null);
-            setCompare(null);
-            setOffset(0);
-            setSearch("");
-            chooseTab("history");
-          }} />
-      )}
-      {modal === "manual" && !custom && (
-        <Modal title={t("imports.manualModalTitle")} close={() => setModal(null)}>
-          <form
-            className="imp"
-            onSubmit={(e) => {
-              e.preventDefault();
-              run(async () => {
-                await api.manual({ account, ...form });
-                setModal(null);
-                setCompare(null);
-              }, t("imports.entryBooked"));
-            }}
-          >
-            <div className="fg">
-              <F label={t("imports.field.type")}>
-                <select
-                  value={form.type}
-                  onChange={(e) =>
-                    setForm({ ...form, type: e.target.value, assetId: "", symbol: "", mic: "", linkDividend: false })
-                  }
-                >
-                  {Object.keys(types).map((k) => (
-                    <option key={k} value={k}>
-                      {typeLabel(k)}
-                    </option>
-                  ))}
-                </select>
-              </F>
-              {["BUY", "SELL", "DIVIDEND"].includes(form.type) &&
-              (form.type !== "DIVIDEND" || form.symbol || form.linkDividend) ? (
-                <SecurityFields d={d} form={form} setForm={setForm} />
-              ) : (
-                form.type === "DIVIDEND" && (
-                  <button type="button" className="lnk" onClick={() => change("linkDividend", true)}>
-                    {t("imports.linkDividend")}
-                  </button>
-                )
-              )}
-              {[
-                ["date", t("imports.field.date"), "date"],
-                ...(["BUY", "SELL"].includes(form.type) ||
-                (form.type === "DIVIDEND" && (form.linkDividend || form.symbol))
-                  ? []
-                  : [["currency", t("imports.field.currency"), "text"]]),
-                ...(["BUY", "SELL"].includes(form.type)
-                  ? [
-                      ["quantity", t("imports.field.qty"), "number"],
-                      ["price", t("imports.field.price"), "number"],
-                      ["fee", t("imports.field.fee"), "number"],
-                    ]
-                  : [["amount", t("imports.field.amount"), "number"]]),
-                ...(form.type.startsWith("TRANSFER") ? [["group", t("imports.field.transferGroup"), "text"]] : []),
-                ["reference", t("imports.field.reference"), "text"],
-                ["note", t("imports.field.note"), "text"],
-              ].map(([k, l, kindType]) => (
-                <F key={k} label={l}>
-                  <input
-                    required={!["note", "fee", "mic", "group"].includes(k)}
-                    type={kindType}
-                    step="any"
-                    value={form[k]}
-                    onChange={(e) => change(k, e.target.value)}
-                  />
-                </F>
-              ))}
-            </div>
-            <div className="acts">
-              <button className="btn pri" type="submit">
-                {t("imports.confirmBookTo", { account: accountName })}
-              </button>
-              <button type="button" className="btn" onClick={() => setModal(null)}>
-                {t("app.cancel")}
-              </button>
-            </div>
-          </form>
         </Modal>
       )}
     </div>

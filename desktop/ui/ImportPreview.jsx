@@ -119,6 +119,53 @@ function ActivityChanges({ rows, done }) {
   );
 }
 
+// Account data changes (balances, quantities, quotes) as rows in the same four columns as the activity table.
+// A label that starts with its own date ("2026-10-30 AAPL 持仓报价 · …") puts that date in the date column.
+export function editRow(edit, day) {
+  const dated = String(edit.label).match(/^(\d{4}-\d{2}-\d{2}) (.+)$/);
+  return { date: dated ? dated[1] : day || "", item: dated ? dated[2] : edit.label, fresh: edit.before == null };
+}
+
+function AccountEdits({ edits, day, done }) {
+  const { t, typeLabel } = useI18n();
+  return (
+    <div className="tw">
+      <table className="edits">
+        <thead>
+          <tr>
+            <th>{t("preview.col.change")}</th>
+            <th className="l">{t("preview.col.date")}</th>
+            <th className="l">{t("preview.col.item")}</th>
+            <th className="l">{t("preview.col.detail")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {edits.map((edit, i) => {
+            const row = editRow(edit, day);
+            const status = row.fresh ? "new" : "update";
+            return (
+              <tr key={i}>
+                <td className={"st " + statusTones[status]}>{t(`preview.status.${status}${done ? "Done" : ""}`)}</td>
+                <td className="l">{row.date || "—"}</td>
+                <td className="l">{row.item}</td>
+                <td className="l">
+                  {!row.fresh && (
+                    <>
+                      <s className="cap">{formatted(edit.before, edit.format, edit.oldCurrency || edit.currency, t, typeLabel)}</s>{" "}
+                      <span aria-label={t("preview.changedToAria")}>→</span>{" "}
+                    </>
+                  )}
+                  <b>{formatted(edit.after, edit.format, edit.currency, t, typeLabel)}</b>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function AccountChanges({ report, rows, edits, name, reconcile, done }) {
   const { t } = useI18n();
   const [limit, setLimit] = useState(12);
@@ -134,11 +181,7 @@ function AccountChanges({ report, rows, edits, name, reconcile, done }) {
           <div className="sub">
             {t("preview.accountEditsTitle")}{report.statement?.date && <span className="cap">{report.statement.date}</span>}
           </div>
-          <div className="diffs">
-            {edits.slice(0, limit).map((edit, i) => (
-              <Difference key={i} edit={edit} />
-            ))}
-          </div>
+          <AccountEdits edits={edits.slice(0, limit)} day={report.statement?.date} done={done} />
           {edits.length > limit && (
             <button type="button" className="lnk cap more" onClick={() => setLimit(limit + 12)}>
               {t("preview.showMoreEdits", { count: Math.min(12, edits.length - limit) })}
@@ -262,13 +305,13 @@ export function ImportPreview({ result, done, accounts, confirm, close, reconcil
 
 // One broker's sync in its own card: reading, failed (retry this broker alone) or its preview / result.
 // `children` goes above the preview (listing choices to settle first).
-export function BrokerResult({ report: r, accounts, onConfirm, onClose, onRetry, onConnect, onReconcile, children }) {
+export function BrokerResult({ report: r, title, accounts, onConfirm, onClose, onRetry, onConnect, onReconcile, children }) {
   const { t } = useI18n();
   const ready = !r.loading && !r.error;
   return (
     <section className="card broker" aria-label={t("preview.cardAria", { broker: r.broker.toUpperCase() })}>
       <div className="row">
-        <h2>{brokerNames[r.broker]}</h2>
+        <h2>{title || brokerNames[r.broker]}</h2>
         {ready && <span className="tag">{r.done ? t("preview.titleDone") : t("preview.titlePreview")}</span>}
       </div>
       {r.loading ? (

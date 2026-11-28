@@ -76,10 +76,10 @@ delete env.ELECTRON_RUN_AS_NODE;
     // The controls at the top of a scrollable page need room for the entire keyboard focus outline.
     await resize(1743, 910);
     await nav.getByRole("button", { name: "设置", exact: true }).click();
-    await p.getByRole("group", { name: "设置页签" }).getByRole("button", { name: "数据", exact: true }).focus();
+    await p.getByRole("navigation", { name: "设置分类" }).getByRole("button", { name: "行情与分类规则" }).focus();
     const themeSelect = p.getByRole("combobox", { name: "主题", exact: true });
-    // Other controls sit between the tabs and the theme selector, so tab until it has the focus.
-    for (let i = 0; i < 6 && !(await themeSelect.evaluate((select) => select === document.activeElement)); i++)
+    // The status strip and other categories sit between the rail and the theme selector, so tab until it has the focus.
+    for (let i = 0; i < 12 && !(await themeSelect.evaluate((select) => select === document.activeElement)); i++)
       await p.keyboard.press("Tab");
     assert.ok(await themeSelect.evaluate((select) => {
       const css = getComputedStyle(select);

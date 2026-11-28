@@ -29,6 +29,9 @@ const nav = (p) => p.getByRole("navigation", { name: "页面" });
 const preset = (p, name) => button(p.getByRole("group", { name: "期间" }), name);
 const title = (p, name) => p.getByRole("heading", { level: 1, name, exact: true });
 const welcome = (p) => button(p, /^打开示例账本/);
+const updateAll = (p) => button(p.locator(".imp-head"), "一键更新全部账户");
+const accountList = (p) => p.getByRole("navigation", { name: "账户列表" });
+const actions = (p) => p.getByRole("group", { name: "操作" });
 const assets = (p, amount) => button(p, "总资产 A$" + amount + "，查看明细");
 
 async function withDesktop(directory, verify) {
@@ -209,7 +212,7 @@ async function verifyAdaptiveDisplay(app, p, profile) {
   await open(p, "配置分析");
   await p.locator(".allocation-breakdown").getByRole("heading", { name: "公司敞口明细" }).waitFor();
   await open(p, "导入与对账");
-  await p.locator(".imp .cols").waitFor();
+  await p.locator(".imp .master-detail").waitFor();
   await open(p, "设置");
   const waitScale = (scale) => p.waitForFunction(
     (value) => document.querySelector(".settings-zoom output")?.textContent === value, scale);
@@ -303,7 +306,7 @@ async function verifyHoldingLink(p) {
 
 async function verifyReconciliation(p) {
   await open(p, "导入与对账");
-  await button(p, /^同步券商/).click();
+  await updateAll(p).click();
   const webull = region(p, "WEBULL 同步结果");
   const preview = region(webull, "导入预览");
   const trade = preview.getByRole("row").filter({ hasText: "买入 BHP" });
@@ -364,8 +367,7 @@ async function verifyDeleteFlow(p) {
     type: "DEPOSIT", reference: "SMOKE-DELETE",
   }));
   await open(p, "导入与对账");
-  await button(p, "交易流水").click();
-  await p.locator("select.btn").selectOption("demo-webull");
+  await button(accountList(p), /^Webull Australia/).click();
   const row = p.getByRole("row").filter({ hasText: "SMOKE-DELETE" });
   await button(row, "修改").waitFor();
   await button(row, "删除").click();
@@ -382,30 +384,38 @@ async function verifyBrokerRetry(app, p, file) {
   await open(p, "导入与对账");
   const webull = region(p, "WEBULL 同步结果");
   const ibkr = region(p, "IBKR 同步结果");
-  await p.locator(".account-mapping summary").click();
-  const mapping = p.getByLabel("WEBULL 入账账户");
-  await mapping.selectOption("");
-  await button(p, /^同步券商/).click();
-  await button(webull, "单独重试").waitFor();
+  // The Webull file is missing at first, so only that account fails.
+  const csv = file.replace(/\.xml$/i, ".csv");
+  fs.rmSync(csv, { force: true });
 
   const trades = Array.from({ length: 6 }, (_, i) =>
     '<Trade accountId="DEMO-IBKR" assetCategory="STK" symbol="AAPL" description="Apple" listingExchange="NASDAQ" ' +
     'dateTime="20261030;100000" buySell="BUY" quantity="1" tradePrice="208" currency="USD" ibCommission="0" ibExecID="SMOKE-' + i + '"/>');
   fs.writeFileSync(file, '<FlexQueryResponse><FlexStatements><FlexStatement accountId="DEMO-IBKR" fromDate="20261027" toDate="20261030">' +
     '<AccountInformation currency="AUD"/><Trades>' + trades.join("") + '</Trades></FlexStatement></FlexStatements></FlexQueryResponse>');
-  await app.evaluate(({ dialog }, file) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
-  }, file);
+  await app.evaluate(({ dialog }, [xml, csv]) => {
+    dialog.showOpenDialog = async (...args) => {
+      const options = args.find((arg) => arg && arg.filters) || {};
+      const wantsXml = (options.filters || []).some((filter) => filter.extensions.includes("xml"));
+      return { canceled: false, filePaths: [wantsXml ? xml : csv] };
+    };
+  }, [file, csv]);
+  await button(accountList(p), /^Webull Australia/).click();
+  await button(actions(p), /^导入本地文件/).click();
+  await button(webull, "单独重试").waitFor();
+  await button(accountList(p), /^全部账户/).click();
   const importXml = async () => {
-    await button(p, /^导入文件/).click();
-    await button(p.getByRole("dialog"), /选择 Flex XML/).click();
+    await button(actions(p), /^导入本地文件/).click();
+    const target = p.getByRole("region", { name: "导入本地文件", exact: true }).locator(".file-target").filter({ hasText: "IBKR" });
+    await button(target, /选择 Flex XML/).click();
   };
   await importXml();
   assert.ok(await button(webull, "单独重试").isVisible());
   await button(ibkr, "确认导入 6 笔").click();
   const result = region(ibkr, "导入结果").getByText("已新增 6 笔流水", { exact: true });
   await result.waitFor();
-  await mapping.selectOption("demo-webull");
+  fs.writeFileSync(csv, "Order ID,Symbol,Name,Side,Status,Filled Quantity,Average Price,Filled Time,Currency,Commission,Exchange\n" +
+    "WB-DEMO-173,BHP,BHP Group,BUY,Filled,10,44.00,2026-10-27,AUD,0,ASX");
   await button(webull, "单独重试").click();
   await button(webull, "确认导入 1 笔").waitFor();
   assert.ok(await result.isVisible());
@@ -442,7 +452,7 @@ async function verifyBackup(app, p, file, password, directory) {
   await open(p, "设置");
   const version = await app.evaluate(({ app: electronApp }) => electronApp.getVersion());
   await p.getByRole("group", { name: "版本与更新" }).getByText(`Stock Portfolio ${version}`, { exact: true }).waitFor();
-  await button(p.getByRole("group", { name: "设置页签" }), "账本").click();
+  await button(p.getByRole("navigation", { name: "设置分类" }), "账本与备份").click();
   await button(p, "备份账本").click();
   const prompt = p.getByRole("dialog", { name: "设置备份密码", exact: true });
   await prompt.getByLabel("备份密码（至少 12 个字符）").fill(password);
@@ -517,7 +527,7 @@ async function captureMatrix(app, p, output) {
       await open(p, name);
       if (key === "performance") await p.getByRole("img", { name: "累计收益曲线", exact: true }).waitFor();
       if (key === "imports") {
-        await button(p, /^同步券商/).click();
+        await updateAll(p).click();
         await region(region(p, "IBKR 同步结果"), "导入预览").waitFor();
         await button(region(p, "WEBULL 同步结果"), "确认导入 1 笔").waitFor();
       }
