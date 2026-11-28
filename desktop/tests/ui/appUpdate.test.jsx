@@ -12,12 +12,42 @@ const text = (node) => renderToStaticMarkup(node).replace(/<[^>]+>/g, " ").repla
 describe("release notes", () => {
   it("groups items under their headings", () => {
     expect(parseNotes(ready.notes)).toEqual([
-      { title: "新功能", items: ["应用内更新"] },
-      { title: "修复", items: ["升级前备份账本"] },
+      { title: "新功能", kind: "new", items: ["应用内更新"] },
+      { title: "修复", kind: "fixed", items: ["升级前备份账本"] },
     ]);
   });
+  it("names the category of a heading in each language", () => {
+    const kinds = (notes) => parseNotes(notes).map((group) => group.kind);
+    expect(kinds("## New\n- a\n## Improved\n- b\n## Fixed\n- c\n## Maintenance\n- d")).toEqual(["new", "improved", "fixed", "other"]);
+    expect(kinds("## 新功能\n- a\n## 改进\n- b\n## 修复\n- c\n## 安装说明\n- d")).toEqual(["new", "improved", "fixed", "other"]);
+    expect(kinds("## 新功能\n- a\n## 改進\n- b\n## 修復\n- c")).toEqual(["new", "improved", "fixed"]);
+    const html = renderToStaticMarkup(<UpdateNotes notes={"## 新功能\n- a\n## 修复\n- b\n## 其他\n- c"} />);
+    expect(html).toContain('<span class="upd-tag new">新功能</span>');
+    expect(html).toContain('<span class="upd-tag fixed">修复</span>');
+    expect(html).toContain('<span class="upd-tag other">其他</span>');
+  });
+  it("shows only the section written in the app's language", () => {
+    const notes = "# English\n## New\n- Faster\n# 简体中文\n## 新功能\n- 更快\n# 繁體中文\n## 新功能\n- 更快速";
+    const items = (locale) => parseNotes(notes, locale).flatMap((group) => group.items);
+    expect(items("en")).toEqual(["Faster"]);
+    expect(items("zh-CN")).toEqual(["更快"]);
+    expect(items("zh-TW")).toEqual(["更快速"]);
+    // The default test locale is Simplified Chinese.
+    expect(text(<UpdateNotes notes={notes} />)).toBe("新功能 更快");
+  });
+  it("falls back to the nearest language, then English, then whatever exists", () => {
+    const items = (notes, locale) => parseNotes(notes, locale).flatMap((group) => group.items);
+    expect(items("# English\n- Faster\n# 简体中文\n- 更快", "zh-TW")).toEqual(["更快"]);
+    expect(items("# English\n- Faster", "zh-CN")).toEqual(["Faster"]);
+    expect(items("# 简体中文\n- 更快", "en")).toEqual(["更快"]);
+    // Notes without language sections are shown whole, as are lines before the first section.
+    expect(items("## New\n- Faster\n## 新功能\n- 更快", "en")).toEqual(["Faster", "更快"]);
+    expect(items("Read this first\n# English\n- Faster\n# 简体中文\n- 更快", "en")).toEqual(["Read this first", "Faster"]);
+    // A top-level heading that names no language is an ordinary heading.
+    expect(parseNotes("# Highlights\n- Faster", "en")).toEqual([{ title: "Highlights", kind: "other", items: ["Faster"] }]);
+  });
   it("keeps notes that have no headings or bullets", () => {
-    expect(parseNotes("Faster sync\n* Fewer prompts")).toEqual([{ title: "", items: ["Faster sync", "Fewer prompts"] }]);
+    expect(parseNotes("Faster sync\n* Fewer prompts")).toEqual([{ title: "", kind: "other", items: ["Faster sync", "Fewer prompts"] }]);
     expect(parseNotes("")).toEqual([]);
     expect(parseNotes(null)).toEqual([]);
   });

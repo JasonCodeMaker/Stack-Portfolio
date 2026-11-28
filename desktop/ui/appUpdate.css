@@ -137,11 +137,33 @@
   gap: 12px;
 }
 .upd-notes h3 {
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   font-size: 12px;
-  line-height: 16px;
+  line-height: 18px;
   font-weight: 600;
+}
+/* Category tags: new, improved and fixed each have their own colour. */
+.upd-tag {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 18px;
+  font-weight: 600;
+  background: var(--surface2);
   color: var(--l2);
+}
+.upd-tag.new {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  color: var(--accent);
+}
+.upd-tag.improved {
+  background: color-mix(in srgb, var(--s2) 16%, var(--surface));
+  color: var(--s2);
+}
+.upd-tag.fixed {
+  background: color-mix(in srgb, var(--warn) 16%, var(--surface));
+  color: var(--warn);
 }
 .upd-notes ul {
   margin: 0;
