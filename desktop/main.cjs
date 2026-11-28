@@ -8,6 +8,7 @@ const path = require("node:path"),
 const { randomUUID } = require("node:crypto");
 const { requestFactoryReset, finishFactoryReset } = require("./factoryReset.cjs");
 const { createDiagnostics } = require("./diagnostics.cjs");
+const { launchProfile } = require("./launchProfile.cjs");
 const {
   localKeyName, localKey, backupKey, isPlainDatabase, openDatabase, checkIntegrity,
   encryptedCopy, publishFile, lockForReplacement, assertNoJournal,
@@ -83,8 +84,11 @@ const { EtfCache } = require("./allocation/storage/etfCache.ts");
 const { parseManualCsv, snapshotToCsv } = require("./allocation/domain/etf.ts");
 const { saveAllocationSettings } = require("./allocation/storage/settings.ts");
 app.setName("Stock Portfolio");
-if (process.env.STACK_PORTFOLIO_TEST_DIR) app.setPath("userData", process.env.STACK_PORTFOLIO_TEST_DIR);
-else app.setPath("userData", path.join(app.getPath("appData"), "Stack Portfolio"));
+// Must stay ahead of every storage, preference, diagnostics and single-instance call:
+// they all resolve their location from userData.
+const launch = launchProfile({ argv: process.argv, env: process.env, appData: app.getPath("appData") });
+app.setPath("userData", launch.userData);
+const windowTitle = launch.trial ? "Stock Portfolio — TRIAL" : "Stock Portfolio";
 let db,
   mode,
   setupDraft,
@@ -436,6 +440,7 @@ const handlers = {
     return {
       storageError,
       appVersion: app.getVersion(),
+      trial: launch.trial,
       mode: mode || null,
       theme: nativeTheme.themeSource,
       ...syncLanguage(),
@@ -1133,7 +1138,7 @@ function createWindow() {
   );
   let minimum = minimumWindowSize(screen.getDisplayMatching(bounds).workArea);
   win = new BrowserWindow({
-    title: "Stock Portfolio",
+    title: windowTitle,
     ...bounds,
     minWidth: minimum.width,
     minHeight: minimum.height,
@@ -1147,6 +1152,8 @@ function createWindow() {
       sandbox: true,
     },
   });
+  // The page's own <title> would otherwise replace the trial marker in the title bar.
+  if (launch.trial) win.on("page-title-updated", (event) => event.preventDefault());
   const contents = win.webContents;
   contents.setZoomMode("isolated");
   diagnosticJob("windowLayout", "configure", () => contents.setVisualZoomLevelLimits(1, 1));

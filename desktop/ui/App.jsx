@@ -429,6 +429,12 @@ function Application() {
   );
   const banners = (
     <>
+      {home?.trial && (
+        <div className="trial-flag" role="note" aria-label={t("app.trialAria")}>
+          <b>{t("app.trialBadge")}</b>
+          <span>{t("app.trialDetail")}</span>
+        </div>
+      )}
       {busy && (
         <div className="busy" role="status">
           <RefreshCw size={14} /> {t("app.busy")}
