@@ -14,7 +14,8 @@ function recordValue(value) {
   return [symbol, cash].filter(Boolean).join(" · ");
 }
 
-export function CustomCsvImport({ account, run, onManual, onOpening, onHistory }) {
+// embedded: shown inside the Imports workspace drawer, without its own card, title or entry shortcuts.
+export function CustomCsvImport({ account, run, onManual, onOpening, onHistory, embedded = false }) {
   const { t, typeLabel } = useI18n();
   const [preview, setPreview] = useState(null);
   const [limit, setLimit] = useState(previewPage);
@@ -32,8 +33,8 @@ export function CustomCsvImport({ account, run, onManual, onOpening, onHistory }
   const rows = preview?.rows ?? [];
   const errorsFirst = [...rows.filter((row) => row.status === "invalid"), ...rows.filter((row) => row.status !== "invalid")];
   return (
-    <section className="card cap880 custom-import" aria-label={t("custom.import")}>
-      <h2>{account.name}</h2>
+    <section className={embedded ? "custom-import embedded" : "card cap880 custom-import"} aria-label={t("custom.import")}>
+      {!embedded && <h2>{account.name}</h2>}
       <p className="muted">{t("custom.importHelp")}</p>
       <div className="acts">
         <button className="btn pri" type="button" disabled={busy} onClick={() => act(async () => {
@@ -51,8 +52,8 @@ export function CustomCsvImport({ account, run, onManual, onOpening, onHistory }
         <button className="btn" type="button" disabled={busy} onClick={() => act(async () => {
           await api.downloadCustomCsv({ account: account.id });
         })}><Download size={16} aria-hidden="true" /> {t("custom.download")}</button>
-        <button className="btn" type="button" onClick={onManual}>{t("imports.addEntryBtn")}</button>
-        <button className="btn" type="button" onClick={onOpening}>{t("custom.opening")}</button>
+        {onManual && <button className="btn" type="button" onClick={onManual}>{t("imports.addEntryBtn")}</button>}
+        {onOpening && <button className="btn" type="button" onClick={onOpening}>{t("custom.opening")}</button>}
       </div>
       <details>
         <summary>{t("custom.csvFormat")}</summary>

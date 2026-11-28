@@ -150,15 +150,13 @@ async function launch() {
     assert.ok(await head.evaluate((el) => el.scrollWidth <= el.clientWidth));
 
     await p.getByRole("navigation", { name: "页面" }).getByRole("button", { name: "导入与对账", exact: true }).click();
-    const checkTab = p.getByRole("button", { name: "和券商结单核对", exact: true });
-    await checkTab.click();
+    await p.getByRole("group", { name: "操作" }).getByRole("button", { name: /^结单对账/ }).click();
     const account = p.getByRole("main").getByLabel("账本账户");
     await account.selectOption({ label: longName });
     assert.ok(await p.getByRole("main").evaluate((el) => el.scrollWidth <= el.clientWidth),
       "Long account names must not widen the imports page");
-    const [tabBox, accountBox] = await Promise.all([checkTab.boundingBox(), account.boundingBox()]);
-    assert.ok(Math.abs(tabBox.y + tabBox.height / 2 - accountBox.y - accountBox.height / 2) < 1,
-      "The account selector stays aligned with the import tabs");
+    const listed = p.getByRole("navigation", { name: "账户列表" }).locator(".acct-item").filter({ hasText: longName });
+    assert.ok(await listed.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "A long account name stays inside the account list");
 
     console.log("Global filters verified: page head, as-of chip, shared period, restart memory and book switch.");
   } catch (e) {

@@ -934,6 +934,7 @@ const handlers = {
       query: preference(db, BROKER, "ibkr.flex-query-id") || "",
       webullKey: preference(db, BROKER, "webull.app-key") || "",
       webullId: preference(db, BROKER, "webull.api-account-id") || "",
+      lastBackup: preference(db, "app", "backup.last"),
     };
   },
   async saveConnection(args) {
@@ -1019,6 +1020,7 @@ const handlers = {
       if (path.extname(file).toLowerCase() !== ".spbackup") throw Error(tMain("err.spbackupExtRequired"));
       diagnostics.stage("commit");
       publishFile(file, (temp) => encryptedCopy(source, temp, key));
+      if (!convertLegacy) putPref(source, "app", "backup.last", new Date().toISOString());
       return path.basename(file);
     } finally {
       key.fill(0);

@@ -84,7 +84,7 @@ async function open(app) {
     await dialog.getByRole("button", { name: "Remind me later" }).click();
     await dialog.waitFor({ state: "detached" });
     await remembered("promptedVersion", "9.9.9");
-    const side = page.getByRole("navigation");
+    const side = page.getByRole("navigation", { name: "Pages" });
     const card = side.getByRole("button", { name: "View and update" });
     await card.waitFor();
     assert.ok((await side.innerText()).includes(`Current ${home.appVersion} · Downloaded`));

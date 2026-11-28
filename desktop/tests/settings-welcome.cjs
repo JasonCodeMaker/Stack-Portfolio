@@ -89,13 +89,18 @@ async function verifyOverviewContrast(p) {
     assert.ok(sample.top >= main.bottom);
     await resize(1440, 900);
 
-    // Settings uses one column in 16:9 and keeps filters out of the page head.
+    // Settings: a rail of four categories, a status strip and grouped rows; filters stay out of the page head.
     await p.getByRole("button", { name: "打开示例账本" }).click();
     await p.getByRole("button", { name: "设置", exact: true }).click();
     await p.getByRole("heading", { name: "设置", exact: true }).waitFor();
     assert.equal(await p.locator(".header-tools").count(), 0);
-    const tabs = p.getByRole("group", { name: "设置页签" });
-    assert.deepEqual(await tabs.getByRole("button").allInnerTexts(), ["券商连接", "账本", "数据"]);
+    const rail = p.getByRole("navigation", { name: "设置分类" });
+    const category = (name) => rail.getByRole("button", { name: new RegExp("^" + name) });
+    assert.deepEqual(
+      (await rail.getByRole("button").allInnerTexts()).map((text) => text.replace(/\s+/g, " ").trim()),
+      ["通用与外观", "账户与券商连接 2", "账本与备份", "行情与分类规则"],
+    );
+    await p.getByRole("group", { name: "状态概览" }).waitFor();
     const theme = themeControl(p);
     assert.equal(await theme.inputValue(), "system");
     assert.deepEqual(await theme.getByRole("option").allTextContents(), ["跟随系统", "浅色", "深色"]);
@@ -104,36 +109,38 @@ async function verifyOverviewContrast(p) {
     await verifyOverviewContrast(p);
     await selectTheme(p, "dark", true);
     await verifyOverviewContrast(p);
+    await category("账户与券商连接").click();
     await p.getByText("正式账本可保存券商授权。示例账本使用随附样例。").waitFor();
-    const market = p.getByRole("region", { name: "行情自动更新" });
+    const connections = p.getByRole("region", { name: "账户与券商连接" });
+    assert.match(await connections.innerText(), /IBKR[\s\S]*示例连接[\s\S]*Webull Australia[\s\S]*示例连接/);
+    assert.equal(await connections.getByRole("button", { name: /立即更新|预览同步|打开账本/ }).count(), 0,
+      "Settings leaves syncing to Import & Reconcile");
+    await category("行情与分类规则").click();
+    const market = p.getByRole("region", { name: "行情与汇率更新" });
     await market.getByRole("button", { name: "立即更新行情" }).waitFor();
     assert.equal(await p.getByText("其他行情来源", { exact: true }).count(), 0);
     assert.equal(await p.evaluate(() => "refreshMarket" in window.portfolio), false);
-    const ibkr = p.getByRole("region", { name: "Interactive Brokers" });
-    assert.match(await ibkr.innerText(), /示例连接[\s\S]*立即更新/);
-    let [column] = await boxes(".settings .stack");
-    assert.ok(column.width <= 1241, "one column up to 1240 wide, got " + column.width);
+    let [column] = await boxes(".settings");
+    assert.ok(column.width <= 1121, "settings up to 1120 wide, got " + column.width);
 
-    // The ultrawide operational grid uses two columns up to 1820 wide.
-    await resize(2560, 1080);
-    await p.waitForFunction(() => document.querySelectorAll(".settings .cols > .col").length === 2);
+    // Ultrawide keeps the same rail and column without horizontal scroll.
     await resize(3440, 1440);
-    [column] = await boxes(".settings .cols");
-    assert.ok(column.width <= 1821, "two columns up to 1820 wide, got " + column.width);
-    const [notice] = await boxes(".settings > .notice");
-    assert.deepEqual([notice.left, notice.right], [column.left, column.right], "The notice shares the card grid gutters");
-    assert.equal(await p.locator(".settings .cols > .col").count(), 2);
+    [column] = await boxes(".settings");
+    assert.ok(column.width <= 1121, "settings up to 1120 wide at 21:9, got " + column.width);
+    assert.ok(await p.getByRole("main").evaluate((el) => el.scrollWidth <= el.clientWidth));
     await resize(1440, 900);
 
-    // Confirmations open in dialogs.
+    // Confirmations open in dialogs; resetting the sync marker sits folded under the connections.
+    await category("账户与券商连接").click();
+    await p.getByRole("region", { name: "同步排错与重置游标" }).getByRole("button", { name: "展开" }).click();
     await p.getByRole("button", { name: "选择重置" }).click();
     const reset = p.getByRole("dialog", { name: "重置同步标记" });
     await reset.getByRole("button", { name: "取消" }).click();
     await reset.waitFor({ state: "detached" });
+    await connections.getByRole("button", { name: "创建账户" }).waitFor();
 
-    await tabs.getByRole("button", { name: "账本", exact: true }).click();
-    await p.getByRole("region", { name: "当前账本" }).waitFor();
-    await p.getByRole("region", { name: "账户" }).getByRole("button", { name: "创建账户" }).waitFor();
+    await category("账本与备份").click();
+    await p.getByRole("region", { name: "当前账本与本地备份" }).waitFor();
     await p.getByRole("button", { name: "备份账本", exact: true }).click();
     const backup = p.getByRole("dialog", { name: "设置备份密码" });
     await backup.waitFor();
@@ -141,9 +148,10 @@ async function verifyOverviewContrast(p) {
     await p.keyboard.press("Escape");
     await p.getByRole("dialog").waitFor({ state: "detached" });
 
-    await tabs.getByRole("button", { name: "数据", exact: true }).click();
-    await p.getByRole("region", { name: "维护结单报价" }).waitFor();
-    await p.getByText("更正证券类别及基金成分匹配").waitFor();
+    await category("行情与分类规则").click();
+    await p.getByRole("button", { name: "维护结单报价", exact: true }).click();
+    await p.getByRole("group", { name: "维护结单报价" }).waitFor();
+    await p.getByRole("button", { name: "更正证券类别及基金成分匹配", exact: true }).click();
     const label = await p
       .locator("label.f")
       .filter({ has: p.locator("span", { hasText: /^证券$/ }) })
@@ -152,10 +160,12 @@ async function verifyOverviewContrast(p) {
     assert.ok(label.some((x) => /^Apple · AAPL · 美国 Nasdaq · USD$/.test(x)), label.join(" | "));
 
     // The ledger button returns to the welcome page, which offers the way back.
-    await p.getByRole("button", { name: /^切换账本/ }).click();
+    await category("账本与备份").click();
+    await p.getByRole("button", { name: "切换账本 / 迁入 Wealthfolio", exact: true }).click();
     await waitForTheme(p, true);
     await p.getByRole("button", { name: "返回当前账本" }).click();
     await p.getByRole("heading", { name: "设置", exact: true }).waitFor();
+    await category("通用与外观").click();
     assert.equal(await theme.inputValue(), "dark");
 
     // The selected theme applies at startup before the settings page is reopened.
@@ -175,18 +185,15 @@ async function verifyOverviewContrast(p) {
     await languageControl(reopened).selectOption("en");
     await reopened.getByRole("heading", { name: "Settings", exact: true }).waitFor();
     assert.equal(await reopened.evaluate(() => document.documentElement.lang), "en");
-    assert.deepEqual(
-      await reopened.getByRole("group", { name: "Settings tabs" }).getByRole("button").allInnerTexts(),
-      ["Connections", "Ledger", "Data"],
-    );
+    const railTexts = async (name) => (await reopened.getByRole("navigation", { name }).getByRole("button").allInnerTexts())
+      .map((text) => text.replace(/\s+/g, " ").trim());
+    assert.deepEqual(await railTexts("Settings categories"),
+      ["General & Appearance", "Accounts & Brokers 2", "Ledger & Backups", "Market Data & Rules"]);
 
     await languageControl(reopened).selectOption("zh-TW");
     await reopened.getByRole("heading", { name: "設定", exact: true }).waitFor();
     assert.equal(await reopened.evaluate(() => document.documentElement.lang), "zh-TW");
-    assert.deepEqual(
-      await reopened.getByRole("group", { name: "設定頁籤" }).getByRole("button").allInnerTexts(),
-      ["券商連線", "帳本", "資料"],
-    );
+    assert.deepEqual(await railTexts("設定分類"), ["一般與外觀", "帳戶與券商連線 2", "帳本與備份", "行情與分類規則"]);
     await app.close();
     app = null;
 
@@ -237,7 +244,7 @@ async function verifyOverviewContrast(p) {
       fs.rmSync(fallbackDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
 
-    console.log("Settings and welcome verified: tabs, card columns, dialogs, theme & live multi-language switching.");
+    console.log("Settings and welcome verified: categories, status strip, dialogs, theme & live multi-language switching.");
   } catch (e) {
     if (app) {
       const p = await app.firstWindow();

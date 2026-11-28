@@ -299,14 +299,16 @@ async function main() {
         [expected[b.remoteId]],
       );
     }
-    const panel = page.getByRole("region", { name: "按账户连接券商" });
-    await button(panel.locator(".binding-row").filter({ hasText: "Sample IBKR 1001" }), "断开授权").click();
+    await button(page.getByRole("navigation", { name: "设置分类" }), /^账户与券商连接/).click();
+    const panel = page.getByRole("region", { name: "账户与券商连接" });
+    await button(panel.locator(".binding-row").filter({ hasText: "Sample IBKR 1001" }), "管理连接").click();
+    await button(panel.getByRole("group", { name: "Sample IBKR 1001" }), "断开授权").click();
     await button(page.getByRole("dialog"), "确认断开").click();
     await panel.getByText(/需重新授权/).waitFor();
     const ids = await page.evaluate(() => window.portfolio.connections().then((c) => c.bindings));
     assert.equal(ids.find((b) => b.remoteId === "TEST1001").authorized, false);
     assert.equal(ids.find((b) => b.remoteId === "TEST1002").authorized, true);
-    await button(page, "添加或重新授权账户").click();
+    await button(panel, "添加账户").click();
     await expectStep(page, 1);
     await button(page, "取消添加").waitFor();
     await button(page, /Webull Australia/).click();
@@ -324,7 +326,9 @@ async function main() {
     await button(page, "绑定此账户").click();
     await button(page, "预览首次导入").click();
     await page.getByRole("heading", { name: "导入与对账", exact: true }).waitFor();
-    await page.getByText(/入账账户 · Sample IBKR 1001/).waitFor();
+    // The first import previews in the workspace of the account just bound.
+    await page.getByRole("navigation", { name: "账户列表" }).locator('.acct-item[aria-current="true"]').getByText("Sample IBKR 1001").waitFor();
+    await page.getByRole("region", { name: "IBKR 同步结果", exact: true }).getByRole("heading", { name: "Sample IBKR 1001" }).waitFor();
     assert.equal((await page.evaluate(() => window.portfolio.connections())).bindings.length, 4);
   });
   const renewedToken = "test-renewed-1001";
@@ -341,9 +345,11 @@ async function main() {
     await preview(other.id);
     await assert.rejects(preview(), /1012/);
 
+    await button(page.getByRole("navigation", { name: "设置分类" }), /^账户与券商连接/).click();
     const row = page.locator(".binding-row").filter({ hasText: bound.name });
-    await button(row, "重新授权").click();
-    const dialog = page.getByRole("dialog", { name: /Sample IBKR 1001/ });
+    await button(row, "管理连接").click();
+    // Re-authorisation happens inside the account's row, not in a dialog.
+    const dialog = page.getByRole("form", { name: /Sample IBKR 1001/ });
     const query = dialog.getByLabel("Flex Query ID", { exact: true });
     const token = dialog.getByLabel("Flex Token", { exact: true });
     const submit = button(dialog, "验证并保存");
@@ -360,7 +366,6 @@ async function main() {
     await query.clear();
     await token.fill(renewedToken);
     await submit.click();
-    await dialog.waitFor({ state: "hidden" });
     await page.getByText("IBKR 授权已更新", { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.portfolio.dashboard().then((d) => d.brokerAccounts.ibkr)), other.id);
     assert.ok((await preview()).token);

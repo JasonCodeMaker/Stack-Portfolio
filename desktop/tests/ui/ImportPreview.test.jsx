@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 globalThis.window ??= {}; // common.jsx reads the preload bridge on import
-const { BrokerResult } = await import("../../ui/ImportPreview.jsx");
+const { BrokerResult, editRow } = await import("../../ui/ImportPreview.jsx");
 
 const accounts = [
   { id: "demo-ibkr", name: "IBKR" },
@@ -60,5 +60,36 @@ describe("broker result card", () => {
 
   it("says the broker records are being read while the preview loads", () => {
     expect(render({ broker: "ibkr", loading: true })).toContain("正在读取券商记录…");
+  });
+});
+
+describe("account data changes", () => {
+
+  it("lists each changed balance, quantity and quote as a row with change, date, item and value", () => {
+    const html = render({
+      ...ibkr,
+      rows: [],
+      statement: { date: "2026-10-30" },
+      amountEdits: [
+        { label: "AUD 现金", before: null, after: 3000, format: "money", currency: "AUD" },
+        { label: "AAPL 持仓数量", before: 100, after: 101, format: "quantity" },
+      ],
+      priceEdits: [{ label: "2026-10-29 IVV 持仓报价 · IBKR 结单报价", before: null, after: 310, format: "price", currency: "USD" }],
+    });
+    const table = html.split('<table class="edits">')[1].split("</table>")[0];
+    const cells = [...table.matchAll(/<t[dh][^>]*>(.*?)<\/t[dh]>/g)].map((m) => m[1].replace(/<[^>]+>/g, ""));
+    expect(cells.slice(0, 4)).toEqual(["变更", "日期", "项目", "变更内容"]);
+    expect(cells.slice(4)).toEqual([
+      "新增", "2026-10-30", "AUD 现金", "A$3,000.00",
+      "更正", "2026-10-30", "AAPL 持仓数量", "100 → 101",
+      "新增", "2026-10-29", "IVV 持仓报价 · IBKR 结单报价", "USD 310",
+    ]);
+  });
+
+  it("takes the date from a dated label and the statement date otherwise", () => {
+    expect(editRow({ label: "2026-10-30 AAPL 持仓报价", before: 1, after: 2 }, "2026-10-31")).toEqual({
+      date: "2026-10-30", item: "AAPL 持仓报价", fresh: false,
+    });
+    expect(editRow({ label: "账户总额", after: 2 }, "2026-10-31")).toEqual({ date: "2026-10-31", item: "账户总额", fresh: true });
   });
 });
