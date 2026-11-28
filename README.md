@@ -87,9 +87,15 @@ Check the U.S. equity session and Eastern Time alongside the CNN Fear & Greed se
 
 ### Import & Sync
 
-Sync a broker or import a statement file, check the changes first, then confirm. Reconcile cash, positions, and net value against a broker statement, or add a trade or cash flow by hand.
+Pick an account on the left and work on it on the right, or press **Update all accounts** to sync every connected broker at once. Every change is listed in a table before anything is saved. From the same workspace you can import a statement file, record a trade or cash movement, reconcile cash, holdings, and net value against a broker statement, set opening balances, and add or delete accounts.
 
 ![Import & Sync](docs/screenshots/en/imports.png)
+
+### Settings
+
+Four categories: **General & Appearance**, **Accounts & Brokers**, **Ledger & Backups**, and **Market Data & Rules**. A status strip at the top shows broker connections, the last market update, and the last local backup.
+
+![Settings](docs/screenshots/en/settings.png)
 
 ---
 
@@ -113,7 +119,7 @@ Sync a broker or import a statement file, check the changes first, then confirm.
 3. The interface is available in English, Simplified Chinese, and Traditional Chinese.
 
 > [!TIP]
-> It's a good idea to create a password-protected `.spbackup` copy in **Settings → Ledger → Back up ledger** so you can restore your data if you ever reinstall Windows or switch PCs.
+> It's a good idea to create a password-protected `.spbackup` copy in **Settings → Ledger & Backups → Back up ledger** so you can restore your data if you ever reinstall Windows or switch PCs.
 
 <details>
 <summary>Preview the Welcome screen</summary>
