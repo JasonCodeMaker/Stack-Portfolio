@@ -61,6 +61,16 @@ const shot = async (p, name) => {
     );
     assert.equal(await p.getByText("危险操作").count(), 0);
     await p.getByRole("group", { name: "状态概览" }).waitFor();
+    // Each status icon sits in the middle of its tile.
+    const offsets = await p.locator(".kpi-ico").evaluateAll((tiles) => tiles.map((tile) => {
+      const box = tile.getBoundingClientRect(), icon = tile.querySelector("svg").getBoundingClientRect();
+      return Math.max(
+        Math.abs(icon.left + icon.width / 2 - (box.left + box.width / 2)),
+        Math.abs(icon.top + icon.height / 2 - (box.top + box.height / 2)),
+      );
+    }));
+    assert.equal(offsets.length, 3);
+    assert.ok(offsets.every((offset) => offset < 1), "Status icons are centred, offsets " + offsets.join(", "));
     await p.getByRole("region", { name: "外观与显示" }).waitFor();
     await p.getByRole("region", { name: "恢复出厂设置" }).waitFor();
     await shot(p, "settings-general-light");
@@ -86,7 +96,16 @@ const shot = async (p, name) => {
     const list = p.getByRole("navigation", { name: "账户列表" });
     await button(list, /^全部账户/).waitFor();
     assert.equal(await list.locator(".acct-children .acct-item").count(), 2);
+    // The ledger of all accounts starts folded and opens from its title.
+    const ledger = p.getByRole("region", { name: "交易与资金流水", exact: true });
+    const fold = ledger.getByRole("button", { name: /交易与资金流水 · 全部账户/ });
+    assert.equal(await fold.getAttribute("aria-expanded"), "false");
+    assert.equal(await ledger.getByRole("table").count(), 0);
     await shot(p, "imports-all-light");
+    await fold.click();
+    await ledger.getByRole("table").waitFor();
+    await fold.click();
+    await ledger.getByRole("table").waitFor({ state: "detached" });
     await button(p.locator(".imp-head"), "一键更新全部账户").click();
     const webull = p.getByRole("region", { name: "WEBULL 同步结果", exact: true });
     const ibkr = p.getByRole("region", { name: "IBKR 同步结果", exact: true });

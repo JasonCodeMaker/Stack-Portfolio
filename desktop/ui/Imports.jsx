@@ -2,7 +2,7 @@
 // Sync, file import, manual entry, statement reconciliation and opening balances open inline in the workspace.
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
-  Building2, CloudDownload, FileSpreadsheet, FileText, Flag, Layers, PenLine, RefreshCw, Scale, Search, Upload,
+  Building2, ChevronRight, CloudDownload, FileSpreadsheet, FileText, Flag, Layers, PenLine, RefreshCw, Scale, Search, Upload,
 } from "lucide-react";
 import { HoldingEditor, SecurityFields, listingLabel, marketNames } from "./HoldingEditor";
 import { BrokerResult } from "./ImportPreview";
@@ -308,6 +308,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   const started = useRef(false);
   const requests = useRef({});
   const historyRef = useRef(null);
+  // The ledger of all accounts starts folded; one account's ledger starts open.
+  const [historyOpen, setHistoryOpen] = useState(Boolean(initialAccount) || initial.tab === "history");
   const [ledger, setLedger] = useState([]),
     [offset, setOffset] = useState(0),
     [search, setSearch] = useState(""),
@@ -362,6 +364,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   }
   function selectAccount(next) {
     setSel(next);
+    setHistoryOpen(next !== "all");
     setDrawer(null);
     setReturnTo(null);
     setOffset(0);
@@ -371,6 +374,8 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     if (next !== "all") chooseAccount(next);
   }
   useEffect(() => {
+    // A folded ledger is not read until it is opened.
+    if (!historyOpen) return;
     let live = true;
     api
       .history({ account: sel === "all" ? "" : sel, limit: PAGE, offset, text: search })
@@ -381,12 +386,16 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     return () => {
       live = false;
     };
-  }, [sel, offset, search, d]);
+  }, [sel, offset, search, d, historyOpen]);
   const toggleDrawer = (next) => {
     setReturnTo(null);
     setDrawer(drawer === next ? null : next);
   };
-  const showHistory = () => historyRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  // Links into the ledger (after saving an entry, from reconciliation) open it before scrolling to it.
+  const showHistory = () => {
+    setHistoryOpen(true);
+    requestAnimationFrame(() => historyRef.current?.scrollIntoView?.({ block: "start", behavior: "smooth" }));
+  };
   function updateReport(id, result) {
     setReports((prev) => {
       const next = { ...prev };
@@ -1170,10 +1179,17 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
   );
 
   const history = (
-    <section className="card history" aria-label={t("imports.historyTitle")} ref={historyRef}>
+    <section className={"card history" + (historyOpen ? "" : " folded")} aria-label={t("imports.historyTitle")} ref={historyRef}>
       <div className="row">
-        <h2><FileText {...ico} />{t("imports.ledgerFor", { account: selected ? selected.name : t("imports.allAccounts") })}</h2>
+        <h2>
+          <button type="button" className="fold-toggle" aria-expanded={historyOpen} onClick={() => setHistoryOpen(!historyOpen)}>
+            <ChevronRight {...ico} className="fold-chevron" />
+            <FileText {...ico} />
+            {t("imports.ledgerFor", { account: selected ? selected.name : t("imports.allAccounts") })}
+          </button>
+        </h2>
         <span className="sp" />
+        {historyOpen && <>
         <span className="search-box">
           <Search {...ico} />
           <input
@@ -1192,7 +1208,9 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           <input type="checkbox" checked={voided} onChange={(e) => setVoided(e.target.checked)} />
           {t("imports.showVoided")}
         </label>
+        </>}
       </div>
+      {historyOpen && <>
       {entries.length ? (
         <div className="tw">
           <table>
@@ -1291,6 +1309,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           </span>
         )}
       </div>
+      </>}
     </section>
   );
 

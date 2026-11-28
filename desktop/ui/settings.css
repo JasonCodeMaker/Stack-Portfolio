@@ -159,13 +159,17 @@
   place-items: center;
   flex: none;
 }
-.health-kpi span {
+/* Only the label and value: the icon tile is a span too and keeps its centred grid and accent colour. */
+.health-kpi > div {
+  min-width: 0;
+}
+.health-kpi > div > span {
   font-size: 11px;
   line-height: 15px;
   color: var(--l2);
   display: block;
 }
-.health-kpi b {
+.health-kpi > div > b {
   font-size: 14px;
   font-weight: 600;
   display: block;
