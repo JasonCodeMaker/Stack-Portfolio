@@ -234,6 +234,8 @@ test("release notes become plain text whatever they contain", () => {
   assert.equal(plainNotes(null), "");
   assert.equal(plainNotes(42), "");
   assert.equal(plainNotes("Fixes\r\n\r\n\r\n- one\n- two"), "Fixes\n\n- one\n- two");
+  assert.equal(plainNotes("<h1>English</h1><h2>New</h2><ul><li>a</li></ul><h1>简体中文</h1><h3>新功能</h3><ul><li>b</li></ul>"),
+    "# English\n## New\n- a\n\n# 简体中文\n## 新功能\n- b", "a top-level heading stays distinct from a category heading");
   assert.equal(plainNotes([{ version: "1.5.1", note: "<p>b</p>" }, { version: "1.5.0", note: "a" }]), "b\n\na");
   assert.equal(plainNotes('<img src=x onerror="alert(1)"><script>alert(2)</script><a href="https://example.com">link</a>'), "alert(2)link");
   assert.ok(!/[<>]/.test(plainNotes("<b>x</b><i>y <scr<script>ipt>")));

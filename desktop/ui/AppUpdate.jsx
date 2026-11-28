@@ -25,30 +25,60 @@ export function useUpdateState() {
   return state;
 }
 
-// Release notes are plain text. "## Title" starts a group and "- item" is a list item; any other
-// line is kept as an item, so notes written without that structure still read correctly.
-export function parseNotes(text) {
-  const groups = [];
+// A release body may carry the same notes in several languages, each under a top-level heading
+// that names the language. The app shows the section for its own language only.
+const LANGUAGES = {
+  en: ["english", "en"],
+  "zh-CN": ["简体中文", "中文", "zh-cn"],
+  "zh-TW": ["繁體中文", "繁体中文", "zh-tw"],
+};
+const FALLBACK = { "zh-TW": ["zh-TW", "zh-CN", "en"], "zh-CN": ["zh-CN", "zh-TW", "en"], en: ["en"] };
+const languageOf = (title) => Object.keys(LANGUAGES).find((locale) => LANGUAGES[locale].includes(title.trim().toLowerCase()));
+// Categories get a coloured tag. Anything else keeps a neutral one.
+const KINDS = {
+  new: ["new", "新功能", "新增"],
+  improved: ["improved", "improvements", "改进", "改進", "优化", "優化"],
+  fixed: ["fixed", "fixes", "修复", "修復"],
+};
+const kindOf = (title) => Object.keys(KINDS).find((kind) => KINDS[kind].includes(title.trim().toLowerCase())) ?? "other";
+
+// Release notes are plain text. "# Language" starts a language section, "## Title" starts a group
+// and "- item" is a list item; any other line is kept as an item, so notes written without that
+// structure still read correctly. Notes with no language sections are shown whole.
+export function parseNotes(text, locale = "en") {
+  const sections = [{ language: null, groups: [] }];
   for (const line of String(text ?? "").split("\n").map((value) => value.trim()).filter(Boolean)) {
+    const top = /^#\s+(.*)$/.exec(line);
+    const language = top && languageOf(top[1]);
+    if (language) {
+      sections.push({ language, groups: [] });
+      continue;
+    }
+    const groups = sections.at(-1).groups;
     const heading = /^#{1,6}\s+(.*)$/.exec(line);
-    if (heading) groups.push({ title: heading[1], items: [] });
+    if (heading) groups.push({ title: heading[1], kind: kindOf(heading[1]), items: [] });
     else {
-      if (!groups.length) groups.push({ title: "", items: [] });
+      if (!groups.length) groups.push({ title: "", kind: "other", items: [] });
       groups.at(-1).items.push(line.replace(/^[-*•]\s+/, ""));
     }
   }
-  return groups.filter((group) => group.title || group.items.length);
+  const filled = sections.filter((section) => section.groups.some((group) => group.title || group.items.length));
+  const named = filled.filter((section) => section.language);
+  const wanted = (FALLBACK[locale] ?? [locale, "en"]).map((code) => named.find((section) => section.language === code)).find(Boolean);
+  // Text before the first language heading belongs to every language.
+  const shown = named.length ? [...filled.filter((section) => !section.language), wanted ?? named[0]] : filled;
+  return shown.flatMap((section) => section.groups).filter((group) => group.title || group.items.length);
 }
 
 export function UpdateNotes({ notes }) {
-  const { t } = useI18n();
-  const groups = parseNotes(notes);
+  const { t, locale } = useI18n();
+  const groups = parseNotes(notes, locale);
   if (!groups.length) return <p className="cap">{t("update.noNotes")}</p>;
   return (
     <div className="upd-notes">
       {groups.map((group, i) => (
         <section key={i}>
-          {group.title && <h3>{group.title}</h3>}
+          {group.title && <h3><span className={"upd-tag " + group.kind}>{group.title}</span></h3>}
           {group.items.length > 0 && (
             <ul>
               {group.items.map((item, j) => <li key={j}>{item}</li>)}

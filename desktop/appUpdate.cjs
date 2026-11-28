@@ -9,7 +9,9 @@ function plainNotes(value) {
   const raw = Array.isArray(value) ? value.map((item) => item?.note ?? "").join("\n\n") : typeof value === "string" ? value : "";
   return raw
     .replace(/<\s*li[^>]*>/gi, "- ")
-    .replace(/<\s*h[1-6][^>]*>/gi, "## ")
+    // A top-level heading names a language section; lower headings name a category.
+    .replace(/<\s*h1[^>]*>/gi, "# ")
+    .replace(/<\s*h[2-6][^>]*>/gi, "## ")
     .replace(/<\s*(br|\/p|\/li|\/h[1-6]|\/ul|\/ol|\/div)[^>]*>/gi, "\n")
     .replace(/<[^>]*>/g, "")
     .replace(/&(amp|lt|gt|quot|#39|nbsp);/g, (_, name) => ENTITIES[name])

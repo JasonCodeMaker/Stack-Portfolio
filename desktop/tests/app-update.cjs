@@ -72,6 +72,9 @@ async function open(app) {
     assert.ok(shown.includes("New version 9.9.9"));
     assert.ok(shown.includes("Released 2026-12-05"));
     assert.ok(shown.includes("In-app updates."));
+    assert.ok(!/[一-鿿]/.test(shown), `only the app's language is shown: ${shown}`);
+    assert.deepEqual(await dialog.locator(".upd-tag").evaluateAll((tags) => tags.map((tag) => `${tag.className.replace("upd-tag ", "")}:${tag.textContent}`)),
+      ["new:New", "improved:Improved", "fixed:Fixed"]);
     assert.ok(shown.includes("Your ledger and settings are not changed"));
     for (const name of ["Restart and update", "Remind me later", "Skip this version"])
       assert.ok(await dialog.getByRole("button", { name }).isVisible(), name);
