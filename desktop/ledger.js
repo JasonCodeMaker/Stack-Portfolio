@@ -67,17 +67,54 @@ CREATE TABLE IF NOT EXISTS sp_corrections(id TEXT PRIMARY KEY, event TEXT NOT NU
 CREATE TABLE IF NOT EXISTS sp_benchmark_levels(series TEXT NOT NULL, day TEXT NOT NULL, level REAL NOT NULL CHECK(level > 0), source TEXT NOT NULL, PRIMARY KEY(series,day));
 CREATE TABLE IF NOT EXISTS sp_review_notes(id TEXT PRIMARY KEY, created TEXT NOT NULL, data TEXT NOT NULL);
 `;
-export function createBook(filename, key) {
+const SCHEMA_VERSION = "1";
+const schemaObjects = [...schema.matchAll(/CREATE (?:TABLE|INDEX) IF NOT EXISTS (\w+)/g)].map((match) => match[1]);
+const bookContents = (db) => {
+  const objects = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema ORDER BY type,name").all();
+  return { objects, rows: objects.filter((o) => o.type === "table").map((o) => [o.name, rowCount(db, o.name)]) };
+};
+
+// A withdrawn release is replaced by the previous installer, which can only open the ledger as it was
+// before this version changed its structure. Any failure here must leave the ledger untouched.
+function backupBeforeUpgrade(db, filename, key, version) {
+  const stamp = new Date().toISOString().replace(/\D/g, "");
+  // The "before-" prefix keeps the copy among the managed ledgers that pin the local key.
+  const backup = path.join(path.dirname(filename),
+    `before-upgrade-${path.parse(filename).name}-schema-${version}-${stamp}.sqlite`);
+  try {
+    if (existsSync(backup)) throw Error(tMain("storage.destExists"));
+    publishFile(backup, (stage) => {
+      encryptedCopy(db, stage, key);
+      const copy = openDatabase(stage, key, { readonly: true, existing: true });
+      try {
+        if (!isDeepStrictEqual(bookContents(copy), bookContents(db))) throw Error(tMain("storage.copyFailed"));
+      } finally {
+        copy.close();
+      }
+    });
+  } catch (e) {
+    throw Error(tMain("ledger.upgradeBackupFailed", { message: e.message }));
+  }
+  return backup;
+}
+
+// upgradeBackup is false only for a staged copy whose source file is itself the pre-upgrade ledger.
+export function createBook(filename, key, { upgradeBackup = true } = {}) {
   mkdirSync(path.dirname(filename), { recursive: true });
   const db = openDatabase(filename, key);
   try {
-    if (hasTable(db, "sp_meta") && db.prepare("SELECT value FROM sp_meta WHERE key='version'").get()?.value !== "1")
+    const existing = hasTable(db, "sp_meta");
+    if (existing && db.prepare("SELECT value FROM sp_meta WHERE key='version'").get()?.value !== SCHEMA_VERSION)
       throw Error(tMain("ledger.newerVersionRequired"));
+    // Every structural change, including a future schema version step, must pass this backup first.
+    const structureChanges = existing && schemaObjects.some((name) =>
+      !db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name));
+    if (structureChanges && upgradeBackup) backupBeforeUpgrade(db, filename, key, SCHEMA_VERSION);
     transaction(db, () => {
       const scopeOldQuotes = hasTable(db, "sp_prices") && !hasTable(db, "sp_broker_prices");
       db.exec(schema);
       if (scopeOldQuotes) migrateIbkrQuotes(db);
-      db.prepare("INSERT OR IGNORE INTO sp_meta VALUES('version','1')").run();
+      db.prepare("INSERT OR IGNORE INTO sp_meta VALUES('version',?)").run(SCHEMA_VERSION);
     });
     return db;
   } catch (e) {
