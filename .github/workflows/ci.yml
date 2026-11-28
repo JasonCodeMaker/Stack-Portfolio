@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Required check. Its name is what branch protection refers to.
+    name: Typecheck and tests
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: node --version
+      - run: npm --prefix desktop ci --ignore-scripts
+      - run: npm --prefix desktop run typecheck
+      - run: npm --prefix desktop test
+
+  ui-smoke:
+    # Experiment: not a required check, and a failure here does not fail the run.
+    name: Windows UI smoke (non-blocking)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        attempt: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - run: npm --prefix desktop ci --ignore-scripts
+      # --ignore-scripts skips the Electron binary download; fetch it explicitly.
+      - run: node desktop/node_modules/electron/install.js
+      - run: npm --prefix desktop run build
+      - run: node desktop/tests/windows-smoke.cjs
