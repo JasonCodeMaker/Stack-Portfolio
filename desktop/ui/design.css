@@ -816,3 +816,35 @@ dialog::backdrop {
 .modal-inner > header .icon {
   flex: none;
 }
+
+/* Trial launch (--trial): a frame and label over every screen. It takes no layout space or
+   pointer input, so the trialled UI behaves like the normal one. Modal dialogs dim it; the
+   window title carries the marker as well. */
+.trial-flag {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+  border: 3px solid var(--warn);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.trial-flag b,
+.trial-flag span {
+  background: var(--warn);
+  color: var(--surface);
+  font-size: 12px;
+  line-height: 20px;
+  padding: 0 8px;
+}
+.trial-flag b {
+  border-radius: 0 0 0 6px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-right: 0;
+}
+.trial-flag span {
+  border-radius: 0 0 6px 0;
+}
