@@ -77,8 +77,10 @@ delete env.ELECTRON_RUN_AS_NODE;
     await resize(1743, 910);
     await nav.getByRole("button", { name: "设置", exact: true }).click();
     await p.getByRole("group", { name: "设置页签" }).getByRole("button", { name: "数据", exact: true }).focus();
-    await p.keyboard.press("Tab");
     const themeSelect = p.getByRole("combobox", { name: "主题", exact: true });
+    // Other controls sit between the tabs and the theme selector, so tab until it has the focus.
+    for (let i = 0; i < 6 && !(await themeSelect.evaluate((select) => select === document.activeElement)); i++)
+      await p.keyboard.press("Tab");
     assert.ok(await themeSelect.evaluate((select) => {
       const css = getComputedStyle(select);
       const outlineTop = select.getBoundingClientRect().top - parseFloat(css.outlineWidth) - parseFloat(css.outlineOffset);

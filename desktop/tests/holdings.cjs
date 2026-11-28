@@ -15,6 +15,11 @@ const env = {
 };
 delete env.ELECTRON_RUN_AS_NODE;
 
+// A first launch shows the onboarding page before the welcome page.
+async function skipOnboarding(page) {
+  const home = await page.evaluate(() => window.portfolio.home());
+  if (!home.mode && !home.hasReal && !home.onboardingSeen) await page.getByRole("button", { name: "暂时跳过" }).click();
+}
 (async () => {
   let app;
   try {
@@ -23,6 +28,8 @@ delete env.ELECTRON_RUN_AS_NODE;
     const page = await app.firstWindow();
     page.setDefaultTimeout(6000);
     await resizeContent(app, page, 1024, 650);
+    await skipOnboarding(page);
+
     await page.getByRole("button", { name: "打开示例账本" }).click();
     const nav = page.getByRole("navigation", { name: "页面" });
     await nav.getByRole("button", { name: "持仓", exact: true }).click();
