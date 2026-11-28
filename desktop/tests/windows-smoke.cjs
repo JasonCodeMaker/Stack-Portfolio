@@ -441,7 +441,7 @@ async function verifyBackup(app, p, file, password, directory) {
   await useBackupFile(app, file);
   await open(p, "设置");
   const version = await app.evaluate(({ app: electronApp }) => electronApp.getVersion());
-  await p.getByText(`应用版本 ${version}`, { exact: true }).waitFor();
+  await p.getByRole("group", { name: "版本与更新" }).getByText(`Stock Portfolio ${version}`, { exact: true }).waitFor();
   await button(p.getByRole("group", { name: "设置页签" }), "账本").click();
   await button(p, "备份账本").click();
   const prompt = p.getByRole("dialog", { name: "设置备份密码", exact: true });

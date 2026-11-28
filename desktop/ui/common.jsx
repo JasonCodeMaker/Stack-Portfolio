@@ -5,7 +5,7 @@ const ipcFailures = new WeakSet();
 export const isIpcFailure = (error) => ipcFailures.has(error);
 export const api = window.portfolio && Object.fromEntries(Object.entries(window.portfolio).map(([name, invoke]) => [
   name,
-  name === "onDisplayState" ? invoke : (...args) => invoke(...args).catch((error) => {
+  name === "onDisplayState" || name === "onUpdateState" ? invoke : (...args) => invoke(...args).catch((error) => {
     if (error && typeof error === "object") ipcFailures.add(error);
     throw error;
   }),

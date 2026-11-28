@@ -1,7 +1,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
-const { createAppUpdate, RECHECK_MS } = require("../appUpdate.cjs");
+const { createAppUpdate, plainNotes, RECHECK_MS } = require("../appUpdate.cjs");
+
+const READY = { status: "ready", version: "1.5.1", notes: "", releaseDate: "", prompt: true, skipped: false };
+function remembering(initial = {}) {
+  const saved = { ...initial };
+  return { saved, memory: { read: () => saved, write: (patch) => Object.assign(saved, patch) } };
+}
+const asked = (update) => ({ prompt: update.state().prompt, skipped: update.state().skipped });
 
 // Stands in for electron-updater: records calls and lets a test decide how a check ends.
 function fakeUpdater() {
@@ -47,7 +54,7 @@ async function downloaded({ updater, update }, version = "1.5.1") {
 }
 
 test("a launch with updates off never touches the updater", async () => {
-  for (const reason of ["unpackaged", "trial", "headless"]) {
+  for (const reason of ["unpackaged", "trial", "headless", "unavailable"]) {
     const { updater, update, states, timers } = setup({ disabledReason: reason });
     assert.deepEqual(update.state(), { status: "disabled", reason });
     update.start();
@@ -107,7 +114,7 @@ test("a newer version downloads and becomes ready", async () => {
   updater.emit("update-downloaded", { version: "1.5.1" });
   updater.finish();
   await settle();
-  assert.deepEqual(update.state(), { status: "ready", version: "1.5.1" });
+  assert.deepEqual(update.state(), READY);
   assert.deepEqual(statuses(states), ["checking", "downloading", "downloading", "downloading", "ready"]);
   assert.equal(updater.installs.length, 0, "nothing installs without the user");
 });
@@ -164,7 +171,7 @@ test("checks do not overlap or disturb a download or a ready update", async () =
   updater.emit("error", Error("late"));
   updater.emit("update-not-available", {});
   assert.equal(updater.checks, 1, "already ready");
-  assert.deepEqual(update.state(), { status: "ready", version: "1.5.1" });
+  assert.deepEqual(update.state(), READY);
 });
 
 test("the timer rechecks, and a blocked launch skips the check", async () => {
@@ -203,11 +210,90 @@ test("an install that cannot release the ledger stays offered", async () => {
   await downloaded(context);
   await assert.rejects(update.install(), /ledger busy/);
   assert.equal(updater.installs.length, 0);
-  assert.deepEqual(update.state(), { status: "ready", version: "1.5.1" });
+  assert.deepEqual(update.state(), READY);
   assert.deepEqual(notes, ["update_install_failed"]);
   fails = false;
   assert.equal(await update.install(), true);
   assert.deepEqual(updater.installs, [[true, true]]);
+});
+
+test("a ready update carries its notes and release date", async () => {
+  const { updater, update } = setup();
+  update.start();
+  updater.emit("update-available", { version: "1.5.1" });
+  updater.emit("update-downloaded", {
+    version: "1.5.1", releaseDate: "2026-12-05T03:10:00.000Z",
+    releaseNotes: "<h2>New</h2><ul><li>In-app updates</li><li>A &amp; B</li></ul>",
+  });
+  updater.finish();
+  await settle();
+  assert.deepEqual(update.state(), { ...READY, notes: "## New\n- In-app updates\n- A & B", releaseDate: "2026-12-05" });
+});
+
+test("release notes become plain text whatever they contain", () => {
+  assert.equal(plainNotes(null), "");
+  assert.equal(plainNotes(42), "");
+  assert.equal(plainNotes("Fixes\r\n\r\n\r\n- one\n- two"), "Fixes\n\n- one\n- two");
+  assert.equal(plainNotes([{ version: "1.5.1", note: "<p>b</p>" }, { version: "1.5.0", note: "a" }]), "b\n\na");
+  assert.equal(plainNotes('<img src=x onerror="alert(1)"><script>alert(2)</script><a href="https://example.com">link</a>'), "alert(2)link");
+  assert.ok(!/[<>]/.test(plainNotes("<b>x</b><i>y <scr<script>ipt>")));
+  assert.equal(plainNotes("x".repeat(9000)).length, 4000);
+});
+
+test("later keeps the update offered without asking again", async () => {
+  const { saved, memory } = remembering();
+  const context = setup({ memory });
+  await downloaded(context);
+  assert.equal(context.update.state().prompt, true);
+  context.update.later();
+  assert.deepEqual(saved, { promptedVersion: "1.5.1" });
+  assert.deepEqual(asked(context.update), { prompt: false, skipped: false });
+  const next = setup({ memory });
+  await downloaded(next);
+  assert.deepEqual(asked(next.update), { prompt: false, skipped: false }, "the next launch does not ask again");
+});
+
+test("skip hides one version and a newer one asks again", async () => {
+  const { saved, memory } = remembering();
+  const context = setup({ memory });
+  await downloaded(context);
+  context.update.skip();
+  assert.deepEqual(saved, { promptedVersion: "1.5.1", skippedVersion: "1.5.1" });
+  assert.deepEqual(asked(context.update), { prompt: false, skipped: true });
+  assert.equal(await context.update.install(), true, "a skipped version can still be installed on request");
+  const same = setup({ memory });
+  await downloaded(same);
+  assert.deepEqual(asked(same.update), { prompt: false, skipped: true });
+  const newer = setup({ memory });
+  await downloaded(newer, "1.5.2");
+  assert.deepEqual(asked(newer.update), { prompt: true, skipped: false });
+});
+
+test("the launch after an installed update reports it once", async () => {
+  const { saved, memory } = remembering();
+  const context = setup({ memory });
+  context.update.start();
+  context.updater.emit("update-downloaded", { version: "1.5.1", releaseNotes: "- faster" });
+  context.updater.finish();
+  await settle();
+  assert.equal(setup({ memory }).update.takeInstalled("1.5.1"), null, "nothing was installed yet");
+  await context.update.install();
+  assert.deepEqual(saved.installed, { version: "1.5.1", notes: "- faster" });
+  const next = setup({ memory, disabledReason: "trial" }).update;
+  assert.deepEqual(next.takeInstalled("1.5.1"), { version: "1.5.1", notes: "- faster" });
+  assert.equal(next.takeInstalled("1.5.1"), null, "reported once");
+  saved.installed = { version: "1.5.1", notes: "" };
+  assert.equal(next.takeInstalled("1.5.0"), null, "the installation did not complete");
+  assert.equal(saved.installed, null);
+});
+
+test("later and skip do nothing before an update is ready", () => {
+  const { saved, memory } = remembering();
+  const { update } = setup({ memory });
+  update.later();
+  update.skip();
+  assert.deepEqual(saved, {});
+  assert.deepEqual(update.state(), { status: "idle" });
 });
 
 test("stopping removes the listeners and the timer", () => {
