@@ -653,3 +653,107 @@
 .imp .history.folded > .row {
   margin-bottom: 0;
 }
+
+/* ---------- Account management in the account list and workspace ---------- */
+.add-account {
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--sep));
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 10px 11px;
+  margin-top: 4px;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  text-align: left;
+  transition: background-color var(--fast), border-color var(--fast);
+}
+.add-account small {
+  grid-column: 2;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--l2);
+}
+.add-account:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: var(--accent);
+}
+.ws-head-acts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.account-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin: 10px 0 0;
+}
+.account-facts > div {
+  background: var(--surface);
+  border: 1px solid var(--sep);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+.account-facts dt {
+  font-size: 11px;
+  color: var(--l2);
+}
+.account-facts dd {
+  margin: 2px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.manage-line,
+.manage-danger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--sep);
+}
+.manage-danger {
+  border-color: color-mix(in srgb, var(--down) 40%, var(--sep));
+  background: color-mix(in srgb, var(--down) 5%, var(--surface));
+}
+.manage-danger > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.manage-danger b {
+  color: var(--down);
+  font-size: 13px;
+}
+.imp .btn.danger {
+  color: var(--down);
+  border-color: color-mix(in srgb, var(--down) 40%, var(--sep));
+}
+.imp .btn.danger:hover:enabled {
+  background: color-mix(in srgb, var(--down) 9%, var(--surface));
+}
+.imp .btn.danger:disabled {
+  opacity: 0.5;
+}
+.delete-account p {
+  margin: 0 0 8px;
+}
+.delete-account .warn {
+  color: var(--warn);
+  font-size: 13px;
+}

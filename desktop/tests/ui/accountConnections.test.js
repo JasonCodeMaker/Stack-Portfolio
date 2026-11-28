@@ -59,3 +59,11 @@ describe("account connections", () => {
     ])).toEqual({ a: "2026-11-20T10:00:00Z", b: "2026-11-05T10:00:00Z" });
   });
 });
+
+describe("sample book accounts", () => {
+  it("calls a new sample-book account without a broker not connected", () => {
+    expect(accountConnection({ id: "new", active: true, mode: "TRANSACTIONS" }, null, {}, true)).toMatchObject({
+      kind: "none", label: "未连接", syncable: false,
+    });
+  });
+});

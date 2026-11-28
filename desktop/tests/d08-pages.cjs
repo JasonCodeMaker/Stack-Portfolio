@@ -125,6 +125,35 @@ const shot = async (p, name) => {
     await p.getByRole("region", { name: /^期初建账 · IBKR/ }).waitFor();
     await p.getByRole("searchbox", { name: "筛选流水" }).or(p.getByLabel("筛选流水")).first().waitFor();
 
+    // Accounts are added under the account list and managed or deleted from the selected account's workspace.
+    // Only the button sits in the list; the name is asked for in a dialog.
+    assert.equal(await list.getByRole("textbox").count(), 0);
+    await button(list, /^添加账户/).click();
+    const addDialog = p.getByRole("dialog", { name: "添加账户" });
+    await addDialog.getByLabel("新账户名称").fill("Temporary account");
+    await shot(p, "imports-add-light");
+    await button(addDialog, "创建账户").click();
+    await addDialog.waitFor({ state: "detached" });
+    const added = button(list, /^Temporary account/);
+    await added.waitFor();
+    assert.equal(await list.locator(".acct-children .acct-item").count(), 3);
+    await added.click();
+    await button(p.locator(".ws-head"), "管理账户").click();
+    const manage = p.getByRole("region", { name: "账户管理 · Temporary account" });
+    await manage.getByText("账户类型").waitFor();
+    await shot(p, "imports-manage-light");
+    await button(manage, /删除此账户/).click();
+    const confirm = p.getByRole("dialog", { name: "删除账户「Temporary account」？" });
+    const remove = button(confirm, /删除账户/);
+    assert.equal(await remove.isDisabled(), true, "Deleting waits for the acknowledgement");
+    await shot(p, "imports-delete-light");
+    await confirm.getByLabel("我了解此操作无法撤销").check();
+    await remove.click();
+    await added.waitFor({ state: "detached" });
+    assert.equal(await list.locator(".acct-children .acct-item").count(), 2);
+    assert.equal(await button(list, /^全部账户/).getAttribute("aria-current"), "true");
+    await p.locator(".toast").getByRole("button").click().catch(() => {});
+
     // Dark theme and 21:9.
     await button(nav(p), "设置").click();
     await p.getByLabel("主题", { exact: true }).selectOption("dark");

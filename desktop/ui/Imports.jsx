@@ -2,7 +2,8 @@
 // Sync, file import, manual entry, statement reconciliation and opening balances open inline in the workspace.
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
-  Building2, ChevronRight, CloudDownload, FileSpreadsheet, FileText, Flag, Layers, PenLine, RefreshCw, Scale, Search, Upload,
+  Building2, ChevronRight, CirclePlus, CloudDownload, FileSpreadsheet, FileText, Flag, Layers, Link2, PenLine, RefreshCw, Scale,
+  Search, Settings2, Trash2, Upload,
 } from "lucide-react";
 import { HoldingEditor, SecurityFields, listingLabel, marketNames } from "./HoldingEditor";
 import { BrokerResult } from "./ImportPreview";
@@ -284,7 +285,7 @@ function Drawer({ icon: Icon, title, action, onClose, children }) {
   );
 }
 
-export function Imports({ d, mode, run, initial = {}, onPage }) {
+export function Imports({ d, mode, run, initial = {}, onPage, onAddAccount }) {
   const { t, formatDateTime, typeLabel, sourceLabel } = useI18n();
   const demo = mode === "demo";
   const active = d.accounts.filter((a) => a.active);
@@ -330,6 +331,13 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     [revisions, setRevisions] = useState([]),
     [voided, setVoided] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  // Account management: the account being deleted, its acknowledgement, and the sample book's quick add form.
+  const [removing, setRemoving] = useState(null),
+    [removeAck, setRemoveAck] = useState(false),
+    [removeBusy, setRemoveBusy] = useState(false);
+  const [adding, setAdding] = useState(false),
+    [newName, setNewName] = useState(""),
+    [newCurrency, setNewCurrency] = useState("AUD");
   const [affectedAccounts, setAffectedAccounts] = useState(null);
   const [manualType, setManualType] = useState("DEPOSIT");
   const destination = d.accounts.find((a) => a.id === account);
@@ -545,7 +553,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       <div className="imp imp-page">
         <Panel title={t("imports.needAccountTitle")} className="cap880">
           <Empty>{t("imports.needAccountEmpty")}</Empty>
-          <button className="btn pri" onClick={() => onPage("settings", { cat: "accounts" })}>
+          <button className="btn pri" onClick={onAddAccount || (() => onPage("settings", { cat: "accounts" }))}>
             {t("imports.createAccountBtn")}
           </button>
         </Panel>
@@ -625,6 +633,12 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           );
         })}
       </div>
+      {/* The real ledger opens the add-account guide; the sample ledger asks for a name in a dialog. */}
+      <button type="button" className="add-account" onClick={demo ? () => setAdding(true) : onAddAccount}>
+        <CirclePlus {...ico} />
+        <span>{t("imports.addAccount")}</span>
+        <small>{t(demo ? "imports.addAccountSampleSub" : "imports.addAccountSub")}</small>
+      </button>
     </nav>
   );
 
@@ -1116,6 +1130,49 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
     </Drawer>
   );
 
+  // 管理账户: what the account is, where its connection is set up, and deleting it.
+  const manage = selected && (
+    <Drawer icon={Settings2} title={t("imports.drawer.manage", { account: selected.name })} onClose={() => setDrawer(null)}>
+      <dl className="account-facts">
+        <div>
+          <dt>{t("imports.manage.type")}</dt>
+          <dd>{selected.custom ? `${t("custom.name")}${selected.brokerName ? " · " + selected.brokerName : ""}` : selectedBroker ? brokerNames[selectedBroker] : t("settings.conn.notConnected")}</dd>
+        </div>
+        <div>
+          <dt>{t("settings.col.currency")}</dt>
+          <dd>{selected.currency}</dd>
+        </div>
+        <div>
+          <dt>{t("imports.manage.connection")}</dt>
+          <dd><span className={"dot " + (selectedState?.tone || "muted")} /> {selectedState?.label}</dd>
+        </div>
+        <div>
+          <dt>{t("imports.manage.lastSync")}</dt>
+          <dd>{lastLine(selected.id)}</dd>
+        </div>
+      </dl>
+      {!selected.custom && !demo && (
+        <div className="manage-line">
+          <span className="cap">{t("imports.manage.connectionHint")}</span>
+          <button type="button" className="btn sm" onClick={() => onPage("settings", { cat: "accounts", account: selected.id })}>
+            <Link2 {...ico} />
+            {t("imports.manage.connectionSettings")}
+          </button>
+        </div>
+      )}
+      <div className="manage-danger" role="group" aria-label={t("imports.manage.dangerTitle")}>
+        <div>
+          <b>{t("imports.manage.dangerTitle")}</b>
+          <span className="cap">{t("imports.manage.dangerDesc")}</span>
+        </div>
+        <button type="button" className="btn sm danger" onClick={() => setRemoving(selected)}>
+          <Trash2 {...ico} />
+          {t("imports.manage.deleteBtn")}
+        </button>
+      </div>
+    </Drawer>
+  );
+
   const workspaceTitle = selected ? selected.name : t("imports.allWorkspace");
   const workspace = (
     <section className="card workspace" aria-label={workspaceTitle}>
@@ -1130,10 +1187,16 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
           </p>
         </div>
         {selected && (
-          <button type="button" className={"btn sm" + (drawer === "opening" ? " on" : "")} aria-expanded={drawer === "opening"} onClick={() => toggleDrawer("opening")}>
-            <Flag {...ico} />
-            {t(selected.custom ? "custom.opening" : "imports.tile.opening")}
-          </button>
+          <div className="ws-head-acts">
+            <button type="button" className={"btn sm" + (drawer === "opening" ? " on" : "")} aria-expanded={drawer === "opening"} onClick={() => toggleDrawer("opening")}>
+              <Flag {...ico} />
+              {t(selected.custom ? "custom.opening" : "imports.tile.opening")}
+            </button>
+            <button type="button" className={"btn sm" + (drawer === "manage" ? " on" : "")} aria-expanded={drawer === "manage"} onClick={() => toggleDrawer("manage")}>
+              <Settings2 {...ico} />
+              {t("imports.manageAccount")}
+            </button>
+          </div>
         )}
       </div>
       <div className="action-tiles" role="group" aria-label={t("imports.actionsAria")}>
@@ -1143,6 +1206,7 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
       {drawer === "manual" && manual}
       {drawer === "reconcile" && statement}
       {drawer === "opening" && opening}
+      {drawer === "manage" && manage}
       {shownReports.length > 0 && <div className="sync-results">{shownReports.map(brokerCard)}</div>}
     </section>
   );
@@ -1441,6 +1505,86 @@ export function Imports({ d, mode, run, initial = {}, onPage }) {
         </Modal>
       )}
 
+      {adding && (
+        <Modal title={t("imports.addAccount")} close={() => setAdding(false)}>
+          <form
+            className="imp"
+            onSubmit={(e) => {
+              e.preventDefault();
+              run(async () => {
+                await api.account({ name: newName.trim(), currency: newCurrency });
+                setAdding(false);
+                setNewName("");
+              }, t("settings.accountCreated"));
+            }}
+          >
+            <div className="fg">
+              <F label={t("settings.newAccountName")}>
+                <input autoFocus required maxLength={120} value={newName} placeholder={t("settings.newAccountPlaceholder")}
+                  onChange={(e) => setNewName(e.target.value)} />
+              </F>
+              <F label={t("settings.currency")}>
+                <select value={newCurrency} onChange={(e) => setNewCurrency(e.target.value)}>
+                  <option>AUD</option>
+                  <option>USD</option>
+                </select>
+              </F>
+            </div>
+            <div className="acts">
+              <button type="button" className="btn" onClick={() => setAdding(false)}>{t("app.cancel")}</button>
+              <button type="submit" className="btn pri" disabled={!newName.trim()}>{t("settings.createAccount")}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+      {removing && (
+        <Modal
+          title={t("imports.delete.title", { name: removing.name })}
+          close={() => {
+            if (removeBusy) return;
+            setRemoving(null);
+            setRemoveAck(false);
+          }}
+        >
+          <div className="imp delete-account">
+            <p>{t("imports.delete.desc", { name: removing.name })}</p>
+            <p className="muted">{t("custom.deleteTransfers")}</p>
+            <p className="warn">{t("imports.delete.backup")}</p>
+            <label className="chk">
+              <input type="checkbox" checked={removeAck} onChange={(e) => setRemoveAck(e.target.checked)} />
+              {t("imports.delete.ack")}
+            </label>
+            <div className="acts">
+              <button type="button" className="btn" disabled={removeBusy} onClick={() => { setRemoving(null); setRemoveAck(false); }}>
+                {t("app.cancel")}
+              </button>
+              <button
+                type="button"
+                className="btn danger"
+                disabled={!removeAck || removeBusy}
+                onClick={async () => {
+                  const target = removing;
+                  setRemoveBusy(true);
+                  try {
+                    await run(async () => {
+                      await api.deleteAccount({ account: target.id });
+                      updateReport(target.id, null);
+                      setRemoving(null);
+                      setRemoveAck(false);
+                      selectAccount("all");
+                    }, t("imports.delete.done", { name: target.name }));
+                  } finally {
+                    setRemoveBusy(false);
+                  }
+                }}
+              >
+                <Trash2 {...ico} />
+                {t("imports.delete.confirm")}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
       {modal === "position" && (
         <HoldingEditor d={d} run={run} account={account} action="position" close={() => setModal(null)} />
       )}

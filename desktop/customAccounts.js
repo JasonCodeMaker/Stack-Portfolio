@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import Decimal from "decimal.js";
-import { CUSTOM_ACCOUNT, account, createAccount, day, json, money, preference, putPref, resolveAsset, saveEvent, transaction } from "./ledger.js";
+import { BROKER, CUSTOM_ACCOUNT, account, createAccount, day, json, money, preference, putPref, resolveAsset, saveEvent, transaction } from "./ledger.js";
 import { live } from "./flows.js";
 import { tMain } from "./i18n/index.js";
 
@@ -44,17 +44,35 @@ export function deleteCustomAccount(db, id) {
   return transaction(db, () => {
     const { id: accountId } = account(db, id);
     if (preference(db, CUSTOM_ACCOUNT, accountId) === null) invalid("account", "deleteAccountType");
-    db.prepare("DELETE FROM sp_corrections WHERE event IN (SELECT id FROM sp_events WHERE account=?)").run(accountId);
-    for (const table of [
-      "sp_events", "sp_anchors", "sp_holding_evidence", "sp_broker_prices", "sp_archive",
-      "sp_statements", "sp_broker_values", "sp_checks", "sp_batches",
-    ]) db.prepare("DELETE FROM " + table + " WHERE account=?").run(accountId);
-    db.prepare(`DELETE FROM sp_prefs
-      WHERE (scope IN (?, 'opening-date') AND key=?)
-        OR (scope='listing-choice' AND CASE WHEN json_valid(key) THEN json_extract(key, '$[0]') END=?)`)
-      .run(CUSTOM_ACCOUNT, accountId, accountId);
-    db.prepare("DELETE FROM sp_accounts WHERE id=?").run(accountId);
+    removeAccount(db, accountId);
   });
+}
+
+// Deletes any account with its records. A broker account also loses its binding, its saved credentials and
+// any import mapping that pointed at it; the shared broker credentials stay for other accounts.
+export function deleteLedgerAccount(db, id) {
+  return transaction(db, () => {
+    const { id: accountId } = account(db, id);
+    for (const scope of ["broker-account", "broker-account-credentials"]) putPref(db, scope, accountId, null);
+    for (const broker of ["ibkr", "webull"])
+      if (preference(db, BROKER, "local-account." + broker) === accountId) putPref(db, BROKER, "local-account." + broker, null);
+    putPref(db, BROKER, "webull.funds." + accountId, null);
+    removeAccount(db, accountId);
+  });
+}
+
+// The account's records, opening date, listing choices and the account row; runs inside the caller's transaction.
+function removeAccount(db, accountId) {
+  db.prepare("DELETE FROM sp_corrections WHERE event IN (SELECT id FROM sp_events WHERE account=?)").run(accountId);
+  for (const table of [
+    "sp_events", "sp_anchors", "sp_holding_evidence", "sp_broker_prices", "sp_archive",
+    "sp_statements", "sp_broker_values", "sp_checks", "sp_batches",
+  ]) db.prepare("DELETE FROM " + table + " WHERE account=?").run(accountId);
+  db.prepare(`DELETE FROM sp_prefs
+    WHERE (scope IN (?, 'opening-date') AND key=?)
+      OR (scope='listing-choice' AND CASE WHEN json_valid(key) THEN json_extract(key, '$[0]') END=?)`)
+    .run(CUSTOM_ACCOUNT, accountId, accountId);
+  db.prepare("DELETE FROM sp_accounts WHERE id=?").run(accountId);
 }
 
 function csvRows(text) {

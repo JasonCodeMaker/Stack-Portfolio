@@ -55,6 +55,7 @@ const {
   compareStatement,
   createCustomAccount,
   deleteCustomAccount,
+  deleteLedgerAccount,
   customAccount,
   customCsvHeader,
   importCustomCsv,
@@ -643,6 +644,18 @@ const handlers = {
     const id = createCustomAccount(requireBook(), args);
     writePreferences({ onboardingSeen: true });
     return id;
+  },
+  // Deletes any account from Import & Reconcile, then forgets which broker records it had imported,
+  // so a later account bound to the same broker account imports them again.
+  async deleteAccount({ account: id }) {
+    const book = requireBook();
+    deleteLedgerAccount(book, id);
+    expireAccountPreviews(id);
+    for (const [token, preview] of customPreviews) {
+      if (preview.account === id) customPreviews.delete(token);
+    }
+    displayedReview = null;
+    for (const broker of ["ibkr", "webull"]) await resetSync(book, broker, id);
   },
   deleteCustomAccount({ account: id }) {
     deleteCustomAccount(requireBook(), id);

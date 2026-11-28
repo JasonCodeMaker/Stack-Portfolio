@@ -88,6 +88,8 @@ const { I18nProvider } = await import("../../ui/i18n.jsx");
 const book = {
   date: "2026-10-30",
   selected: ["demo-ibkr"],
+  batches: [],
+  brokerAccounts: { ibkr: "demo-ibkr", webull: "" },
   accounts: [
     { id: "demo-ibkr", name: "IBKR", currency: "AUD", active: true },
     { id: "old", name: "CommSec", currency: "AUD", active: false },
