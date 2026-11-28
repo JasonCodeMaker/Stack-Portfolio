@@ -73,7 +73,7 @@ describe("sidebar card", () => {
 describe("settings version row", () => {
   const row = (update) => text(<UpdateSettingsRow update={update} current="1.4.29" onOpen={noop} onCheck={noop} onInstall={noop} />);
   it("always names the installed version", () => {
-    for (const update of [ready, { status: "idle" }, { status: "disabled", reason: "unavailable" }])
+    for (const update of [ready, { status: "idle" }, { status: "disabled", reason: "unpackaged" }])
       expect(row(update)).toMatch(/^Stock Portfolio 1\.4\.29/);
   });
   it("offers the right action for each state", () => {
@@ -84,6 +84,6 @@ describe("settings version row", () => {
     expect(row({ status: "checking" })).toBe("Stock Portfolio 1.4.29 正在检查更新…");
     expect(row({ status: "downloading", version: "1.5.0", percent: 42 })).toBe("Stock Portfolio 1.4.29 正在下载 1.5.0 · 42%");
     expect(row({ status: "disabled", reason: "trial" })).toBe("Stock Portfolio 1.4.29 试用模式下不检查更新。");
-    expect(row({ status: "disabled", reason: "unavailable" })).toBe("Stock Portfolio 1.4.29");
+    expect(row({ status: "disabled", reason: "unpackaged" })).toBe("Stock Portfolio 1.4.29");
   });
 });

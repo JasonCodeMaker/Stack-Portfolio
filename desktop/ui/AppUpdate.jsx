@@ -6,7 +6,7 @@ import "./appUpdate.css";
 
 // Follows the update state the main process owns. Every update surface renders from this one value.
 export function useUpdateState() {
-  const [state, setState] = useState({ status: "disabled", reason: "unavailable" });
+  const [state, setState] = useState({ status: "disabled", reason: "unpackaged" });
   useEffect(() => {
     if (!api?.onUpdateState) return undefined;
     let active = true, received = false;

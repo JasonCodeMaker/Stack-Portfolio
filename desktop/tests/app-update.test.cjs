@@ -54,7 +54,7 @@ async function downloaded({ updater, update }, version = "1.5.1") {
 }
 
 test("a launch with updates off never touches the updater", async () => {
-  for (const reason of ["unpackaged", "trial", "headless", "unavailable"]) {
+  for (const reason of ["unpackaged", "trial", "headless"]) {
     const { updater, update, states, timers } = setup({ disabledReason: reason });
     assert.deepEqual(update.state(), { status: "disabled", reason });
     update.start();

@@ -1,5 +1,5 @@
 const RECHECK_MS = 6 * 60 * 60 * 1000;
-const DISABLED_REASONS = ["unpackaged", "trial", "headless", "unavailable"];
+const DISABLED_REASONS = ["unpackaged", "trial", "headless"];
 const NOTES_LIMIT = 4000;
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", nbsp: " " };
 

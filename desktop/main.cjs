@@ -175,16 +175,31 @@ function writePreferences(patch) {
   diagnostics?.stage("preferences");
   writeFileAtomic(preferenceFile(), JSON.stringify({ ...readPreferences(), ...patch }));
 }
-// The updater library is not part of the app yet, so a packaged app reports updates as unavailable.
-// STACK_PORTFOLIO_DEMO_UPDATE=<version> lets an unpackaged run show the update interface.
+// Updates come from the feed written into the installed app at build time (app-update.yml).
+// STACK_PORTFOLIO_DEMO_UPDATE=<version> lets an unpackaged run show the update interface instead.
 const demoUpdate = !app.isPackaged && /^\d+\.\d+\.\d+$/.test(process.env.STACK_PORTFOLIO_DEMO_UPDATE || "")
   ? process.env.STACK_PORTFOLIO_DEMO_UPDATE : null;
+const updateOff = demoUpdate ? null
+  : launch.trial ? "trial"
+  : process.env.STACK_PORTFOLIO_HEADLESS ? "headless"
+  : !app.isPackaged ? "unpackaged" : null;
+function installedUpdater() {
+  // Loaded only when updates are on: the library reads the installed app's update settings.
+  const { autoUpdater } = require("electron-updater");
+  // The library's own log names local paths and URLs, so it stays off. Diagnostics records outcomes.
+  // STACK_PORTFOLIO_UPDATE_LOG=<file> turns it on for a test run.
+  const file = process.env.STACK_PORTFOLIO_UPDATE_LOG;
+  const write = (level) => (...parts) => {
+    try {
+      fs.appendFileSync(file, `${new Date().toISOString()} ${level} ${parts.map((part) => part?.stack || String(part)).join(" ")}\n`);
+    } catch {}
+  };
+  autoUpdater.logger = file ? { info: write("info"), warn: write("warn"), error: write("error"), debug: write("debug") } : null;
+  return autoUpdater;
+}
 const appUpdate = createAppUpdate({
-  updater: demoUpdate ? demoUpdater(demoUpdate) : null,
-  disabledReason: demoUpdate ? null
-    : launch.trial ? "trial"
-    : process.env.STACK_PORTFOLIO_HEADLESS ? "headless"
-    : !app.isPackaged ? "unpackaged" : "unavailable",
+  updater: demoUpdate ? demoUpdater(demoUpdate) : updateOff ? null : installedUpdater(),
+  disabledReason: updateOff,
   memory: {
     read: () => readPreferences().appUpdate ?? {},
     write: (patch) => writePreferences({ appUpdate: { ...readPreferences().appUpdate, ...patch } }),
