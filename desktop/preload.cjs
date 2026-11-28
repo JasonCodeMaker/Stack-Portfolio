@@ -66,6 +66,11 @@ const actions = [
   "backup",
   "selectBackup",
   "restore",
+  "updateState",
+  "updateCheck",
+  "updateLater",
+  "updateSkip",
+  "updateInstall",
 ];
 contextBridge.exposeInMainWorld(
   "portfolio",
@@ -80,6 +85,11 @@ contextBridge.exposeInMainWorld(
       const listener = (_event, state) => callback(state);
       ipcRenderer.on("portfolio:displayState", listener);
       return () => ipcRenderer.removeListener("portfolio:displayState", listener);
+    },
+    onUpdateState(callback) {
+      const listener = (_event, state) => callback(state);
+      ipcRenderer.on("portfolio:updateState", listener);
+      return () => ipcRenderer.removeListener("portfolio:updateState", listener);
     },
   },
 );

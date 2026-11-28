@@ -52,7 +52,7 @@ function useViewportTier(aspect) {
   return { tier, short: view.short };
 }
 
-export function Shell({ aspect, page, onPage, ledger, onLedger, titleExtra, filters, children }) {
+export function Shell({ aspect, page, onPage, ledger, onLedger, sideExtra, titleExtra, filters, children }) {
   const { t } = useI18n();
   const view = useViewportTier(aspect);
   const cols = aspect === "21:9" ? 2 : 1;
@@ -92,6 +92,7 @@ export function Shell({ aspect, page, onPage, ledger, onLedger, titleExtra, filt
           {pageIds[0].map(nav)}
           <hr />
           {pageIds[1].map(nav)}
+          {sideExtra}
           <button
             type="button"
             className="ledger"

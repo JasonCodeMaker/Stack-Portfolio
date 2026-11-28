@@ -9,6 +9,8 @@ const { randomUUID } = require("node:crypto");
 const { requestFactoryReset, finishFactoryReset } = require("./factoryReset.cjs");
 const { createDiagnostics } = require("./diagnostics.cjs");
 const { launchProfile } = require("./launchProfile.cjs");
+const { createAppUpdate } = require("./appUpdate.cjs");
+const { demoUpdater } = require("./appUpdateDemo.cjs");
 const {
   localKeyName, localKey, backupKey, isPlainDatabase, openDatabase, checkIntegrity,
   encryptedCopy, publishFile, lockForReplacement, assertNoJournal,
@@ -173,6 +175,31 @@ function writePreferences(patch) {
   diagnostics?.stage("preferences");
   writeFileAtomic(preferenceFile(), JSON.stringify({ ...readPreferences(), ...patch }));
 }
+// The updater library is not part of the app yet, so a packaged app reports updates as unavailable.
+// STACK_PORTFOLIO_DEMO_UPDATE=<version> lets an unpackaged run show the update interface.
+const demoUpdate = !app.isPackaged && /^\d+\.\d+\.\d+$/.test(process.env.STACK_PORTFOLIO_DEMO_UPDATE || "")
+  ? process.env.STACK_PORTFOLIO_DEMO_UPDATE : null;
+const appUpdate = createAppUpdate({
+  updater: demoUpdate ? demoUpdater(demoUpdate) : null,
+  disabledReason: demoUpdate ? null
+    : launch.trial ? "trial"
+    : process.env.STACK_PORTFOLIO_HEADLESS ? "headless"
+    : !app.isPackaged ? "unpackaged" : "unavailable",
+  memory: {
+    read: () => readPreferences().appUpdate ?? {},
+    write: (patch) => writePreferences({ appUpdate: { ...readPreferences().appUpdate, ...patch } }),
+  },
+  canCheck: () => !factoryResetRequested,
+  onState: (state) => {
+    if (win && !win.isDestroyed()) win.webContents.send("portfolio:updateState", state);
+  },
+  onNote: (code) => diagnostics?.emit(
+    "updateCheck", "main", code === "update_install_failed" ? "execute" : "fetch", "failed",
+    code === "update_install_failed" ? "unexpected_error" : "source_unavailable",
+  ),
+});
+// The first home() of a launch reports the version it was just updated to, if any; later ones do not.
+let updateReported = false;
 const lastMode = () => readPreferences().mode ?? null;
 const themes = ["system", "light", "dark"];
 function currentSystemLanguages() {
@@ -400,6 +427,11 @@ const handlers = {
   macroMarket: () => macroMarket.snapshot(),
   refreshMacroMarket: () => macroMarket.refresh(),
   displayState: () => syncDisplay(),
+  updateState: () => appUpdate.state(),
+  updateCheck: () => appUpdate.check(),
+  updateLater: () => appUpdate.later(),
+  updateSkip: () => appUpdate.skip(),
+  updateInstall: () => appUpdate.install(),
   setUserScale,
   factoryReset() {
     try {
@@ -440,6 +472,7 @@ const handlers = {
     return {
       storageError,
       appVersion: app.getVersion(),
+      updated: updateReported ? null : (updateReported = true, appUpdate.takeInstalled(app.getVersion())),
       trial: launch.trial,
       mode: mode || null,
       theme: nativeTheme.themeSource,
@@ -1091,7 +1124,7 @@ const diagnosticMilestones = new Set([
   "beginAccountSetup", "checkAccountSetup", "bindAccount", "reauthorizeIbkr",
   "connectWebullFunds", "preview", "commit", "backup", "restore", "updateMarket", "factoryReset",
 ]);
-const diagnosticJobs = ["startup", "renderer", "childProcess", "windowLayout", "keyboardZoom", "saveWindow", "openGuide", "shutdown"];
+const diagnosticJobs = ["startup", "renderer", "childProcess", "windowLayout", "keyboardZoom", "saveWindow", "openGuide", "shutdown", "updateCheck"];
 function dispatchAction(name, fn, args) {
   const invoke = () => {
     if (factoryResetRequested) throw Error(tMain("err.factoryResetPending"));
@@ -1099,7 +1132,8 @@ function dispatchAction(name, fn, args) {
     return fn(args ?? {});
   };
   if (name === "factoryReset" || name.startsWith("diagnostics") ||
-      ["displayState", "setUserScale", "macroMarket", "refreshMacroMarket"].includes(name)) return invoke();
+      ["displayState", "setUserScale", "macroMarket", "refreshMacroMarket",
+        "updateState", "updateCheck", "updateLater", "updateSkip"].includes(name)) return invoke();
   diagnostics.stage("queue");
   if (!switchingBooks && ["dashboard", "history", "connections", "preview", "connectWebullFunds"].includes(name)) {
     const read = Promise.resolve().then(invoke);
@@ -1108,7 +1142,8 @@ function dispatchAction(name, fn, args) {
   }
   const run = queue.then(async () => {
     if (factoryResetRequested) throw Error(tMain("err.factoryResetPending"));
-    const switchBook = ["openDemo", "openReal", "newBook", "migrationCommit", "restore"].includes(name) ||
+    // Installing an update ends the process, so it waits for readers like a book switch does.
+    const switchBook = ["openDemo", "openReal", "newBook", "migrationCommit", "restore", "updateInstall"].includes(name) ||
       (["home", "createCustomAccount"].includes(name) && !mode);
     if (!switchBook) return invoke();
     switchingBooks = true;
@@ -1269,6 +1304,7 @@ else {
       syncLanguage();
       diagnostics.stage("createWindow");
       await createWindow();
+      appUpdate.start();
     }, true).catch(async () => {
       await diagnostics.stop();
       app.exit(1);

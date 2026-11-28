@@ -1,0 +1,194 @@
+/* Application update: sidebar card, dialog, Settings row. */
+.upd-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+  display: inline-block;
+}
+.upd-bar {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface2);
+  overflow: hidden;
+}
+.upd-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* Sidebar card. It takes the free space above the ledger switch, which then sits just below it. */
+.upd-card {
+  margin-top: auto;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--l1);
+  font-size: 13px;
+  line-height: 18px;
+}
+.upd-card + .ledger {
+  margin-top: 10px;
+}
+.upd-card b {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+.upd-card small {
+  color: var(--l2);
+}
+.upd-card .btn {
+  justify-content: center;
+}
+.upd-card.quiet {
+  gap: 2px;
+  padding: 8px 10px;
+  border-color: var(--sep);
+  background: transparent;
+  color: var(--sb-muted);
+  font-size: 12px;
+}
+.upd-card.quiet .upd-bar {
+  margin-top: 4px;
+}
+.upd-ico {
+  display: none;
+  position: relative;
+  width: 44px;
+  height: 40px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  place-items: center;
+}
+.upd-ico:hover {
+  background: color-mix(in srgb, var(--sb-on-bg) 55%, transparent);
+}
+.upd-ico i {
+  position: absolute;
+  top: 7px;
+  right: 8px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--sb);
+}
+/* The narrow sidebar has room for an icon only. */
+[data-tier="compact"] .upd-card.quiet,
+[data-tier="compact"] .upd-card.ready > :not(.upd-ico) {
+  display: none;
+}
+[data-tier="compact"] .upd-card.ready {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+[data-tier="compact"] .upd-card.ready .upd-ico {
+  display: grid;
+}
+[data-tier="compact"] .upd-card + .ledger {
+  margin-top: 6px;
+}
+
+/* Dialog */
+.upd-versions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.upd-versions > div {
+  display: grid;
+  gap: 2px;
+}
+.upd-versions b {
+  font: 600 24px/30px var(--display);
+  letter-spacing: -0.01em;
+}
+.upd-versions .new b {
+  color: var(--accent);
+}
+.upd-arrow {
+  color: var(--l3);
+  font-size: 20px;
+}
+.upd-meta {
+  text-align: right;
+}
+.upd-scroll {
+  display: grid;
+  gap: 14px;
+  max-height: min(46vh, 380px);
+  overflow: auto;
+}
+.upd-notes {
+  display: grid;
+  gap: 12px;
+}
+.upd-notes h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  color: var(--l2);
+}
+.upd-notes ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 5px;
+}
+.modal-inner .upd-safe {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--surface2);
+  color: var(--l2);
+  font-size: 13px;
+  line-height: 19px;
+}
+.upd-safe svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--accent);
+}
+.upd-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Settings row */
+.upd-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 13px;
+}
+.upd-row b {
+  font-weight: 600;
+}
+.upd-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.upd-line .upd-bar {
+  width: 120px;
+}

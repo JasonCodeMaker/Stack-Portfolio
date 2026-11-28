@@ -18,6 +18,7 @@ import { Settings } from "./Settings";
 import { BookBackups } from "./BookBackups";
 import { FactoryResetButton } from "./FactoryReset";
 import { DiagnosticsButton } from "./Diagnostics";
+import { UpdateDialog, UpdatedToast, UpdateSettingsRow, UpdateSideCard, useUpdateState } from "./AppUpdate";
 import { AccountScope, AsOf, OverviewLayoutPicker, ValuationDate } from "./FilterControls";
 import { dashboardQuery, defaultFilters, rememberedFilters, restoreFilters } from "./filters.js";
 import "./design.css";
@@ -416,6 +417,31 @@ function Application() {
   }, [page]);
   const active = d?.accounts.filter((a) => a.active) || [];
   const analysis = analysisPages.includes(page);
+  const update = useUpdateState();
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [updated, setUpdated] = useState(null);
+  useEffect(() => {
+    if (home?.updated) setUpdated(home.updated);
+  }, [home?.updated]);
+  // "Later" is remembered only for the automatic prompt; closing a dialog the user opened is just a close.
+  const closeUpdate = () => {
+    setUpdateOpen(false);
+    if (update.prompt) api.updateLater().catch(() => {});
+  };
+  const skipUpdate = () => {
+    setUpdateOpen(false);
+    api.updateSkip().catch(() => {});
+  };
+  const installUpdate = () => {
+    setInstalling(true);
+    api.updateInstall().then((started) => {
+      if (!started) setInstalling(false);
+    }).catch((error) => {
+      setInstalling(false);
+      setFatal(error.message);
+    });
+  };
   const t = createTranslator(home?.locale || "zh-CN");
   const wrap = (node) => (
     <I18nProvider
@@ -490,6 +516,7 @@ function Application() {
         onPage={onPage}
         ledger={{ demo: mode === "demo", accounts: active.length }}
         onLedger={showHome}
+        sideExtra={<UpdateSideCard update={update} current={home.appVersion} onOpen={() => setUpdateOpen(true)} />}
         titleExtra={analysis && <AsOf filters={filters} onChange={changeFilters} />}
         filters={
           analysis && (
@@ -531,6 +558,16 @@ function Application() {
             d={d}
             mode={mode}
             appVersion={home.appVersion}
+            versionRow={
+              <UpdateSettingsRow
+                update={update}
+                current={home.appVersion}
+                installing={installing}
+                onOpen={() => setUpdateOpen(true)}
+                onCheck={() => api.updateCheck().catch(() => {})}
+                onInstall={installUpdate}
+              />
+            }
             theme={home.theme}
             onThemeChange={changeTheme}
             userScale={display.userScaleMultiplier}
@@ -545,6 +582,17 @@ function Application() {
         )}
       </Shell>
       {banners}
+      {update.status === "ready" && (update.prompt || updateOpen) && (
+        <UpdateDialog
+          update={update}
+          current={home.appVersion}
+          installing={installing}
+          onInstall={installUpdate}
+          onLater={closeUpdate}
+          onSkip={skipUpdate}
+        />
+      )}
+      {updated && <UpdatedToast updated={updated} onClose={() => setUpdated(null)} />}
     </>,
   );
 }
